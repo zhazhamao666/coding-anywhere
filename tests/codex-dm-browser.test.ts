@@ -1,0 +1,216 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { BridgeService } from "../src/bridge-service.js";
+import { SessionStore } from "../src/workspace/session-store.js";
+import type { AcpxEvent } from "../src/types.js";
+
+describe("DM Codex browser", () => {
+  let rootDir: string;
+  let bridgeRootCwd: string;
+  let store: SessionStore;
+
+  beforeEach(() => {
+    rootDir = mkdtempSync(path.join(tmpdir(), "codex-dm-browser-"));
+    bridgeRootCwd = path.join(rootDir, "repos");
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+    store.upsertRoot({
+      id: "main",
+      name: "Main Root",
+      cwd: bridgeRootCwd,
+      repoRoot: bridgeRootCwd,
+      branchPolicy: "reuse",
+      permissionMode: "workspace-write",
+      envAllowlist: ["PATH"],
+      idleTtlHours: 24,
+    });
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("shows Codex projects in DM project list cards", async () => {
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: createCatalogDouble(),
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project list",
+    });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ kind: "card" });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("项目列表");
+    expect(cardText).toContain("Alpha");
+    expect(cardText).toContain("/ca project threads project-alpha");
+  });
+
+  it("switches the current DM window to a Codex thread and routes prompts there", async () => {
+    const runner = createRunnerDouble([
+      { type: "text", content: "继续处理中" },
+      { type: "done", content: "继续处理中" },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+      codexCatalog: createCatalogDouble(),
+    } as any);
+
+    const switchReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca thread switch thread-alpha-2",
+    });
+
+    expect(switchReplies).toHaveLength(1);
+    expect(switchReplies[0]).toMatchObject({ kind: "card" });
+    const switchCardText = JSON.stringify((switchReplies[0] as { card: Record<string, unknown> }).card);
+    expect(switchCardText).toContain("线程已切换");
+    expect(switchCardText).toContain("thread-alpha-2");
+    expect((store as any).getCodexWindowBinding("feishu", "ou_demo")).toMatchObject({
+      codexThreadId: "thread-alpha-2",
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "继续处理这个线程",
+    });
+
+    expect(runner.ensureSession).toHaveBeenCalledWith({
+      targetKind: "codex_thread",
+      threadId: "thread-alpha-2",
+      sessionName: "thread-alpha-2",
+      cwd: "D:\\Repos\\Alpha",
+    });
+    expect(runner.submitVerbatim).toHaveBeenCalledWith(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-alpha-2",
+        sessionName: "thread-alpha-2",
+        cwd: "D:\\Repos\\Alpha",
+      },
+      "继续处理这个线程",
+      expect.any(Function),
+    );
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "继续处理中",
+      },
+    ]);
+  });
+
+  it("shows current thread project threads in DM after a switch", async () => {
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: createCatalogDouble(),
+    } as any);
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca thread switch thread-alpha-2",
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca thread list-current",
+    });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ kind: "card" });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("线程列表");
+    expect(cardText).toContain("Alpha follow-up");
+    expect(cardText).toContain("thread-alpha-1");
+    expect(cardText).toContain("/ca thread switch thread-alpha-1");
+  });
+});
+
+function createCatalogDouble() {
+  const projects = [
+    {
+      projectKey: "project-alpha",
+      cwd: "D:\\Repos\\Alpha",
+      displayName: "Alpha",
+      threadCount: 2,
+      activeThreadCount: 2,
+      lastUpdatedAt: "2026-03-26T01:00:00.000Z",
+      gitBranch: "main",
+    },
+  ];
+
+  const threads = [
+    {
+      threadId: "thread-alpha-2",
+      projectKey: "project-alpha",
+      cwd: "D:\\Repos\\Alpha",
+      displayName: "Alpha",
+      title: "Alpha follow-up",
+      source: "cli",
+      archived: false,
+      updatedAt: "2026-03-26T02:00:00.000Z",
+      createdAt: "2026-03-26T00:00:00.000Z",
+      gitBranch: "feature/x",
+      cliVersion: "0.116.0",
+      rolloutPath: "D:\\rollouts\\alpha-2.jsonl",
+    },
+    {
+      threadId: "thread-alpha-1",
+      projectKey: "project-alpha",
+      cwd: "D:\\Repos\\Alpha",
+      displayName: "Alpha",
+      title: "Alpha main task",
+      source: "vscode",
+      archived: false,
+      updatedAt: "2026-03-26T01:00:00.000Z",
+      createdAt: "2026-03-25T23:00:00.000Z",
+      gitBranch: "main",
+      cliVersion: "0.116.0",
+      rolloutPath: "D:\\rollouts\\alpha-1.jsonl",
+    },
+  ];
+
+  return {
+    listProjects: vi.fn(() => projects),
+    getProject: vi.fn((projectKey: string) => projects.find(project => project.projectKey === projectKey)),
+    listThreads: vi.fn((projectKey: string) => threads.filter(thread => thread.projectKey === projectKey)),
+    getThread: vi.fn((threadId: string) => threads.find(thread => thread.threadId === threadId)),
+  };
+}
+
+function createRunnerDouble(
+  events: AcpxEvent[] = [
+    { type: "text", content: "测试已经执行完成" },
+    { type: "done", content: "测试已经执行完成" },
+  ],
+) {
+  return {
+    ensureSession: vi.fn(async () => undefined),
+    cancel: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+    submitVerbatim: vi.fn(async (_context, _prompt, onEvent?: (event: AcpxEvent) => void) => {
+      for (const event of events) {
+        onEvent?.(event);
+      }
+
+      return {
+        exitCode: 0,
+        events,
+      };
+    }),
+  };
+}

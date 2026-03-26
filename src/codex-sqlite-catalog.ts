@@ -1,0 +1,285 @@
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+
+import Database from "better-sqlite3";
+
+import type { CodexCatalogProject, CodexCatalogThread } from "./types.js";
+
+interface CodexThreadRow {
+  id: string;
+  rollout_path: string;
+  created_at: number;
+  updated_at: number;
+  source: string;
+  cwd: string;
+  title: string;
+  archived: number;
+  git_branch: string | null;
+  cli_version: string;
+}
+
+export class CodexSqliteCatalog {
+  private readonly sqlitePath: string;
+  private readonly sessionIndexPath: string | undefined;
+
+  public constructor(input?: {
+    sqlitePath?: string;
+    codexHomeDir?: string;
+    sessionIndexPath?: string;
+  }) {
+    const sqlitePath = input?.sqlitePath ?? resolveDefaultCodexStateSqlitePath(input?.codexHomeDir);
+    if (!sqlitePath) {
+      throw new Error("CODEX_STATE_DB_NOT_FOUND");
+    }
+    this.sqlitePath = sqlitePath;
+    this.sessionIndexPath =
+      input?.sessionIndexPath ??
+      path.join(path.dirname(this.sqlitePath), "session_index.jsonl");
+  }
+
+  public listProjects(options?: { includeArchived?: boolean }): CodexCatalogProject[] {
+    const threads = this.readThreads(options);
+    const byProject = new Map<string, {
+      cwd: string;
+      displayName: string;
+      threadCount: number;
+      activeThreadCount: number;
+      lastUpdatedAt: string;
+      gitBranch: string | null;
+    }>();
+
+    for (const thread of threads) {
+      const existing = byProject.get(thread.projectKey);
+      if (!existing) {
+        byProject.set(thread.projectKey, {
+          cwd: thread.cwd,
+          displayName: thread.displayName,
+          threadCount: 1,
+          activeThreadCount: thread.archived ? 0 : 1,
+          lastUpdatedAt: thread.updatedAt,
+          gitBranch: thread.gitBranch,
+        });
+        continue;
+      }
+
+      existing.threadCount += 1;
+      if (!thread.archived) {
+        existing.activeThreadCount += 1;
+      }
+      existing.cwd = preferDisplayCwd(existing.cwd, thread.cwd);
+      existing.displayName = path.basename(existing.cwd) || existing.cwd;
+      if (thread.updatedAt > existing.lastUpdatedAt) {
+        existing.lastUpdatedAt = thread.updatedAt;
+        existing.gitBranch = thread.gitBranch ?? existing.gitBranch;
+      }
+      if (!existing.gitBranch && thread.gitBranch) {
+        existing.gitBranch = thread.gitBranch;
+      }
+    }
+
+    return [...byProject.entries()]
+      .map(([projectKey, project]) => ({
+        projectKey,
+        cwd: project.cwd,
+        displayName: project.displayName,
+        threadCount: project.threadCount,
+        activeThreadCount: project.activeThreadCount,
+        lastUpdatedAt: project.lastUpdatedAt,
+        gitBranch: project.gitBranch,
+      }))
+      .sort((a, b) => b.lastUpdatedAt.localeCompare(a.lastUpdatedAt));
+  }
+
+  public getProject(projectKey: string, options?: { includeArchived?: boolean }): CodexCatalogProject | undefined {
+    return this.listProjects(options).find(project => project.projectKey === projectKey);
+  }
+
+  public listThreads(projectKey: string, options?: { includeArchived?: boolean }): CodexCatalogThread[] {
+    const project = this.getProject(projectKey, { includeArchived: true });
+
+    return this.readThreads(options)
+      .filter(thread => thread.projectKey === projectKey)
+      .map(thread => ({
+        ...thread,
+        cwd: project?.cwd ?? thread.cwd,
+        displayName: project?.displayName ?? thread.displayName,
+      }))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  public getThread(threadId: string): CodexCatalogThread | undefined {
+    const threadNames = this.readThreadNames();
+    const db = this.openDb();
+    try {
+      const row = db.prepare(`
+        SELECT
+          id,
+          rollout_path,
+          created_at,
+          updated_at,
+          source,
+          cwd,
+          title,
+          archived,
+          git_branch,
+          cli_version
+        FROM threads
+        WHERE id = ?
+      `).get(threadId) as CodexThreadRow | undefined;
+
+      return row ? mapThreadRow(row, threadNames) : undefined;
+    } finally {
+      db.close();
+    }
+  }
+
+  private readThreads(options?: { includeArchived?: boolean }): CodexCatalogThread[] {
+    const threadNames = this.readThreadNames();
+    const db = this.openDb();
+    try {
+      const rows = db.prepare(`
+        SELECT
+          id,
+          rollout_path,
+          created_at,
+          updated_at,
+          source,
+          cwd,
+          title,
+          archived,
+          git_branch,
+          cli_version
+        FROM threads
+        ORDER BY updated_at DESC
+      `).all() as CodexThreadRow[];
+
+      return rows
+        .map(row => mapThreadRow(row, threadNames))
+        .filter(thread => options?.includeArchived ? true : !thread.archived);
+    } finally {
+      db.close();
+    }
+  }
+
+  private readThreadNames(): Map<string, string> {
+    const threadNames = new Map<string, { updatedAt: string; threadName: string }>();
+    if (!this.sessionIndexPath || !existsSync(this.sessionIndexPath)) {
+      return new Map();
+    }
+
+    const content = readFileSync(this.sessionIndexPath, "utf8");
+    for (const line of content.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+
+      if (typeof parsed?.id !== "string" || typeof parsed?.thread_name !== "string") {
+        continue;
+      }
+
+      const updatedAt = typeof parsed?.updated_at === "string" ? parsed.updated_at : "";
+      const existing = threadNames.get(parsed.id);
+      if (!existing || updatedAt >= existing.updatedAt) {
+        threadNames.set(parsed.id, {
+          updatedAt,
+          threadName: parsed.thread_name,
+        });
+      }
+    }
+
+    return new Map(
+      [...threadNames.entries()].map(([id, value]) => [id, value.threadName]),
+    );
+  }
+
+  private openDb(): Database.Database {
+    return new Database(this.sqlitePath, {
+      readonly: true,
+      fileMustExist: true,
+    });
+  }
+}
+
+export function resolveDefaultCodexStateSqlitePath(codexHomeDir = path.join(homedir(), ".codex")): string | undefined {
+  if (!existsSync(codexHomeDir)) {
+    return undefined;
+  }
+
+  const candidates = readdirSync(codexHomeDir)
+    .filter(name => /^state(?:_\d+)?\.sqlite$/i.test(name))
+    .sort((left, right) => extractStateVersion(right) - extractStateVersion(left));
+
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  return path.join(codexHomeDir, candidates[0]);
+}
+
+function mapThreadRow(row: CodexThreadRow, threadNames: Map<string, string>): CodexCatalogThread {
+  const cwd = normalizeCodexCwd(row.cwd);
+  const resolvedTitle = threadNames.get(row.id) ?? row.title;
+
+  return {
+    threadId: row.id,
+    projectKey: encodeProjectKey(cwd),
+    cwd,
+    displayName: path.basename(cwd) || cwd,
+    title: resolvedTitle,
+    source: row.source,
+    archived: row.archived === 1,
+    updatedAt: epochToIso(row.updated_at),
+    createdAt: epochToIso(row.created_at),
+    gitBranch: row.git_branch,
+    cliVersion: row.cli_version,
+    rolloutPath: row.rollout_path,
+  };
+}
+
+function normalizeCodexCwd(raw: string): string {
+  const withoutPrefix = raw.replace(/^\\\\\?\\/, "");
+  const normalizedWindows = path.win32.normalize(withoutPrefix.replace(/\//g, "\\"));
+  return normalizedWindows
+    .replace(/^([a-z]):/, (_match, drive: string) => `${drive.toUpperCase()}:`)
+    .replace(/[\\\/]+$/, "");
+}
+
+function epochToIso(value: number): string {
+  const milliseconds = value > 1_000_000_000_000 ? value : value * 1000;
+  return new Date(milliseconds).toISOString();
+}
+
+function encodeProjectKey(normalizedCwd: string): string {
+  return Buffer.from(normalizedCwd.toLowerCase(), "utf8").toString("base64url");
+}
+
+function preferDisplayCwd(current: string, next: string): string {
+  return scoreDisplayCwd(next) > scoreDisplayCwd(current) ? next : current;
+}
+
+function scoreDisplayCwd(candidate: string): number {
+  let score = 0;
+  for (const char of candidate) {
+    if (char >= "A" && char <= "Z") {
+      score += 2;
+    }
+    if (char === "\\") {
+      score += 1;
+    }
+  }
+  return score;
+}
+
+function extractStateVersion(fileName: string): number {
+  const match = fileName.match(/^state_(\d+)\.sqlite$/i);
+  return match ? Number.parseInt(match[1] ?? "0", 10) : 0;
+}

@@ -1,0 +1,30 @@
+[server]
+host = "127.0.0.1"
+port = 3000
+
+[storage]
+sqlitePath = "data/bridge.db"
+logDir = "logs"
+
+[acpx]
+command = "acpx"
+agent = "codex"
+
+[feishu]
+appId = "cli_xxx"
+appSecret = "replace-me"
+websocketUrl = "wss://open.feishu.cn/open-apis/bot/v2/hub"
+apiBaseUrl = "https://open.feishu.cn/open-apis"
+allowlist = ["ou_xxx"]
+requireGroupMention = false
+encryptKey = ""
+
+[root]
+id = "main"
+name = "Main Root"
+cwd = "D:/path/to/repos"
+repoRoot = "D:/path/to/repos"
+branchPolicy = "reuse"
+permissionMode = "workspace-write"
+envAllowlist = ["PATH", "HOME"]
+idleTtlHours = 24

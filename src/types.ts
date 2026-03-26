@@ -1,0 +1,302 @@
+export type PermissionMode = "readonly" | "workspace-write" | "danger-full-access";
+
+export interface RootProfile {
+  id: string;
+  name: string;
+  cwd: string;
+  repoRoot: string;
+  branchPolicy: string;
+  permissionMode: PermissionMode;
+  envAllowlist: string[];
+  idleTtlHours: number;
+}
+
+export interface ThreadBinding {
+  channel: string;
+  peerId: string;
+  sessionName: string;
+  updatedAt: string;
+}
+
+export interface ProjectRecord {
+  projectId: string;
+  name: string;
+  cwd: string;
+  repoRoot: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ProjectChatRecord {
+  projectId: string;
+  chatId: string;
+  groupMessageType: string;
+  title: string;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type CodexThreadStatus =
+  | "provisioned"
+  | "warm"
+  | "running"
+  | "idle"
+  | "closed"
+  | "archived";
+
+export interface CodexThreadRecord {
+  threadId: string;
+  projectId: string;
+  feishuThreadId: string;
+  chatId: string;
+  anchorMessageId: string;
+  latestMessageId: string;
+  sessionName: string;
+  title: string;
+  ownerOpenId: string;
+  status?: CodexThreadStatus;
+  lastRunId?: string | null;
+  lastActivityAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  archivedAt?: string | null;
+}
+
+export interface BridgeMessageInput {
+  channel: string;
+  peerId: string;
+  text: string;
+  chatId?: string;
+  surfaceType?: "thread";
+  surfaceRef?: string;
+}
+
+export interface CodexCatalogProject {
+  projectKey: string;
+  cwd: string;
+  displayName: string;
+  threadCount: number;
+  activeThreadCount: number;
+  lastUpdatedAt: string;
+  gitBranch: string | null;
+}
+
+export interface CodexCatalogThread {
+  threadId: string;
+  projectKey: string;
+  cwd: string;
+  displayName: string;
+  title: string;
+  source: string;
+  archived: boolean;
+  updatedAt: string;
+  createdAt: string;
+  gitBranch: string | null;
+  cliVersion: string;
+  rolloutPath: string;
+}
+
+export interface CodexWindowBinding {
+  channel: string;
+  peerId: string;
+  codexThreadId: string;
+  updatedAt: string;
+}
+
+export type BridgeCommandName =
+  | "help"
+  | "hub"
+  | "status"
+  | "new"
+  | "stop"
+  | "session"
+  | "logs"
+  | "project"
+  | "thread";
+
+export interface BridgeCommand {
+  name: BridgeCommandName;
+  args: string[];
+}
+
+export type BridgeInput =
+  | {
+      kind: "prompt";
+      prompt: string;
+    }
+  | {
+      kind: "command";
+      command: BridgeCommand;
+    };
+
+export type ProgressStatus =
+  | "queued"
+  | "preparing"
+  | "running"
+  | "tool_active"
+  | "waiting"
+  | "done"
+  | "error"
+  | "canceled";
+
+export type BridgeLifecycleStage =
+  | "received"
+  | "resolving_context"
+  | "ensuring_session"
+  | "session_ready"
+  | "submitting_prompt"
+  | "waiting_first_event";
+
+export type ProgressStage =
+  | BridgeLifecycleStage
+  | "tool_call"
+  | "text"
+  | "waiting"
+  | "done"
+  | "error"
+  | "canceled";
+
+export interface BridgeLifecycleEvent {
+  type: "bridge_lifecycle";
+  stage: BridgeLifecycleStage;
+  content?: string;
+  sessionName?: string;
+}
+
+export type AcpxEvent =
+  | { type: "text"; content: string }
+  | { type: "tool_call"; toolName: string; content: string }
+  | { type: "done"; content?: string }
+  | { type: "error"; content: string }
+  | { type: "waiting"; content?: string };
+
+export type BridgeObservableEvent = BridgeLifecycleEvent | AcpxEvent;
+
+export interface ProgressCardState {
+  runId: string;
+  rootName: string;
+  sessionName?: string;
+  status: ProgressStatus;
+  stage: ProgressStage;
+  latestTool?: string;
+  preview: string;
+  startedAt: number;
+  elapsedMs: number;
+}
+
+export interface ObservabilityRun {
+  runId: string;
+  channel: string;
+  peerId: string;
+  projectId: string | null;
+  threadId: string | null;
+  deliveryChatId: string | null;
+  deliverySurfaceType: "thread" | null;
+  deliverySurfaceRef: string | null;
+  sessionName: string;
+  rootId: string;
+  status: ProgressStatus;
+  stage: ProgressStage;
+  latestPreview: string;
+  latestTool: string | null;
+  errorText: string | null;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+export interface ObservabilityProjectSummary {
+  projectId: string;
+  name: string;
+  chatId: string | null;
+  threadCount: number;
+  runningThreadCount: number;
+  updatedAt: string;
+}
+
+export interface ObservabilityThreadSummary {
+  threadId: string;
+  projectId: string;
+  chatId: string;
+  feishuThreadId: string;
+  title: string;
+  sessionName: string;
+  status: CodexThreadStatus;
+  ownerOpenId: string;
+  anchorMessageId: string;
+  latestMessageId: string;
+  lastRunId: string | null;
+  lastActivityAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+
+export interface ReapableThread {
+  threadId: string;
+  projectId: string;
+  sessionName: string;
+  cwd: string;
+  lastActivityAt: string;
+}
+
+export interface ObservabilityRunEvent {
+  runId: string;
+  seq: number;
+  source: "bridge" | "acpx" | "system";
+  status: ProgressStatus;
+  stage: ProgressStage;
+  preview: string;
+  toolName: string | null;
+  createdAt: string;
+}
+
+export interface ObservabilityOverview {
+  activeRuns: number;
+  totalRuns: number;
+  completedRuns24h: number;
+  failedRuns24h: number;
+  latestError: string | null;
+  updatedAt: string | null;
+}
+
+export interface SessionSnapshot {
+  channel: string;
+  peerId: string;
+  sessionName: string;
+  latestRunId: string | null;
+  latestRunStatus: ProgressStatus | null;
+  latestRunStage: ProgressStage | null;
+  updatedAt: string;
+}
+
+export interface ListRunsFilters {
+  status?: ProgressStatus;
+  peerId?: string;
+  sessionName?: string;
+  limit?: number;
+}
+
+export type RunContext =
+  | {
+      sessionName: string;
+      cwd: string;
+      targetKind?: "bridge_session";
+    }
+  | {
+      targetKind: "codex_thread";
+      threadId: string;
+      sessionName: string;
+      cwd: string;
+    };
+
+export interface RunOutcome {
+  events: AcpxEvent[];
+  exitCode: number;
+}
+
+export type BridgeReply =
+  | { kind: "system"; text: string }
+  | { kind: "progress"; text: string; status: ProgressStatus }
+  | { kind: "card"; card: Record<string, unknown> }
+  | { kind: "assistant"; text: string };
