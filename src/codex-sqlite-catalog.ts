@@ -22,6 +22,7 @@ interface CodexThreadRow {
 export class CodexSqliteCatalog {
   private readonly sqlitePath: string;
   private readonly sessionIndexPath: string | undefined;
+  private readonly sessionsRootDir: string | undefined;
 
   public constructor(input?: {
     sqlitePath?: string;
@@ -36,6 +37,10 @@ export class CodexSqliteCatalog {
     this.sessionIndexPath =
       input?.sessionIndexPath ??
       path.join(path.dirname(this.sqlitePath), "session_index.jsonl");
+    this.sessionsRootDir = path.join(
+      path.dirname(this.sessionIndexPath ?? this.sqlitePath),
+      "sessions",
+    );
   }
 
   public listProjects(options?: { includeArchived?: boolean }): CodexCatalogProject[] {
@@ -109,7 +114,7 @@ export class CodexSqliteCatalog {
   }
 
   public getThread(threadId: string): CodexCatalogThread | undefined {
-    const threadNames = this.readThreadNames();
+    const sessionIndex = this.readSessionIndexEntries();
     const db = this.openDb();
     try {
       const row = db.prepare(`
@@ -128,14 +133,19 @@ export class CodexSqliteCatalog {
         WHERE id = ?
       `).get(threadId) as CodexThreadRow | undefined;
 
-      return row ? mapThreadRow(row, threadNames) : undefined;
+      if (row) {
+        return mapThreadRow(row, sessionIndex);
+      }
+
+      const sessionEntry = sessionIndex.get(threadId);
+      return sessionEntry ? this.readSupplementalThread(threadId, sessionEntry) : undefined;
     } finally {
       db.close();
     }
   }
 
   private readThreads(options?: { includeArchived?: boolean }): CodexCatalogThread[] {
-    const threadNames = this.readThreadNames();
+    const sessionIndex = this.readSessionIndexEntries();
     const db = this.openDb();
     try {
       const rows = db.prepare(`
@@ -154,16 +164,20 @@ export class CodexSqliteCatalog {
         ORDER BY updated_at DESC
       `).all() as CodexThreadRow[];
 
-      return rows
-        .map(row => mapThreadRow(row, threadNames))
+      const threads = rows.map(row => mapThreadRow(row, sessionIndex));
+      const knownThreadIds = new Set(rows.map(row => row.id));
+
+      threads.push(...this.readSupplementalThreads(knownThreadIds, sessionIndex));
+
+      return threads
         .filter(thread => options?.includeArchived ? true : !thread.archived);
     } finally {
       db.close();
     }
   }
 
-  private readThreadNames(): Map<string, string> {
-    const threadNames = new Map<string, { updatedAt: string; threadName: string }>();
+  private readSessionIndexEntries(): Map<string, SessionIndexEntry> {
+    const threadNames = new Map<string, SessionIndexEntry>();
     if (!this.sessionIndexPath || !existsSync(this.sessionIndexPath)) {
       return new Map();
     }
@@ -196,9 +210,110 @@ export class CodexSqliteCatalog {
       }
     }
 
-    return new Map(
-      [...threadNames.entries()].map(([id, value]) => [id, value.threadName]),
-    );
+    return threadNames;
+  }
+
+  private readSupplementalThreads(
+    knownThreadIds: Set<string>,
+    sessionIndex: Map<string, SessionIndexEntry>,
+  ): CodexCatalogThread[] {
+    const missingThreadIds = [...sessionIndex.keys()].filter(threadId => !knownThreadIds.has(threadId));
+    if (missingThreadIds.length === 0) {
+      return [];
+    }
+
+    const rolloutPaths = this.findRolloutPathsByThreadId(new Set(missingThreadIds));
+    const threads: CodexCatalogThread[] = [];
+    for (const threadId of missingThreadIds) {
+      const sessionEntry = sessionIndex.get(threadId);
+      if (!sessionEntry) {
+        continue;
+      }
+
+      const rolloutPath = rolloutPaths.get(threadId);
+      if (!rolloutPath) {
+        continue;
+      }
+
+      const thread = this.readSupplementalThread(threadId, sessionEntry, rolloutPath);
+      if (thread) {
+        threads.push(thread);
+      }
+    }
+
+    return threads;
+  }
+
+  private readSupplementalThread(
+    threadId: string,
+    sessionEntry: SessionIndexEntry,
+    rolloutPath?: string,
+  ): CodexCatalogThread | undefined {
+    const resolvedRolloutPath = rolloutPath ?? this.findRolloutPathsByThreadId(new Set([threadId])).get(threadId);
+    if (!resolvedRolloutPath) {
+      return undefined;
+    }
+
+    const sessionMeta = readSessionMeta(resolvedRolloutPath, threadId);
+    if (!sessionMeta) {
+      return undefined;
+    }
+
+    const cwd = normalizeCodexCwd(sessionMeta.cwd);
+    return {
+      threadId,
+      projectKey: encodeProjectKey(cwd),
+      cwd,
+      displayName: path.basename(cwd) || cwd,
+      title: sessionEntry.threadName,
+      source: sessionMeta.source,
+      archived: false,
+      updatedAt: sessionEntry.updatedAt,
+      createdAt: sessionMeta.createdAt,
+      gitBranch: null,
+      cliVersion: sessionMeta.cliVersion,
+      rolloutPath: resolvedRolloutPath,
+    };
+  }
+
+  private findRolloutPathsByThreadId(threadIds: Set<string>): Map<string, string> {
+    const matches = new Map<string, string>();
+    if (!this.sessionsRootDir || !existsSync(this.sessionsRootDir) || threadIds.size === 0) {
+      return matches;
+    }
+
+    const pendingIds = new Set(threadIds);
+    const queue = [this.sessionsRootDir];
+
+    while (queue.length > 0 && pendingIds.size > 0) {
+      const currentDir = queue.pop();
+      if (!currentDir) {
+        continue;
+      }
+
+      for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
+        const fullPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+          queue.push(fullPath);
+          continue;
+        }
+
+        if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+          continue;
+        }
+
+        for (const threadId of pendingIds) {
+          if (!entry.name.includes(threadId)) {
+            continue;
+          }
+          matches.set(threadId, fullPath);
+          pendingIds.delete(threadId);
+          break;
+        }
+      }
+    }
+
+    return matches;
   }
 
   private openDb(): Database.Database {
@@ -225,9 +340,9 @@ export function resolveDefaultCodexStateSqlitePath(codexHomeDir = path.join(home
   return path.join(codexHomeDir, candidates[0]);
 }
 
-function mapThreadRow(row: CodexThreadRow, threadNames: Map<string, string>): CodexCatalogThread {
+function mapThreadRow(row: CodexThreadRow, sessionIndex: Map<string, SessionIndexEntry>): CodexCatalogThread {
   const cwd = normalizeCodexCwd(row.cwd);
-  const resolvedTitle = threadNames.get(row.id) ?? row.title;
+  const resolvedTitle = sessionIndex.get(row.id)?.threadName ?? row.title;
 
   return {
     threadId: row.id,
@@ -243,6 +358,46 @@ function mapThreadRow(row: CodexThreadRow, threadNames: Map<string, string>): Co
     cliVersion: row.cli_version,
     rolloutPath: row.rollout_path,
   };
+}
+
+function readSessionMeta(filePath: string, threadId: string): SessionMeta | undefined {
+  const content = readFileSync(filePath, "utf8");
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+
+    if (parsed?.type !== "session_meta" || parsed?.payload?.id !== threadId) {
+      continue;
+    }
+
+    if (typeof parsed?.payload?.cwd !== "string") {
+      return undefined;
+    }
+
+    const createdAt = typeof parsed?.payload?.timestamp === "string"
+      ? parsed.payload.timestamp
+      : typeof parsed?.timestamp === "string"
+        ? parsed.timestamp
+        : new Date(0).toISOString();
+
+    return {
+      cwd: parsed.payload.cwd,
+      source: typeof parsed?.payload?.source === "string" ? parsed.payload.source : "unknown",
+      cliVersion: typeof parsed?.payload?.cli_version === "string" ? parsed.payload.cli_version : "",
+      createdAt,
+    };
+  }
+
+  return undefined;
 }
 
 function normalizeCodexCwd(raw: string): string {
@@ -282,4 +437,16 @@ function scoreDisplayCwd(candidate: string): number {
 function extractStateVersion(fileName: string): number {
   const match = fileName.match(/^state_(\d+)\.sqlite$/i);
   return match ? Number.parseInt(match[1] ?? "0", 10) : 0;
+}
+
+interface SessionIndexEntry {
+  updatedAt: string;
+  threadName: string;
+}
+
+interface SessionMeta {
+  cwd: string;
+  source: string;
+  cliVersion: string;
+  createdAt: string;
 }

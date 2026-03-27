@@ -257,6 +257,7 @@ Codex 本地线程目录读取层。
 - 按 `cwd` 归并出派生项目列表
 - 提供线程列表和线程按 `thread_id` 查询
 - 线程标题优先取 `session_index.jsonl` 中最新的 `thread_name`，以尽量和 Codex App 显示保持一致；取不到时再回退到 SQLite `threads.title`
+- 当 `state_*.sqlite` 还没追上最新线程时，会继续读取 `session_index.jsonl` 与 `sessions/**/rollout-*.jsonl` 里的 `session_meta`，补齐最近创建但尚未落进 SQLite 的线程
 - 不在 CA 本地复制保存 Codex 项目/线程清单
 
 ### 5.7 `src/project-thread-service.ts`

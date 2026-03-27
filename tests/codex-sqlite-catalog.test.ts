@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -189,6 +189,75 @@ describe("CodexSqliteCatalog", () => {
     expect(thread).toMatchObject({
       threadId: "thread-alpha-2",
       title: "Alpha 正式名称",
+    });
+  });
+
+  it("supplements threads from session rollouts when session_index is ahead of the SQLite catalog", () => {
+    const sessionDir = path.join(rootDir, "sessions", "2026", "03", "27");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      sessionIndexPath,
+      [
+        JSON.stringify({
+          id: "thread-alpha-2",
+          thread_name: "旧的 Alpha 名称",
+          updated_at: "2026-03-25T00:00:00.000Z",
+        }),
+        JSON.stringify({
+          id: "thread-alpha-2",
+          thread_name: "Alpha 正式名称",
+          updated_at: "2026-03-26T00:00:00.000Z",
+        }),
+        JSON.stringify({
+          id: "thread-alpha-3",
+          thread_name: "Alpha 会话索引补录",
+          updated_at: "2026-03-27T10:23:32.707Z",
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(
+      path.join(sessionDir, "rollout-2026-03-27T18-22-18-thread-alpha-3.jsonl"),
+      [
+        JSON.stringify({
+          timestamp: "2026-03-27T10:23:31.824Z",
+          type: "session_meta",
+          payload: {
+            id: "thread-alpha-3",
+            timestamp: "2026-03-27T10:22:18.874Z",
+            cwd: "D:\\Repos\\Alpha",
+            cli_version: "0.115.0-alpha.27",
+            source: "vscode",
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    const catalog = new CodexSqliteCatalog({
+      sqlitePath,
+      sessionIndexPath,
+    });
+
+    const project = catalog.listProjects()[0];
+    const threads = catalog.listThreads(project.projectKey);
+
+    expect(threads.map(thread => thread.threadId)).toEqual([
+      "thread-alpha-3",
+      "thread-alpha-2",
+      "thread-alpha-1",
+    ]);
+    expect(threads[0]).toMatchObject({
+      threadId: "thread-alpha-3",
+      title: "Alpha 会话索引补录",
+      cwd: "D:\\Repos\\Alpha",
+      source: "vscode",
+      archived: false,
+      cliVersion: "0.115.0-alpha.27",
+    });
+    expect(catalog.getThread("thread-alpha-3")).toMatchObject({
+      threadId: "thread-alpha-3",
+      title: "Alpha 会话索引补录",
     });
   });
 });
