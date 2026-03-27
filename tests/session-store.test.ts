@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { SessionStore } from "../src/workspace/session-store.js";
@@ -197,5 +198,98 @@ describe("SessionStore", () => {
         preview: "使用 `using-superpowers` 技能",
       }),
     ]);
+  });
+
+  it("migrates the legacy workspace root and drops obsolete tables", () => {
+    const dbPath = path.join(rootDir, "bridge.db");
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        repo_root TEXT NOT NULL,
+        branch_policy TEXT NOT NULL,
+        permission_mode TEXT NOT NULL,
+        env_allowlist TEXT NOT NULL,
+        idle_ttl_hours INTEGER NOT NULL
+      );
+
+      INSERT INTO workspaces (
+        id, name, cwd, repo_root, branch_policy, permission_mode, env_allowlist, idle_ttl_hours
+      ) VALUES (
+        'legacy-root',
+        'Legacy Root',
+        'D:/legacy',
+        'D:/legacy',
+        'reuse',
+        'workspace-write',
+        '["PATH","HOME"]',
+        12
+      );
+
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE acp_sessions (
+        session_name TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE runs (
+        run_id TEXT PRIMARY KEY,
+        session_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE message_links (
+        run_id TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        PRIMARY KEY (run_id, message_id)
+      );
+
+      CREATE TABLE event_offsets (
+        run_id TEXT PRIMARY KEY,
+        line_offset INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    legacyDb.close();
+
+    store = new SessionStore(dbPath);
+
+    expect(store.getRoot()).toMatchObject({
+      id: "legacy-root",
+      name: "Legacy Root",
+      cwd: "D:/legacy",
+      repoRoot: "D:/legacy",
+      branchPolicy: "reuse",
+      permissionMode: "workspace-write",
+      envAllowlist: ["PATH", "HOME"],
+      idleTtlHours: 12,
+    });
+
+    const migratedDb = new Database(dbPath, { readonly: true });
+    const tables = migratedDb.prepare(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `).all() as Array<{ name: string }>;
+    migratedDb.close();
+
+    expect(tables.map(table => table.name)).not.toEqual(expect.arrayContaining([
+      "workspaces",
+      "users",
+      "acp_sessions",
+      "runs",
+      "message_links",
+      "event_offsets",
+    ]));
   });
 });

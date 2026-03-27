@@ -1,18 +1,30 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createRuntime } from "../src/runtime.js";
 import type { BridgeConfig } from "../src/config.js";
 import type { FeishuApiClientLike } from "../src/feishu-adapter.js";
 
 describe("createRuntime", () => {
+  let rootDir: string;
+
+  beforeEach(() => {
+    rootDir = mkdtempSync(path.join(tmpdir(), "runtime-store-"));
+  });
+
+  afterEach(() => {
+    rmSync(rootDir, { recursive: true, force: true });
+  });
+
   it("seeds the configured bridge root into the session store", async () => {
     const config: BridgeConfig = {
       server: { port: 3000, host: "127.0.0.1" },
       storage: {
-        sqlitePath: path.join(process.cwd(), "data", "runtime-test.db"),
-        logDir: path.join(process.cwd(), "logs"),
+        sqlitePath: path.join(rootDir, "runtime-test.db"),
+        logDir: path.join(rootDir, "logs"),
       },
       acpx: {
         command: "acpx",

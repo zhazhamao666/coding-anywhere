@@ -301,6 +301,11 @@ SQLite 持久化层。
 - observability_run_events
 - `/ops/*` 查询
 
+另外：
+
+- 启动迁移时会把旧版遗留表 `workspaces`、`users`、`acp_sessions`、`runs`、`message_links`、`event_offsets` 清理掉
+- 如果数据库里仍只有旧版 `workspaces` 根配置而没有 `bridge_root`，会先把旧根信息迁入 `bridge_root` 再删除旧表
+
 ## 6. 路由与消息流
 
 ## 6.1 DM 普通消息

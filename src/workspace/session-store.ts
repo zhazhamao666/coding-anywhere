@@ -933,11 +933,6 @@ export class SessionStore {
 
   private migrate(): void {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      );
-
       CREATE TABLE IF NOT EXISTS bridge_root (
         slot TEXT PRIMARY KEY,
         id TEXT NOT NULL,
@@ -990,32 +985,6 @@ export class SessionStore {
         FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
       );
 
-      CREATE TABLE IF NOT EXISTS acp_sessions (
-        session_name TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS runs (
-        run_id TEXT PRIMARY KEY,
-        session_name TEXT NOT NULL,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS message_links (
-        run_id TEXT NOT NULL,
-        channel TEXT NOT NULL,
-        peer_id TEXT NOT NULL,
-        message_id TEXT NOT NULL,
-        PRIMARY KEY (run_id, message_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS event_offsets (
-        run_id TEXT PRIMARY KEY,
-        line_offset INTEGER NOT NULL DEFAULT 0
-      );
-
       CREATE TABLE IF NOT EXISTS observability_runs (
         run_id TEXT PRIMARY KEY,
         channel TEXT NOT NULL,
@@ -1066,9 +1035,58 @@ export class SessionStore {
       ON codex_threads(chat_id, feishu_thread_id);
     `);
 
+    this.migrateLegacyRootTable();
     this.migrateThreadBindingsTable();
     this.migrateCodexWindowBindingsTable();
     this.migrateObservabilityRunsTable();
+    this.dropObsoleteTables();
+  }
+
+  private migrateLegacyRootTable(): void {
+    const bridgeRootCount = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM bridge_root
+    `).get() as {
+      count: number;
+    };
+
+    if (bridgeRootCount.count > 0) {
+      return;
+    }
+
+    const legacyColumns = this.db.prepare(`PRAGMA table_info(workspaces)`).all() as Array<{
+      name: string;
+    }>;
+    if (legacyColumns.length === 0) {
+      return;
+    }
+
+    const legacyRoot = this.db.prepare(`
+      SELECT
+        id,
+        name,
+        cwd,
+        repo_root,
+        branch_policy,
+        permission_mode,
+        env_allowlist,
+        idle_ttl_hours
+      FROM workspaces
+      ORDER BY id ASC
+      LIMIT 1
+    `).get() as LegacyWorkspaceRootRow | undefined;
+
+    if (!legacyRoot) {
+      return;
+    }
+
+    this.db.prepare(`
+      INSERT INTO bridge_root (
+        slot, id, name, cwd, repo_root, branch_policy, permission_mode, env_allowlist, idle_ttl_hours
+      ) VALUES (
+        'default', @id, @name, @cwd, @repo_root, @branch_policy, @permission_mode, @env_allowlist, @idle_ttl_hours
+      )
+    `).run(legacyRoot);
   }
 
   private migrateThreadBindingsTable(): void {
@@ -1154,6 +1172,17 @@ export class SessionStore {
         updated_at TEXT NOT NULL,
         PRIMARY KEY (channel, peer_id)
       );
+    `);
+  }
+
+  private dropObsoleteTables(): void {
+    this.db.exec(`
+      DROP TABLE IF EXISTS workspaces;
+      DROP TABLE IF EXISTS users;
+      DROP TABLE IF EXISTS acp_sessions;
+      DROP TABLE IF EXISTS runs;
+      DROP TABLE IF EXISTS message_links;
+      DROP TABLE IF EXISTS event_offsets;
     `);
   }
 }
@@ -1302,6 +1331,17 @@ interface ReapableThreadRow {
   session_name: string;
   cwd: string;
   last_activity_at: string;
+}
+
+interface LegacyWorkspaceRootRow {
+  id: string;
+  name: string;
+  cwd: string;
+  repo_root: string;
+  branch_policy: string;
+  permission_mode: RootProfile["permissionMode"];
+  env_allowlist: string;
+  idle_ttl_hours: number;
 }
 
 function rowToRoot(row: RootRow): RootProfile {
