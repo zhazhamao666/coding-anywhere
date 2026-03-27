@@ -100,6 +100,7 @@ export class BridgeService {
       snapshot: ProgressCardState,
       source: "bridge" | "acpx" | "system",
       toolName?: string,
+      coalesceSimilar = false,
     ) => {
       currentProgress = snapshot;
       this.dependencies.store.appendRunEvent({
@@ -109,6 +110,7 @@ export class BridgeService {
         stage: currentProgress.stage,
         preview: currentProgress.preview,
         toolName,
+        coalesceSimilar,
       });
       await options?.onProgress?.(currentProgress);
     };
@@ -159,7 +161,12 @@ export class BridgeService {
           : buildCodexPromptEnvelope(resolved.root, routed.prompt),
         async event => {
           const snapshot = reduceProgressEvent(currentProgress, event);
-          await emitSnapshot(snapshot, "acpx", event.type === "tool_call" ? event.toolName : undefined);
+          await emitSnapshot(
+            snapshot,
+            "acpx",
+            event.type === "tool_call" ? event.toolName : undefined,
+            event.type === "text" || event.type === "waiting",
+          );
         },
       );
 

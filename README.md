@@ -121,6 +121,11 @@ http://127.0.0.1:3100/ops/overview
 http://127.0.0.1:3100/ops/projects
 ```
 
+说明：
+
+- `/ops/ui` 会展示聚合后的后台时间线
+- 连续流式文本不会为每个 chunk 单独落一条事件，而是按同阶段连续流合并
+
 ## 文档
 
 - [项目总说明](./docs/project-full-overview.md)

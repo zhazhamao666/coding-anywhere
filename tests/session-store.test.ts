@@ -145,4 +145,57 @@ describe("SessionStore", () => {
       }),
     ]);
   });
+
+  it("coalesces consecutive text observability events instead of storing every chunk", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    store.upsertRoot({
+      id: "main",
+      name: "Main Root",
+      cwd: path.join(rootDir, "repos"),
+      repoRoot: path.join(rootDir, "repos"),
+      branchPolicy: "reuse",
+      permissionMode: "workspace-write",
+      envAllowlist: ["PATH"],
+      idleTtlHours: 24,
+    });
+
+    const observabilityStore = store as any;
+    observabilityStore.createRun({
+      runId: "run-merge",
+      channel: "feishu",
+      peerId: "ou_demo",
+      sessionName: "codex-main",
+      rootId: "main",
+      status: "queued",
+      stage: "received",
+      latestPreview: "[ca] received",
+    });
+
+    observabilityStore.appendRunEvent({
+      runId: "run-merge",
+      source: "acpx",
+      status: "running",
+      stage: "text",
+      preview: "使用",
+      coalesceSimilar: true,
+    });
+    observabilityStore.appendRunEvent({
+      runId: "run-merge",
+      source: "acpx",
+      status: "running",
+      stage: "text",
+      preview: "使用 `using-superpowers` 技能",
+      coalesceSimilar: true,
+    });
+
+    expect(observabilityStore.listRunEvents("run-merge")).toEqual([
+      expect.objectContaining({
+        runId: "run-merge",
+        seq: 1,
+        stage: "text",
+        preview: "使用 `using-superpowers` 技能",
+      }),
+    ]);
+  });
 });

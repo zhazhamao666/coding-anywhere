@@ -554,6 +554,12 @@ channel + peer_id -> codex_thread_id
 
 因此后台已经不再只是“看 session”，而是能看到这条 run 属于哪个项目、哪个线程、最终该投递回哪里。
 
+另外，`observability_run_events` 的写入策略已经做了收敛：
+
+- 生命周期、工具调用、终态仍按阶段保留事件
+- 连续的流式 `text` / `waiting` 更新会按“相邻同阶段事件”合并
+- 因此 `/ops/ui` 和 `/ops/runs/:id` 看到的是更可读的阶段时间线，而不是每个 chunk 一条记录
+
 ## 11. 配置结构
 
 当前 `config.toml` 主要包含：

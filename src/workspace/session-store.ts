@@ -581,6 +581,7 @@ export class SessionStore {
     preview: string;
     toolName?: string | null;
     createdAt?: string;
+    coalesceSimilar?: boolean;
   }): void {
     const createdAt = input.createdAt ?? new Date().toISOString();
 
@@ -605,6 +606,14 @@ export class SessionStore {
         @createdAt
       )
     `);
+    const updateExistingEvent = this.db.prepare(`
+      UPDATE observability_run_events
+      SET
+        preview = @preview,
+        tool_name = @toolName,
+        created_at = @createdAt
+      WHERE run_id = @runId AND seq = @seq
+    `);
     const updateRun = this.db.prepare(`
       UPDATE observability_runs
       SET
@@ -621,6 +630,13 @@ export class SessionStore {
     `);
 
     this.db.transaction(() => {
+      const latestEvent = this.db.prepare(`
+        SELECT seq, source, status, stage, tool_name
+        FROM observability_run_events
+        WHERE run_id = ?
+        ORDER BY seq DESC
+        LIMIT 1
+      `).get(input.runId) as LatestRunEventRow | undefined;
       const seqRow = this.db.prepare(`
         SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
         FROM observability_run_events
@@ -628,17 +644,35 @@ export class SessionStore {
       `).get(input.runId) as {
         next_seq: number;
       };
+      const toolName = input.toolName ?? null;
+      const shouldCoalesce = Boolean(
+        input.coalesceSimilar &&
+        latestEvent &&
+        latestEvent.source === input.source &&
+        latestEvent.status === input.status &&
+        latestEvent.stage === input.stage &&
+        (latestEvent.tool_name ?? null) === toolName,
+      );
 
-      insertEvent.run({
-        ...input,
-        seq: seqRow.next_seq,
-        toolName: input.toolName ?? null,
-        createdAt,
-      });
+      if (shouldCoalesce && latestEvent) {
+        updateExistingEvent.run({
+          ...input,
+          seq: latestEvent.seq,
+          toolName,
+          createdAt,
+        });
+      } else {
+        insertEvent.run({
+          ...input,
+          seq: seqRow.next_seq,
+          toolName,
+          createdAt,
+        });
+      }
 
       updateRun.run({
         ...input,
-        toolName: input.toolName ?? null,
+        toolName,
         createdAt,
       });
     })();
@@ -1179,6 +1213,14 @@ interface RunEventRow {
   preview: string;
   tool_name: string | null;
   created_at: string;
+}
+
+interface LatestRunEventRow {
+  seq: number;
+  source: ObservabilityRunEvent["source"];
+  status: ProgressStatus;
+  stage: ProgressStage;
+  tool_name: string | null;
 }
 
 interface SessionSnapshotRow {

@@ -328,6 +328,45 @@ describe("BridgeService", () => {
     ]);
   });
 
+  it("coalesces streamed text chunks into a single backend observability text event", async () => {
+    const runner = createRunnerDouble([
+      { type: "text", content: "使用" },
+      { type: "text", content: "使用 `using-superpowers`" },
+      { type: "text", content: "使用 `using-superpowers` 技能" },
+      { type: "done", content: "使用 `using-superpowers` 技能" },
+    ]);
+    const snapshots: ProgressCardState[] = [];
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    await service.handleMessage(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        text: "test",
+      },
+      {
+        onProgress: snapshot => {
+          snapshots.push(snapshot);
+        },
+      },
+    );
+
+    const observabilityStore = store as any;
+    const textEvents = observabilityStore
+      .listRunEvents(snapshots[0]?.runId)
+      .filter((event: { source: string; stage: string }) => event.source === "acpx" && event.stage === "text");
+
+    expect(textEvents).toEqual([
+      expect.objectContaining({
+        preview: "使用 `using-superpowers` 技能",
+      }),
+    ]);
+    expect(snapshots.filter(snapshot => snapshot.stage === "text")).toHaveLength(3);
+  });
+
   it("returns a hub card for CA help and unknown subcommands", async () => {
     const service = new BridgeService({
       store,
