@@ -18,6 +18,7 @@
 
 - 在开始修改代码前，先阅读 [docs/project-full-overview.md](D:/eijud/OneDrive/eijud-sync/project/coding-anywhere/docs/project-full-overview.md)。
 - 在提交代码前，确认总文档是否仍然准确反映当前实现。
+- 允许将临时计划文档写入 `plan/` 目录辅助工作，但该目录内容视为本地工作产物，不提交到 git。
 
 ## Feishu Development Rule
 
