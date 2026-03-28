@@ -88,6 +88,11 @@ npm run start
 - `config.toml` 里的允许用户列表和 root 配置
 - 本机可用的 Codex / acpx 环境
 
+补充说明：
+
+- 首次启动时如果本地还没有 `data/bridge.db`，程序会自动创建 SQLite 数据库和所需表结构
+- 但仓库不会提交 `config.toml`，所以新环境仍然需要先执行 `npm run init:config` 并补齐配置，服务才会正常启动
+
 ## 最小使用方式
 
 虽然这个项目支持一组 `/ca` 命令，但对大多数使用场景来说，可以先这样用：
