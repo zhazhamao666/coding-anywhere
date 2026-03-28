@@ -81,6 +81,8 @@ npm run doctor
 npm run start
 ```
 
+飞书侧配置建议先看：[飞书配置说明](./docs/feishu-setup.md)。这份说明默认优先复用飞书官方的 OpenClaw 一键创建入口，再把生成好的应用凭据回填到本项目。
+
 启动前你至少需要准备好：
 
 - 一个已配置长连接的 Feishu 应用
@@ -134,7 +136,7 @@ http://127.0.0.1:3100/ops/projects
 ## 文档
 
 - [项目总说明](./docs/project-full-overview.md)
-- [飞书标准测试剧本](./docs/feishu-test-playbook.md)
+- [飞书配置说明](./docs/feishu-setup.md)
 - [故障排查手册](./docs/troubleshooting.md)
 - [管理员部署手册](./docs/admin-deployment.md)
 

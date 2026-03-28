@@ -577,6 +577,8 @@ channel + peer_id -> codex_thread_id
 - `[feishu]`
 - `[root]`
 
+飞书应用初始化、长连接配置以及 `config.toml` 的字段映射，可参考 [飞书配置说明](./feishu-setup.md)。
+
 ### 11.1 新增配置
 
 本轮新增的关键字段有：

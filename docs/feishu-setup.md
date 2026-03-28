@@ -1,72 +1,178 @@
-# Feishu App Setup
+# 飞书配置说明
 
-这份清单用于拿到 `config.toml` 里需要的真实值。
+> 推荐做法：直接使用飞书官方的 [一键创建一个 OpenClaw 机器人](https://open.feishu.cn/page/openclaw)，然后把生成好的飞书应用凭据填回 `Coding Anywhere`。
 
-## 1. 创建企业自建应用
+## 一句话推荐
 
-1. 打开 `https://open.feishu.cn`
-2. 进入应用管理，创建企业自建应用
-3. 填写应用名称、描述和图标
+优先走这条路径：
 
-## 2. 复制凭据
+1. 登录飞书后打开官方一键创建入口。
+2. 按官方流程把飞书应用创建出来。
+3. 拿到这套应用的 `App ID`、`App Secret`。
+4. 把它们填回本项目的 `config.toml`。
+5. 用长连接方式配置事件和卡片回调。
+6. 执行 `npm run doctor`，确认本地配置无误后再启动服务。
 
-在“凭证与基础信息”里复制：
+如果你已经有一个可用的飞书应用，也可以直接复用，不需要重新创建。
+
+## 1. 创建飞书应用
+
+官方入口：
+
+- [一键创建一个 OpenClaw 机器人](https://open.feishu.cn/page/openclaw)
+
+说明：
+
+- 这个链接会先跳到飞书登录页；这是正常现象，登录企业飞书后再继续即可
+- 如果企业策略不允许直接使用一键创建，就在飞书开发者平台手动创建企业自建应用，并添加“机器人”能力
+
+创建完成后，确认应用已经具备：
+
+- 企业自建应用
+- 机器人能力
+- 正常可发布的应用版本
+
+## 2. 获取 App ID 和 App Secret
+
+在目标应用的“基础信息 -> 凭证与基础信息”里记录：
 
 - `App ID`
 - `App Secret`
 
-将它们分别填入：
+这两个值要分别填到：
 
 - `feishu.appId`
 - `feishu.appSecret`
 
-## 3. 开启机器人能力
+注意：
 
-在“应用能力 -> 机器人”中：
+- 这是飞书开放平台调用凭据，不要提交到 git
+- `config.example.toml` 里的 `cli_xxx` 和 `replace-me` 只是占位值
 
-1. 启用机器人能力
-2. 设置机器人名称
+## 3. 发布应用版本
+
+只要你修改过能力、权限、事件或回调配置，都要确认：
+
+1. 已创建版本
+2. 已确认发布
+3. 如果企业有管理员审核流程，已经审核通过
+
+很多“后台明明配好了但机器人没反应”的问题，最后都卡在“改完没发布”。
 
 ## 4. 配置事件订阅
 
-在“事件订阅”中：
+进入“开发配置 -> 事件与回调”，在“事件配置”里确认：
 
-1. 选择“使用长连接接收事件（WebSocket）”
-2. 添加事件 `im.message.receive_v1`
+1. 订阅方式是“使用长连接接收事件”
+2. 已经添加消息接收事件
 
-## 5. 配置权限
+对 `Coding Anywhere` 来说，至少要保证“接收消息”链路是通的。
 
-按已验证的 Feishu/OpenClaw 基线，至少确认具备消息接收与发送相关权限，重点检查：
+## 5. 配置卡片回调
 
-- `im:message`
-- `im:message:readonly`
-- `im:message.p2p_msg:readonly`
-- `im:message:send_as_bot`
-- `im:resource`
-- `im:chat.access_event.bot_p2p_chat:read`
+在同一个“开发配置 -> 事件与回调”页面的“回调配置”里确认：
 
-说明：
+1. 订阅方式是“使用长连接接收回调”
+2. 已添加卡片交互回调
 
-- 当前 Coding Anywhere 会优先使用飞书交互卡片与 CardKit 做实时状态反馈
-- 如果你的环境里 CardKit 当前不可用，Coding Anywhere 会自动回退到普通交互卡片更新
-- 因此基础消息权限必须可用，才能保证最差情况下仍有状态卡回写
+原因很简单：
 
-## 6. 发布应用
+- `Coding Anywhere` 的导航卡按钮依赖飞书卡片交互回调
+- 当前项目就是通过飞书长连接直接处理按钮点击并回卡
 
-1. 创建版本
-2. 提交发布
-3. 等待企业管理员审核或自动通过
+## 6. 按需打开群聊能力
 
-## 7. 获取 allowlist 的 open_id
+如果你只打算先在飞书 DM 里使用，可以先把目标限定在私聊联通，不急着开群聊敏感权限。
 
-把真实用户 `open_id` 填到 `feishu.allowlist`。占位值 `ou_xxx` 只是示例，不能直接使用。
+如果你还希望把机器人拉进群里，用在“已注册的话题线程”场景里，就需要再确认两件事：
 
-## 8. 运行本地预检
+1. 飞书后台已经允许机器人接收群消息
+2. 你是否要在项目配置里开启 `feishu.requireGroupMention = true`
 
-在项目目录执行：
+建议：
+
+- 想降低误触发，设为 `true`
+- 想让已注册线程里的消息默认都能进入服务，保留 `false`
+
+## 7. 按需配置加密推送
+
+如果你在飞书后台启用了事件或回调加密推送，再把飞书后台里的加密密钥填到：
+
+- `feishu.encryptKey`
+
+如果后台没有开启加密推送，就保持空字符串：
+
+```toml
+encryptKey = ""
+```
+
+## 8. 把飞书应用信息填回 Coding Anywhere
+
+飞书侧准备好之后，回到项目目录执行：
+
+```bash
+npm run init:config
+```
+
+然后把 `config.toml` 里的 `[feishu]` 段改成真实值。一个最常见的写法如下：
+
+```toml
+[feishu]
+appId = "cli_xxx"
+appSecret = "replace-me"
+websocketUrl = "wss://open.feishu.cn/open-apis/bot/v2/hub"
+apiBaseUrl = "https://open.feishu.cn/open-apis"
+allowlist = ["ou_xxx"]
+requireGroupMention = false
+encryptKey = ""
+```
+
+字段对应关系：
+
+| 飞书后台值 | `config.toml` 字段 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `App ID` | `feishu.appId` | 是 | 飞书开放平台应用凭据 |
+| `App Secret` | `feishu.appSecret` | 是 | 飞书开放平台应用凭据 |
+| 当前实际使用人的 `open_id` | `feishu.allowlist` | 是 | `ou_xxx` 只是占位值，必须替换 |
+| 加密密钥 | `feishu.encryptKey` | 按需 | 只有飞书后台启用了加密推送才填 |
+| 群消息是否必须 `@` 机器人 | `feishu.requireGroupMention` | 按需 | 这是项目侧开关，不是飞书后台字段 |
+
+两个通常不用改的默认值：
+
+- `feishu.websocketUrl = "wss://open.feishu.cn/open-apis/bot/v2/hub"`
+- `feishu.apiBaseUrl = "https://open.feishu.cn/open-apis"`
+
+## 9. 启动前最小检查清单
+
+在项目目录里按顺序执行：
 
 ```bash
 npm run doctor
 ```
 
-只有当 `doctor` 不再报告 `blocking` 项时，再启动服务。
+确认 `doctor` 至少不再报告这些阻塞项：
+
+- `feishu.appId`
+- `feishu.appSecret`
+- `feishu.allowlist`
+
+然后再启动服务，并做最小联调：
+
+1. 飞书 DM 发送 `/ca`
+2. 确认能收到导航卡
+3. 再发送 `test`
+4. 确认服务有最终回复
+
+如果你还需要群线程能力，再继续按 [项目总说明](./project-full-overview.md) 里的“推荐验证路径”做线程侧回归。
+
+## 10. 最容易踩的坑
+
+- `allowlist` 里还留着 `ou_xxx` 占位值
+- 飞书后台改完能力、权限、事件或回调后，没有重新发布版本
+- 事件配置或回调配置被误设成了 HTTP，而不是长连接
+- 飞书后台打开了加密推送，但 `config.toml` 里的 `feishu.encryptKey` 仍然为空
+- 想在群话题线程里使用，但后台没开群消息权限，或者项目里把 `feishu.requireGroupMention` 设成了 `true` 却没有带 mention
+
+## 参考链接
+
+- 飞书官方一键入口：[一键创建一个 OpenClaw 机器人](https://open.feishu.cn/page/openclaw)

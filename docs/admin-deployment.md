@@ -371,7 +371,7 @@ npm run doctor
 npm run start
 ```
 
-7. 按 [飞书标准测试剧本](D:/eijud/OneDrive/eijud-sync/project/coding-anywhere/docs/feishu-test-playbook.md) 做一轮最小回归
+7. 按 [项目总说明](./project-full-overview.md) 里的“推荐验证路径”做一轮最小回归
 8. 再打开 `/ops/ui` 确认后台观测也正常
 
 ## 11. 回滚流程
