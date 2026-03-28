@@ -52,84 +52,106 @@ describe("AcpxRunner", () => {
     execaMock.mockReset();
   });
 
-  it("uses --name when ensuring a named session", async () => {
-    execaMock.mockResolvedValue({
-      exitCode: 0,
-    });
-
+  it("does not shell out when ensuring native execution context", async () => {
     const runner = new AcpxRunner("acpx", "codex");
 
     await runner.ensureSession({
-      sessionName: "codex-demo",
+      targetKind: "codex_thread",
+      threadId: "thread-demo",
+      sessionName: "thread-demo",
       cwd: "D:/repo",
     });
 
-    expect(execaMock).toHaveBeenCalledWith(
-      "acpx",
-      ["codex", "sessions", "ensure", "--name", "codex-demo"],
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("creates a native thread through codex exec and returns the thread id", async () => {
+    const lines = [
+      JSON.stringify({
+        type: "thread.started",
+        thread_id: "thread-native-1",
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "agent_message",
+          text: "READY",
+        },
+      }),
+      JSON.stringify({
+        type: "turn.completed",
+      }),
+    ];
+    const child = Object.assign(
+      Promise.resolve({
+        exitCode: 0,
+      }),
+      {
+        stdout: Readable.from([`${lines[0]}\n${lines[1]}\n${lines[2]}\n`]),
+      },
+    );
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.createThread(
       {
         cwd: "D:/repo",
+        prompt: "Initialize a bridge thread.",
+      },
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(execaMock).toHaveBeenCalledWith(
+      "codex",
+      ["exec", "--json", "-"],
+      {
+        cwd: "D:/repo",
+        input: "Initialize a bridge thread.",
         reject: false,
       },
     );
+    expect(outcome.threadId).toBe("thread-native-1");
+    expect(seenEvents).toEqual([
+      { type: "text", content: "READY" },
+      { type: "done", content: "READY" },
+    ]);
   });
 
-  it("passes the session name positionally when closing a session", async () => {
-    execaMock.mockResolvedValue({
-      exitCode: 0,
-    });
-
+  it("treats close as a no-op for native-only execution", async () => {
     const runner = new AcpxRunner("acpx", "codex");
 
     await runner.close({
-      sessionName: "codex-demo",
+      targetKind: "codex_thread",
+      threadId: "thread-demo",
+      sessionName: "thread-demo",
       cwd: "D:/repo",
     });
 
-    expect(execaMock).toHaveBeenCalledWith(
-      "acpx",
-      ["codex", "sessions", "close", "codex-demo"],
-      {
-        cwd: "D:/repo",
-        reject: false,
-      },
-    );
+    expect(execaMock).not.toHaveBeenCalled();
   });
 
-  it("requests strict json output and preserves streamed text chunks", async () => {
+  it("resumes an existing native thread and preserves streamed text chunks", async () => {
     const lines = [
       JSON.stringify({
-        jsonrpc: "2.0",
-        method: "session/update",
-        params: {
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "你",
-            },
-          },
+        type: "item.completed",
+        item: {
+          type: "agent_message",
+          text: "你",
         },
       }),
       JSON.stringify({
-        jsonrpc: "2.0",
-        method: "session/update",
-        params: {
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "好",
-            },
-          },
+        type: "item.completed",
+        item: {
+          type: "agent_message",
+          text: "好",
         },
       }),
       JSON.stringify({
-        jsonrpc: "2.0",
-        id: 3,
-        result: {
-          stopReason: "end_turn",
-        },
+        type: "turn.completed",
       }),
     ];
 
@@ -151,7 +173,9 @@ describe("AcpxRunner", () => {
 
     const outcome = await runner.submitVerbatim(
       {
-        sessionName: "codex-demo",
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
         cwd: "D:/repo",
       },
       "test",
@@ -161,16 +185,12 @@ describe("AcpxRunner", () => {
     );
 
     expect(execaMock).toHaveBeenCalledWith(
-      "acpx",
+      "codex",
       [
-        "--format",
-        "json",
-        "--json-strict",
-        "codex",
-        "prompt",
-        "--session",
-        "codex-demo",
-        "--file",
+        "exec",
+        "resume",
+        "--json",
+        "thread-demo",
         "-",
       ],
       {

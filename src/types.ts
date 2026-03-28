@@ -293,6 +293,7 @@ export type RunContext =
 export interface RunOutcome {
   events: AcpxEvent[];
   exitCode: number;
+  threadId?: string;
 }
 
 export type BridgeReply =
