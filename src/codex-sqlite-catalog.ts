@@ -4,7 +4,11 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
-import type { CodexCatalogProject, CodexCatalogThread } from "./types.js";
+import type {
+  CodexCatalogConversationItem,
+  CodexCatalogProject,
+  CodexCatalogThread,
+} from "./types.js";
 
 interface CodexThreadRow {
   id: string;
@@ -142,6 +146,19 @@ export class CodexSqliteCatalog {
     } finally {
       db.close();
     }
+  }
+
+  public listRecentConversation(threadId: string, limit = 6): CodexCatalogConversationItem[] {
+    if (limit <= 0) {
+      return [];
+    }
+
+    const thread = this.getThread(threadId);
+    if (!thread || !thread.rolloutPath || !existsSync(thread.rolloutPath)) {
+      return [];
+    }
+
+    return readRecentConversation(thread.rolloutPath, limit);
   }
 
   private readThreads(options?: { includeArchived?: boolean }): CodexCatalogThread[] {
@@ -449,4 +466,64 @@ interface SessionMeta {
   source: string;
   cliVersion: string;
   createdAt: string;
+}
+
+function readRecentConversation(filePath: string, limit: number): CodexCatalogConversationItem[] {
+  const content = readFileSync(filePath, "utf8");
+  const items: CodexCatalogConversationItem[] = [];
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+
+    if (parsed?.type !== "response_item" || parsed?.payload?.type !== "message") {
+      continue;
+    }
+
+    const role = parsed?.payload?.role;
+    if (role !== "user" && role !== "assistant") {
+      continue;
+    }
+
+    const text = extractConversationText(parsed?.payload?.content);
+    if (!text) {
+      continue;
+    }
+
+    items.push({
+      role,
+      text,
+      timestamp: typeof parsed?.timestamp === "string" ? parsed.timestamp : new Date(0).toISOString(),
+    });
+  }
+
+  return items.slice(-limit);
+}
+
+function extractConversationText(content: unknown): string {
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const textParts = content
+    .map(item => {
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+
+      const record = item as Record<string, unknown>;
+      return typeof record.text === "string" ? record.text.trim() : "";
+    })
+    .filter(Boolean);
+
+  return textParts.join("\n").trim();
 }

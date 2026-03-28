@@ -192,6 +192,106 @@ describe("CodexSqliteCatalog", () => {
     });
   });
 
+  it("reads recent user and assistant conversation items from a thread rollout", () => {
+    const rolloutPath = path.join(rootDir, "alpha-2.jsonl");
+    writeFileSync(
+      rolloutPath,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-27T10:22:18.874Z",
+          type: "session_meta",
+          payload: {
+            id: "thread-alpha-2",
+            timestamp: "2026-03-27T10:22:18.874Z",
+            cwd: "D:\\Repos\\Alpha",
+            cli_version: "0.116.0",
+            source: "cli",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-27T10:22:30.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "先检查最近一次失败原因",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-27T10:22:45.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: "我先看线程里的报错和最近的工具调用。",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-27T10:23:10.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "如果需要的话直接修复。",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-27T10:23:40.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: "已经定位到问题点，接下来会补测试再改实现。",
+              },
+            ],
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    const catalog = new CodexSqliteCatalog({
+      sqlitePath,
+      sessionIndexPath,
+    });
+
+    expect(catalog.listRecentConversation("thread-alpha-2", 3)).toEqual([
+      {
+        role: "assistant",
+        text: "我先看线程里的报错和最近的工具调用。",
+        timestamp: "2026-03-27T10:22:45.000Z",
+      },
+      {
+        role: "user",
+        text: "如果需要的话直接修复。",
+        timestamp: "2026-03-27T10:23:10.000Z",
+      },
+      {
+        role: "assistant",
+        text: "已经定位到问题点，接下来会补测试再改实现。",
+        timestamp: "2026-03-27T10:23:40.000Z",
+      },
+    ]);
+  });
+
   it("supplements threads from session rollouts when session_index is ahead of the SQLite catalog", () => {
     const sessionDir = path.join(rootDir, "sessions", "2026", "03", "27");
     mkdirSync(sessionDir, { recursive: true });

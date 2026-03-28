@@ -77,6 +77,9 @@ describe("DM Codex browser", () => {
     const switchCardText = JSON.stringify((switchReplies[0] as { card: Record<string, unknown> }).card);
     expect(switchCardText).toContain("线程已切换");
     expect(switchCardText).toContain("thread-alpha-2");
+    expect(switchCardText).toContain("最近对话");
+    expect(switchCardText).toContain("请先检查 Alpha 的失败原因");
+    expect(switchCardText).toContain("我会先查看报错、命令和最近一次输出");
     expect((store as any).getCodexWindowBinding("feishu", "ou_demo")).toMatchObject({
       codexThreadId: "thread-alpha-2",
     });
@@ -189,6 +192,29 @@ function createCatalogDouble() {
     getProject: vi.fn((projectKey: string) => projects.find(project => project.projectKey === projectKey)),
     listThreads: vi.fn((projectKey: string) => threads.filter(thread => thread.projectKey === projectKey)),
     getThread: vi.fn((threadId: string) => threads.find(thread => thread.threadId === threadId)),
+    listRecentConversation: vi.fn((threadId: string, limit = 6) => {
+      const conversations: Record<string, Array<{ role: "user" | "assistant"; text: string; timestamp: string }>> = {
+        "thread-alpha-2": [
+          {
+            role: "user",
+            text: "请先检查 Alpha 的失败原因",
+            timestamp: "2026-03-26T01:58:00.000Z",
+          },
+          {
+            role: "assistant",
+            text: "我会先查看报错、命令和最近一次输出。",
+            timestamp: "2026-03-26T01:59:00.000Z",
+          },
+          {
+            role: "user",
+            text: "确认后直接修复。",
+            timestamp: "2026-03-26T02:00:00.000Z",
+          },
+        ],
+      };
+
+      return (conversations[threadId] ?? []).slice(-limit);
+    }),
   };
 }
 

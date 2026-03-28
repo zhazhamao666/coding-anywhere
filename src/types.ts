@@ -97,6 +97,12 @@ export interface CodexCatalogThread {
   rolloutPath: string;
 }
 
+export interface CodexCatalogConversationItem {
+  role: "user" | "assistant";
+  text: string;
+  timestamp: string;
+}
+
 export interface CodexWindowBinding {
   channel: string;
   peerId: string;

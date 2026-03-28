@@ -10,6 +10,7 @@ import type {
   BridgeMessageInput,
   BridgeLifecycleStage,
   BridgeReply,
+  CodexCatalogConversationItem,
   CodexCatalogProject,
   CodexCatalogThread,
   RootProfile,
@@ -51,6 +52,7 @@ interface CodexCatalogLike {
   getProject(projectKey: string, options?: { includeArchived?: boolean }): CodexCatalogProject | undefined;
   listThreads(projectKey: string, options?: { includeArchived?: boolean }): CodexCatalogThread[];
   getThread(threadId: string): CodexCatalogThread | undefined;
+  listRecentConversation(threadId: string, limit?: number): CodexCatalogConversationItem[];
 }
 
 export class BridgeService {
@@ -685,7 +687,8 @@ export class BridgeService {
         codexThreadId: thread.threadId,
       });
 
-      return [this.buildCodexThreadSwitchedCardReply(input, project, thread)];
+      const recentConversation = this.dependencies.codexCatalog.listRecentConversation(thread.threadId, 4);
+      return [this.buildCodexThreadSwitchedCardReply(input, project, thread, recentConversation)];
     }
 
     if (action === "list" || action === "list-current") {
@@ -1163,7 +1166,12 @@ export class BridgeService {
     input: BridgeMessageInput,
     project: CodexCatalogProject,
     thread: CodexCatalogThread,
+    recentConversation: CodexCatalogConversationItem[],
   ): BridgeReply {
+    const conversationItems = recentConversation.length > 0
+      ? recentConversation.map(item => `${item.role === "user" ? "用户" : "助手"}：${formatConversationPreview(item.text)}`)
+      : ["暂未读取到可展示的最近对话。"];
+
     return {
       kind: "card",
       card: buildBridgeHubCard({
@@ -1177,6 +1185,10 @@ export class BridgeService {
           `**Session**：${thread.threadId}`,
         ],
         sections: [
+          {
+            title: "最近对话",
+            items: conversationItems,
+          },
           {
             title: "下一步",
             items: [
@@ -1319,6 +1331,15 @@ function buildSessionName(rootId: string): string {
 
 function buildRunId(): string {
   return `run-${randomUUID()}`;
+}
+
+function formatConversationPreview(text: string, maxLength = 140): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+
+  return `${compact.slice(0, maxLength - 1)}…`;
 }
 
 function findFinalAssistantText(events: AcpxEvent[]): string {
