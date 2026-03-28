@@ -146,6 +146,41 @@ describe("DM Codex browser", () => {
     expect(cardText).toContain("thread-alpha-1");
     expect(cardText).toContain("/ca thread switch thread-alpha-1");
   });
+
+  it("shows a session card with recent messages for the current Codex thread in DM", async () => {
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: createCatalogDouble(),
+    } as any);
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca thread switch thread-alpha-2",
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca session",
+    });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ kind: "card" });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("当前会话");
+    expect(cardText).toContain("thread-alpha-2");
+    expect(cardText).toContain("Alpha follow-up");
+    expect(cardText).toContain("最近对话");
+    expect(cardText).toContain("最后一条用户消息，包含完整的长文本，不应该被截断。最后一条用户消息，包含完整的长文本，不应该被截断。最后一条用户消息，包含完整的长文本，不应该被截断。");
+    expect(cardText).toContain("第二条应展示的助手回复");
+    expect(cardText).toContain("第三条应展示的助手回复");
+    expect(cardText).toContain("第四条应展示的助手回复");
+    expect(cardText).toContain("第五条应展示的助手回复");
+    expect(cardText).not.toContain("更早的用户消息，不应展示");
+    expect(cardText).not.toContain("第一条应展示的助手回复");
+  });
 });
 
 function createCatalogDouble() {

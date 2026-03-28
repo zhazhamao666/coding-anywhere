@@ -429,6 +429,7 @@ Feishu group thread text
 - `/ca project current` 会返回当前项目摘要卡片
 - `/ca thread list <projectId>` 与 `/ca thread list-current` 会返回线程列表卡片
 - DM 中 `/ca thread switch <threadId>` 成功后会返回线程切换确认卡，并附带“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
+- DM 中已切到 Codex 原生线程后，`/ca session` 会返回当前会话卡片，并附带同一套“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
 - `/ca thread create*` 成功后会返回线程摘要卡片
 - DM 中的项目列表卡和线程列表卡现在带“查看线程”“切换到此线程”行级按钮
 - DM 中点选线程后，CA 只记录当前窗口绑定到哪个 `codex_thread_id`
@@ -639,6 +640,7 @@ channel + peer_id -> codex_thread_id
 - 可以通过导航卡查看当前上下文、项目概览和线程摘要
 - 可以通过结构化列表卡快速浏览项目和线程
 - 在 DM 中切到某个 Codex 原生线程后，可以直接看到该线程“最后 1 条 user + 最后 4 条 assistant”消息的原文预览
+- 在 DM 中切到某个 Codex 原生线程后，点击“当前会话”也可以继续看到同一份最近对话预览
 - 可以通过摘要卡快速确认当前项目和新建线程结果
 - 普通对话 run 完成后，不会再在终态卡和普通消息里重复完整展示同一份 assistant 正文；卡片保留摘要，完整正文以下方消息为准
 - 输入未知子命令时也能自动回到导航卡

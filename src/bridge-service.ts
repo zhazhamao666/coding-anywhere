@@ -331,6 +331,19 @@ export class BridgeService {
         return [{ kind: "system", text: `[ca] stop requested for ${resolved.sessionName}` }];
       }
       case "session": {
+        const codexSelection = this.lookupDmCodexSelection(input);
+        if (codexSelection) {
+          const recentConversation = this.dependencies.codexCatalog?.listRecentConversation(codexSelection.thread.threadId) ?? [];
+          return [
+            this.buildCurrentCodexSessionCardReply(
+              input,
+              codexSelection.project,
+              codexSelection.thread,
+              selectSwitchCardConversation(recentConversation),
+            ),
+          ];
+        }
+
         const resolved = this.resolveContext(input);
         return [{ kind: "system", text: `[ca] session=${resolved.sessionName}` }];
       }
@@ -1163,6 +1176,57 @@ export class BridgeService {
           {
             label: "线程列表",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+        ],
+      }),
+    };
+  }
+
+  private buildCurrentCodexSessionCardReply(
+    input: BridgeMessageInput,
+    project: CodexCatalogProject,
+    thread: CodexCatalogThread,
+    recentConversation: CodexCatalogConversationItem[],
+  ): BridgeReply {
+    const conversationItems = recentConversation.length > 0
+      ? recentConversation.map(item => `${item.role === "user" ? "用户" : "助手"}：${item.text}`)
+      : ["暂未读取到可展示的最近对话。"];
+
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: "当前会话",
+        summaryLines: [
+          "**视图**：当前会话",
+          `**项目**：${project.displayName}`,
+          `**路径**：${project.cwd}`,
+          `**线程**：${thread.threadId}`,
+          `**标题**：${thread.title}`,
+          `**Session**：${thread.threadId}`,
+        ],
+        sections: [
+          {
+            title: "最近对话",
+            items: conversationItems,
+          },
+        ],
+        actions: [
+          {
+            label: "导航",
+            type: "primary",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
+          },
+          {
+            label: "当前项目",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
+          },
+          {
+            label: "线程列表",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+          {
+            label: "新会话",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
           },
         ],
       }),
