@@ -279,15 +279,16 @@ export interface ListRunsFilters {
 
 export type RunContext =
   | {
-      sessionName: string;
-      cwd: string;
-      targetKind?: "bridge_session";
-    }
-  | {
       targetKind: "codex_thread";
       threadId: string;
       sessionName: string;
       cwd: string;
+    }
+  | {
+      targetKind: "new_codex_thread";
+      sessionName: string;
+      cwd: string;
+      threadTitle?: string;
     };
 
 export interface RunOutcome {

@@ -20,6 +20,13 @@ import type {
 import { SessionStore } from "./workspace/session-store.js";
 
 interface BridgeRunner {
+  createThread(
+    input: {
+      cwd: string;
+      prompt: string;
+    },
+    onEvent?: (event: AcpxEvent) => void,
+  ): Promise<RunOutcome & { threadId: string }>;
   ensureSession(context: RunContext): Promise<void>;
   submitVerbatim(
     context: RunContext,
@@ -33,6 +40,7 @@ interface BridgeRunner {
 interface ResolvedContext {
   root: RootProfile;
   context: RunContext;
+  wrapPrompt: boolean;
   sessionName: string;
   projectId: string | null;
   threadId: string | null;
@@ -59,7 +67,7 @@ export class BridgeService {
       store: SessionStore;
       runner: BridgeRunner;
       workerManager?: RunWorkerManagerLike;
-      projectThreadService?: Pick<ProjectThreadService, "createThread">;
+      projectThreadService?: Pick<ProjectThreadService, "createThread" | "linkThread">;
       codexCatalog?: CodexCatalogLike;
     },
   ) {}
@@ -78,22 +86,6 @@ export class BridgeService {
       runId: buildRunId(),
       rootName: resolved.root.id,
       sessionName: resolved.sessionName,
-    });
-
-    this.dependencies.store.createRun({
-      runId: currentProgress.runId,
-      channel: input.channel,
-      peerId: input.peerId,
-      projectId: resolved.projectId,
-      threadId: resolved.threadId,
-      deliveryChatId: resolved.deliveryChatId,
-      deliverySurfaceType: resolved.deliverySurfaceType,
-      deliverySurfaceRef: resolved.deliverySurfaceRef,
-      sessionName: resolved.sessionName,
-      rootId: resolved.root.id,
-      status: currentProgress.status,
-      stage: currentProgress.stage,
-      latestPreview: currentProgress.preview,
     });
 
     const emitSnapshot = async (
@@ -130,35 +122,70 @@ export class BridgeService {
     };
 
     const executeRun = async (): Promise<BridgeReply[]> => {
-      if (resolved.threadId) {
+      let activeResolved = resolved;
+
+      this.dependencies.store.createRun({
+        runId: currentProgress.runId,
+        channel: input.channel,
+        peerId: input.peerId,
+        projectId: activeResolved.projectId,
+        threadId: activeResolved.threadId,
+        deliveryChatId: activeResolved.deliveryChatId,
+        deliverySurfaceType: activeResolved.deliverySurfaceType,
+        deliverySurfaceRef: activeResolved.deliverySurfaceRef,
+        sessionName: activeResolved.sessionName,
+        rootId: activeResolved.root.id,
+        status: currentProgress.status,
+        stage: currentProgress.stage,
+        latestPreview: currentProgress.preview,
+      });
+
+      if (activeResolved.context.targetKind === "new_codex_thread") {
+        activeResolved = await this.materializeNativeContext(input, activeResolved, routed.prompt);
+        currentProgress = {
+          ...currentProgress,
+          sessionName: activeResolved.sessionName,
+        };
+        this.dependencies.store.updateRunContext({
+          runId: currentProgress.runId,
+          sessionName: activeResolved.sessionName,
+          threadId: activeResolved.threadId,
+          projectId: activeResolved.projectId,
+          deliveryChatId: activeResolved.deliveryChatId,
+          deliverySurfaceType: activeResolved.deliverySurfaceType,
+          deliverySurfaceRef: activeResolved.deliverySurfaceRef,
+        });
+      }
+
+      if (activeResolved.threadId) {
         this.dependencies.store.updateCodexThreadState({
-          threadId: resolved.threadId,
+          threadId: activeResolved.threadId,
           status: "running",
           lastRunId: currentProgress.runId,
         });
       }
 
-      await emitLifecycle("received", "[ca] received", resolved.sessionName);
-      await emitLifecycle("resolving_context", "[ca] resolving context", resolved.sessionName);
-      await emitLifecycle("ensuring_session", "[ca] ensuring session", resolved.sessionName);
-      await this.dependencies.runner.ensureSession(resolved.context);
+      await emitLifecycle("received", "[ca] received", activeResolved.sessionName);
+      await emitLifecycle("resolving_context", "[ca] resolving context", activeResolved.sessionName);
+      await emitLifecycle("ensuring_session", "[ca] ensuring session", activeResolved.sessionName);
+      await this.dependencies.runner.ensureSession(activeResolved.context);
       await emitLifecycle(
         "session_ready",
-        `[ca] session ready: ${resolved.sessionName}`,
-        resolved.sessionName,
+        `[ca] session ready: ${activeResolved.sessionName}`,
+        activeResolved.sessionName,
       );
-      await emitLifecycle("submitting_prompt", "[ca] submitting prompt", resolved.sessionName);
+      await emitLifecycle("submitting_prompt", "[ca] submitting prompt", activeResolved.sessionName);
       await emitLifecycle(
         "waiting_first_event",
         "[ca] waiting for Codex response",
-        resolved.sessionName,
+        activeResolved.sessionName,
       );
 
       const outcome = await this.dependencies.runner.submitVerbatim(
-        resolved.context,
-        resolved.context.targetKind === "codex_thread"
-          ? routed.prompt
-          : buildCodexPromptEnvelope(resolved.root, routed.prompt),
+        activeResolved.context,
+        activeResolved.wrapPrompt
+          ? buildCodexPromptEnvelope(activeResolved.root, routed.prompt)
+          : routed.prompt,
         async event => {
           const snapshot = reduceProgressEvent(currentProgress, event);
           await emitSnapshot(
@@ -203,9 +230,9 @@ export class BridgeService {
         latestTool: currentProgress.latestTool ?? null,
       });
 
-      if (resolved.threadId) {
+      if (activeResolved.threadId) {
         this.dependencies.store.updateCodexThreadState({
-          threadId: resolved.threadId,
+          threadId: activeResolved.threadId,
           status: "warm",
           lastRunId: currentProgress.runId,
         });
@@ -285,48 +312,35 @@ export class BridgeService {
       }
       case "new": {
         const resolved = this.resolveContext(input);
-        if (resolved.context.targetKind === "codex_thread") {
-          const root = this.dependencies.store.getRoot();
-          if (!root) {
-            throw new Error("ROOT_NOT_CONFIGURED");
-          }
+        const currentThread = input.surfaceType === "thread" && input.chatId && input.surfaceRef
+          ? this.dependencies.store.getCodexThreadBySurface(input.chatId, input.surfaceRef)
+          : undefined;
+        const created = await this.dependencies.runner.createThread({
+          cwd: resolved.context.cwd,
+          prompt: buildNativeThreadBootstrapPrompt(currentThread?.title ?? resolved.threadId ?? resolved.sessionName),
+        });
 
-          this.dependencies.store.clearCodexWindowBinding(input.channel, input.peerId);
-          const nextSessionName = `${buildSessionName(root.id)}-${Date.now()}`;
-          this.dependencies.store.bindThread({
-            channel: input.channel,
-            peerId: input.peerId,
-            sessionName: nextSessionName,
-          });
-          return [{ kind: "system", text: `[ca] DM session reset to ${nextSessionName}` }];
-        }
-
-        await this.dependencies.runner.close(resolved.context);
-
-        const nextSessionName = `${resolved.sessionName}-${Date.now()}`;
-        if (resolved.threadId) {
-          this.dependencies.store.updateCodexThreadSession({
-            threadId: resolved.threadId,
-            sessionName: nextSessionName,
+        if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
+          this.dependencies.store.rebindCodexThreadSurface({
+            chatId: input.chatId,
+            feishuThreadId: input.surfaceRef,
+            threadId: created.threadId,
+            sessionName: created.threadId,
+            title: resolved.threadId ?? resolved.sessionName,
             status: "warm",
           });
-        } else {
-          this.dependencies.store.bindThread({
-            channel: input.channel,
-            peerId: input.peerId,
-            sessionName: nextSessionName,
-          });
+          return [{ kind: "system", text: `[ca] thread reset to ${created.threadId}` }];
         }
 
-        return [{ kind: "system", text: `[ca] session reset to ${nextSessionName}` }];
+        this.dependencies.store.bindCodexWindow({
+          channel: input.channel,
+          peerId: input.peerId,
+          codexThreadId: created.threadId,
+        });
+        return [{ kind: "system", text: `[ca] thread switched to ${created.threadId}` }];
       }
       case "stop": {
-        const resolved = this.resolveContext(input);
-        if (resolved.context.targetKind === "codex_thread") {
-          return [{ kind: "system", text: "[ca] stop unavailable for Codex thread bindings" }];
-        }
-        await this.dependencies.runner.cancel(resolved.context);
-        return [{ kind: "system", text: `[ca] stop requested for ${resolved.sessionName}` }];
+        return [{ kind: "system", text: "[ca] stop unavailable for native Codex threads" }];
       }
       case "session": {
         const resolved = this.resolveContext(input);
@@ -661,7 +675,7 @@ export class BridgeService {
     const threadCommandHelp =
       `[ca] thread commands: ${BRIDGE_COMMAND_PREFIX} thread create <projectId> <title>, ${BRIDGE_COMMAND_PREFIX} thread create-current <title>, ${BRIDGE_COMMAND_PREFIX} thread list <projectId>, ${BRIDGE_COMMAND_PREFIX} thread list-current`;
 
-    if (action === "switch" && this.isDmContext(input) && this.dependencies.codexCatalog) {
+    if (action === "switch" && this.dependencies.codexCatalog) {
       const threadId = restArgs[0];
       if (!threadId) {
         return [{ kind: "system", text: threadCommandHelp }];
@@ -679,24 +693,62 @@ export class BridgeService {
         return [this.buildCodexProjectUnavailableCardReply(input)];
       }
 
-      this.dependencies.store.bindCodexWindow({
-        channel: input.channel,
-        peerId: input.peerId,
-        codexThreadId: thread.threadId,
-      });
+      if (this.isDmContext(input)) {
+        this.dependencies.store.bindCodexWindow({
+          channel: input.channel,
+          peerId: input.peerId,
+          codexThreadId: thread.threadId,
+        });
 
-      return [this.buildCodexThreadSwitchedCardReply(input, project, thread)];
+        return [this.buildCodexThreadSwitchedCardReply(input, project, thread)];
+      }
+
+      if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
+        this.dependencies.store.rebindCodexThreadSurface({
+          chatId: input.chatId,
+          feishuThreadId: input.surfaceRef,
+          threadId: thread.threadId,
+          sessionName: thread.threadId,
+          title: thread.title,
+          status: "warm",
+        });
+        return [{ kind: "system", text: `[ca] thread switched to ${thread.threadId}` }];
+      }
+
+      if (input.chatId && this.dependencies.projectThreadService) {
+        const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
+        if (!projectChat) {
+          throw new Error("PROJECT_CHAT_CONTEXT_REQUIRED");
+        }
+
+        const linkedThread = await this.dependencies.projectThreadService.linkThread({
+          projectId: projectChat.projectId,
+          chatId: projectChat.chatId,
+          ownerOpenId: input.peerId,
+          title: thread.title,
+          codexThreadId: thread.threadId,
+        });
+        return [this.buildThreadCreatedCardReply(linkedThread)];
+      }
     }
 
     if (action === "list" || action === "list-current") {
-      if (action === "list-current" && this.isDmContext(input) && this.dependencies.codexCatalog) {
-        const codexSelection = this.lookupDmCodexSelection(input);
-        if (!codexSelection) {
-          return [{ kind: "system", text: threadCommandHelp }];
+      if (action === "list-current" && this.dependencies.codexCatalog) {
+        if (this.isDmContext(input)) {
+          const codexSelection = this.lookupDmCodexSelection(input);
+          if (!codexSelection) {
+            return [{ kind: "system", text: threadCommandHelp }];
+          }
+
+          const threads = this.dependencies.codexCatalog.listThreads(codexSelection.project.projectKey);
+          return [this.buildCodexThreadListCardReply(input, codexSelection.project, threads)];
         }
 
-        const threads = this.dependencies.codexCatalog.listThreads(codexSelection.project.projectKey);
-        return [this.buildCodexThreadListCardReply(input, codexSelection.project, threads)];
+        const project = this.lookupCatalogProjectForSurface(input);
+        if (project) {
+          const threads = this.dependencies.codexCatalog.listThreads(project.project.projectKey);
+          return [this.buildCodexThreadListCardReply(input, project.project, threads)];
+        }
       }
 
       const effectiveProjectId = action === "list-current"
@@ -734,10 +786,15 @@ export class BridgeService {
     }
 
     const effectiveProjectId = isCreateCurrent ? projectChat.projectId : projectId;
+    const project = this.dependencies.store.getProject(effectiveProjectId);
+    if (!project) {
+      throw new Error("PROJECT_NOT_REGISTERED");
+    }
     const titleParts = isCreateCurrent ? restArgs : rest;
     const title = titleParts.join(" ").trim();
     const thread = await this.dependencies.projectThreadService.createThread({
       projectId: effectiveProjectId,
+      cwd: project.cwd,
       chatId: projectChat.chatId,
       ownerOpenId: input.peerId,
       title,
@@ -763,17 +820,41 @@ export class BridgeService {
         throw new Error("PROJECT_NOT_REGISTERED");
       }
 
+      const isNativeThread = this.isNativeCatalogThread(thread.threadId);
+      if (isNativeThread) {
+        return {
+          root,
+          wrapPrompt: true,
+          sessionName: thread.threadId,
+          projectId: thread.projectId,
+          threadId: thread.threadId,
+          deliveryChatId: input.chatId,
+          deliverySurfaceType: "thread",
+          deliverySurfaceRef: input.surfaceRef,
+          concurrencyKey: thread.threadId,
+          context: {
+            targetKind: "codex_thread",
+            threadId: thread.threadId,
+            sessionName: thread.threadId,
+            cwd: project.cwd,
+          },
+        };
+      }
+
       return {
         root,
+        wrapPrompt: true,
         sessionName: thread.sessionName,
         projectId: thread.projectId,
-        threadId: thread.threadId,
+        threadId: null,
         deliveryChatId: input.chatId,
         deliverySurfaceType: "thread",
         deliverySurfaceRef: input.surfaceRef,
-        concurrencyKey: thread.threadId,
+        concurrencyKey: `pending-codex-thread:${input.chatId}:${input.surfaceRef}`,
         context: {
+          targetKind: "new_codex_thread",
           sessionName: thread.sessionName,
+          threadTitle: thread.title,
           cwd: project.cwd,
         },
       };
@@ -783,6 +864,7 @@ export class BridgeService {
     if (codexSelection) {
       return {
         root,
+        wrapPrompt: false,
         sessionName: codexSelection.thread.threadId,
         projectId: codexSelection.project.projectKey,
         threadId: codexSelection.thread.threadId,
@@ -799,29 +881,19 @@ export class BridgeService {
       };
     }
 
-    let binding = this.dependencies.store.getBinding(input.channel, input.peerId);
-
-    if (!binding) {
-      binding = {
-        channel: input.channel,
-        peerId: input.peerId,
-        sessionName: buildSessionName(root.id),
-        updatedAt: new Date().toISOString(),
-      };
-      this.dependencies.store.bindThread(binding);
-    }
-
     return {
       root,
-      sessionName: binding.sessionName,
+      wrapPrompt: true,
+      sessionName: buildSessionName(root.id),
       projectId: null,
       threadId: null,
       deliveryChatId: null,
       deliverySurfaceType: null,
       deliverySurfaceRef: null,
-      concurrencyKey: `${input.channel}:${input.peerId}`,
+      concurrencyKey: `pending-codex-thread:${input.channel}:${input.peerId}`,
       context: {
-        sessionName: binding.sessionName,
+        targetKind: "new_codex_thread",
+        sessionName: buildSessionName(root.id),
         cwd: root.cwd,
       },
     };
@@ -1296,6 +1368,91 @@ export class BridgeService {
     };
   }
 
+  private isNativeCatalogThread(threadId: string): boolean {
+    if (!this.dependencies.codexCatalog) {
+      return true;
+    }
+
+    return Boolean(this.dependencies.codexCatalog.getThread(threadId));
+  }
+
+  private lookupCatalogProjectForSurface(input: BridgeMessageInput): {
+    projectId: string;
+    project: CodexCatalogProject;
+  } | undefined {
+    if (!input.chatId || !this.dependencies.codexCatalog) {
+      return undefined;
+    }
+
+    const projectId = this.dependencies.store.getProjectChatByChatId(input.chatId)?.projectId;
+    if (!projectId) {
+      return undefined;
+    }
+
+    const projectRecord = this.dependencies.store.getProject(projectId);
+    if (!projectRecord) {
+      return undefined;
+    }
+
+    const catalogProject = this.dependencies.codexCatalog
+      .listProjects({ includeArchived: true })
+      .find(project => normalizePathKey(project.cwd) === normalizePathKey(projectRecord.cwd));
+
+    if (!catalogProject) {
+      return undefined;
+    }
+
+    return {
+      projectId,
+      project: catalogProject,
+    };
+  }
+
+  private async materializeNativeContext(
+    input: BridgeMessageInput,
+    resolved: ResolvedContext,
+    prompt: string,
+  ): Promise<ResolvedContext> {
+    if (resolved.context.targetKind !== "new_codex_thread") {
+      return resolved;
+    }
+
+    const created = await this.dependencies.runner.createThread({
+      cwd: resolved.context.cwd,
+      prompt: buildNativeThreadBootstrapPrompt(resolved.context.threadTitle ?? prompt),
+    });
+
+    if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
+      this.dependencies.store.rebindCodexThreadSurface({
+        chatId: input.chatId,
+        feishuThreadId: input.surfaceRef,
+        threadId: created.threadId,
+        sessionName: created.threadId,
+        title: resolved.context.threadTitle ?? created.threadId,
+        status: "warm",
+      });
+    } else {
+      this.dependencies.store.bindCodexWindow({
+        channel: input.channel,
+        peerId: input.peerId,
+        codexThreadId: created.threadId,
+      });
+    }
+
+    return {
+      ...resolved,
+      sessionName: created.threadId,
+      threadId: created.threadId,
+      concurrencyKey: `codex-thread:${created.threadId}`,
+      context: {
+        targetKind: "codex_thread",
+        threadId: created.threadId,
+        sessionName: created.threadId,
+        cwd: resolved.context.cwd,
+      },
+    };
+  }
+
   private buildCardActionValue(
     context: {
       chatId?: string;
@@ -1319,6 +1476,22 @@ function buildSessionName(rootId: string): string {
 
 function buildRunId(): string {
   return `run-${randomUUID()}`;
+}
+
+function buildNativeThreadBootstrapPrompt(topic: string): string {
+  return [
+    "Initialize a Codex thread for subsequent Feishu bridge messages.",
+    "Keep the response minimal.",
+    `Topic: ${topic}`,
+  ].join("\n");
+}
+
+function normalizePathKey(value: string): string {
+  return value
+    .replace(/^\\\\\?\\/, "")
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .toLowerCase();
 }
 
 function findFinalAssistantText(events: AcpxEvent[]): string {

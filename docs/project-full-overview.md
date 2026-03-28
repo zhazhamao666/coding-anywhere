@@ -31,8 +31,8 @@
 2. 飞书群话题线程文本消息接入
 3. `/ca` 命令与普通 prompt 分流
 4. DM 级会话绑定
-5. 线程级 Codex 会话解析
-6. 基于 `acpx` 的短生命周期 run worker
+5. 基于 native `thread_id` 的 DM / 群线程执行解析
+6. 基于 Codex CLI `exec` / `exec resume` 的短生命周期 run worker
 7. 全局并发限制与线程级串行执行
 8. 线程级 run 投递目标持久化
 9. 线程内回复式回推
@@ -47,7 +47,7 @@
 18. 通过 `/ca` 返回导航卡，集中展示当前上下文、项目概览、线程摘要和按钮化操作入口；`/ca hub` 继续兼容到同一张卡
 19. DM 中的 `project list` 现在会直接读取 Codex `state_*.sqlite`，返回 Codex 派生项目列表卡片，而不是依赖 CA 本地项目清单
 20. DM 中可以从 Codex 项目列表进入线程列表，再把“当前这个飞书聊天窗口”切换到某个 Codex 原生线程
-21. DM 中被选中的 Codex 线程只会持久化“当前窗口绑定到哪个 thread_id”，不会在 CA SQLite 里镜像维护 Codex 项目/线程清单
+21. DM 中未绑定窗口首次收到普通 prompt 时，会先创建一个新的 native Codex thread，再把当前窗口绑定到该 `thread_id`
 22. 通过 `project current` 和线程创建成功回执返回结构化摘要卡片
 23. 通过 `/ca help` 和未知子命令回退到导航卡
 24. 通过飞书卡片按钮回调复用 `/ca` 导航命令，并原地刷新卡片
@@ -60,7 +60,11 @@
 31. `npm run dev` 与 `npm run start` 会在 Windows 启动前主动清理当前项目残留的 `node`/`npm`/`cmd` 进程，以及配置端口上的旧监听，降低 `EADDRINUSE` 启动失败概率
 32. `npm run dev` 与 `npm run start` 维持前台子进程模型，并显式转发 `SIGINT` / `SIGTERM`，便于在当前终端 `Ctrl+C` 或关闭窗口时一起退出
 33. 飞书 SDK 传入的数组形态日志会先归一化成单条字符串，再交给项目日志器输出，减少控制台中出现 JSON 数组样式的日志
-34. DM 里切到 Codex 原生线程后，普通消息不再走 `acpx sessions ensure + prompt`，而是走 `codex exec resume <thread_id> --json`
+34. 普通消息不再走 `acpx sessions ensure + prompt`；所有执行面统一改为 `codex exec --json` 创建线程或 `codex exec resume --json <thread_id>` 续跑线程
+35. `/ca new` 不再重置 CA session，而是创建并切换到新的 native Codex thread
+36. `/ca stop` 对 native thread 明确返回不可用，而不是继续假装映射到 `acpx cancel`
+37. `thread list-current` 在已绑定项目群中会直接列出当前项目对应的 Codex native thread
+38. `/ca thread switch <threadId>` 现在不仅可用于 DM，也可用于已注册飞书线程重绑当前 surface，或在项目群中创建一个绑定到选中 native thread 的新飞书话题
 
 ### 2.3 当前仍未打通的部分
 
@@ -70,7 +74,6 @@
 - 自动创建飞书项目群本身
 - 精准跳转到指定 `thread_id` 的客户端导航能力
 - 完整的线程级前端管理页面
-- 在项目群 / 飞书线程里切换到任意 Codex 原生线程的能力（已记录为后续方案 3，当前故意不做）
 
 也就是说，群线程运行链路已经具备，并且现在可以用命令注册项目群和创建线程，但还没有做成完整的飞书导航型产品界面。
 
@@ -84,8 +87,8 @@ Feishu DM / Group Thread
   -> FeishuAdapter
   -> BridgeService
   -> RunWorkerManager
-  -> AcpxRunner / Codex native resume path
-  -> acpx prompt worker or codex exec resume worker
+  -> AcpxRunner
+  -> codex exec worker or codex exec resume worker
   -> Codex
   -> BridgeService
   -> StreamingCardController / text reply
@@ -112,11 +115,10 @@ Browser / script
   - 单实例、长期常驻
 - `Codex 会话`
   - 长期存在
-  - DM 对应一个 session
-  - 已注册的飞书线程对应一个 session
-  - DM 也可以临时切到一个已有的 Codex 原生线程
+  - DM 与已注册飞书线程最终都绑定到 native `thread_id`
+  - DM 可以显式切到已有的 Codex 原生线程
 - `Run Worker`
-  - 每次执行 prompt 时临时拉起一个 `acpx prompt`
+  - 每次执行 prompt 时临时拉起一个 `codex exec` / `codex exec resume`
   - 任务结束后退出
 
 ### 4.2 会话和 worker 的关系
@@ -200,9 +202,10 @@ Windows 启动前清理模块。
 
 - `/ca` 命令解析
 - surface 解析
-- DM 绑定或线程绑定的 session 解析
+- DM 绑定或线程绑定的 native thread 解析
 - DM 中读取 Codex `state_*.sqlite` 的项目/线程目录
 - DM 中把当前窗口切换到选中的 Codex thread_id
+- 在项目群中把选中的 native thread 绑定成新的飞书话题线程
 - 生成 `/ca` 导航卡内容
 - 为导航卡按钮编码回放命令上下文
 - root 上下文封装
@@ -235,16 +238,14 @@ run 调度层。
 
 ### 5.6 `src/acpx-runner.ts`
 
-Codex 适配层。
+Codex 执行适配层。
 
 职责：
 
-- `sessions ensure`
-- `prompt`
-- `cancel`
-- `close`
-- 解析 `acpx` 事件流
-- 对 DM 中已选中的 Codex 原生线程，改为通过 `codex exec resume --json` 执行并解析 JSONL 事件流
+- 通过 `codex exec --json` 创建新的 native thread
+- 通过 `codex exec resume --json` 续跑已有 native thread
+- 解析 `codex exec` / `codex exec resume` 的 JSONL 事件流
+- 兼容解析旧的 `acpx` 事件格式，但正常 prompt 主链路不再依赖 `acpx prompt`
 
 ### 5.6.1 `src/codex-sqlite-catalog.ts`
 
@@ -268,7 +269,8 @@ Codex 本地线程目录读取层。
 
 - 在项目群中发根消息
 - 获取飞书返回的 `message_id` / `thread_id`
-- 创建 `codex_threads` 记录
+- 为新话题创建 native Codex thread，或把已有 native Codex thread 绑定进新话题
+- 创建 `codex_threads` surface 绑定记录
 
 注意：
 
@@ -293,7 +295,7 @@ SQLite 持久化层。
 当前负责：
 
 - root 配置
-- DM thread binding
+- DM 旧会话快照绑定
 - DM Codex 原生线程绑定
 - projects
 - project_chats
@@ -306,6 +308,7 @@ SQLite 持久化层。
 
 - 启动迁移时会把旧版遗留表 `workspaces`、`users`、`acp_sessions`、`runs`、`message_links`、`event_offsets` 清理掉
 - 如果数据库里仍只有旧版 `workspaces` 根配置而没有 `bridge_root`，会先把旧根信息迁入 `bridge_root` 再删除旧表
+- 如果数据库里的 `codex_threads` 仍以 `thread_id` 作为主键，启动迁移会自动重建为“按飞书 surface 建模”的新结构，允许多个话题绑定到同一个 native `thread_id`
 
 ## 6. 路由与消息流
 
@@ -315,30 +318,20 @@ SQLite 持久化层。
 Feishu DM text
   -> FeishuAdapter
   -> BridgeService
-  -> getBinding(channel, peerId)
-  -> 解析 session
+  -> lookupDmCodexSelection / codex_window_bindings
+  -> 解析 / 创建 native thread
   -> submit to Codex
   -> 状态卡更新
   -> 最终文本回写 DM
 ```
 
-DM 仍然沿用：
-
-```text
-channel + peerId -> session
-```
-
-但现在 DM 还新增了一条“Codex 原生线程绑定”分支：
+DM 执行绑定现在以 native thread 为准：
 
 ```text
 channel + peerId -> codex_thread_id
 ```
 
-命中这条绑定时：
-
-- 项目与线程信息来自 Codex `state_*.sqlite`
-- 普通消息直接续跑该 Codex 原生线程
-- 不会在 CA SQLite 中维护一份镜像项目/线程清单
+如果当前 DM 还没有绑定 native thread，则普通 prompt 会先创建一个新的 native thread，再把该窗口绑定过去。
 
 ## 6.2 群线程普通消息
 
@@ -348,7 +341,7 @@ Feishu group thread text
   -> (chat_id, thread_id)
   -> BridgeService.resolveContext
   -> SessionStore.getCodexThreadBySurface(chat_id, thread_id)
-  -> project cwd + thread session
+  -> project cwd + native thread id
   -> submit to Codex
   -> 在线程中回复状态 / 结果
 ```
@@ -394,23 +387,27 @@ Feishu group thread text
 - `/ca thread list <projectId>`
 - `/ca thread list-current`
 
-其中，下面两个命令在 DM 和群线程中的语义已经不同：
+其中，下面这些命令在不同 surface 中的语义已经不同：
 
 - DM 中 `/ca project list`
   - 读取 Codex `state_*.sqlite`
   - 展示 Codex 派生项目列表
 - 群聊 / 已注册线程中的 `/ca project list`
 - 仍然展示 CA 本地注册的项目列表
+- 已绑定项目群 / 已注册线程中的 `/ca thread list-current`
+  - 通过当前项目的 `cwd` 对齐到 Codex catalog project
+  - 直接列出该项目下的 native Codex thread
 
 这些命令现在既可以在 DM 中用，也可以在线程中用。
 
 其中：
 
-- DM 中 `/ca new` 会重绑该 DM 的 session
-- 线程中 `/ca new` 会重置该线程记录上的 sessionName
+- DM 中 `/ca new` 会创建新的 native thread 并切换当前窗口
+- 已注册线程中的 `/ca new` 会创建新的 native thread 并重绑当前 Feishu thread surface
+- `/ca stop` 对 native thread 统一返回不可用
 - `/ca` 会按上下文返回不同内容，`/ca hub` 复用同一条路径：
-  - DM（未切到 Codex 原生线程）：root、当前 session、Codex 项目概览
-  - DM（已切到 Codex 原生线程）：当前项目路径、当前线程、当前 thread_id
+  - DM（未绑定 native thread）：root、未绑定状态、Codex 项目概览
+  - DM（已绑定 native thread）：当前项目路径、当前线程、当前 thread_id
   - 已绑定项目群：当前项目信息、最近线程摘要和项目级按钮入口
   - 已注册线程：当前线程信息、同项目线程摘要和线程级按钮入口
 - `/ca` 的按钮会按上下文变化：
@@ -425,6 +422,8 @@ Feishu group thread text
 - `/ca thread create*` 成功后会返回线程摘要卡片
 - DM 中的项目列表卡和线程列表卡现在带“查看线程”“切换到此线程”行级按钮
 - DM 中点选线程后，CA 只记录当前窗口绑定到哪个 `codex_thread_id`
+- 已注册飞书线程中点选线程后，CA 会把当前 surface 重绑到选中的 native `thread_id`
+- 已绑定项目群中点选线程后，CA 会新建一个飞书话题，并把该话题绑定到选中的 native `thread_id`
 - 导航卡、列表卡和摘要卡上的按钮会通过飞书长连接回调重放无参 `/ca` 命令
 - 长连接卡片回调会在本地先归一化成统一动作结构，再交给 `BridgeService` 生成新的卡片结果
 - 按钮回调对导航场景直接返回新版 `card.action.trigger` 的 `raw card` 响应体
@@ -437,26 +436,23 @@ Feishu group thread text
 
 当前采用：
 
-- 一个已注册飞书线程，对应一个长期存在的 Codex session
-- 同一个线程后续消息继续复用该 session
-- DM 也可以临时切到一个已有的 Codex 原生线程；此时后续消息直接续跑该线程，不会新建 CA 项目/线程记录
-
-sessionName 的典型形式：
-
-```text
-codex-{projectId}-{threadId}
-```
+- 一个已注册飞书线程，对应一个 native Codex thread 绑定
+- 同一个线程后续消息继续复用该 `thread_id`
+- 同一个 native Codex thread 可以被多个已注册飞书话题引用；SQLite 以飞书 surface 作为绑定记录主语义
+- DM 可以显式切到已有的 Codex 原生线程，也可以在首次普通 prompt 时自动创建新的 native thread
+- `sessionName` 仍作为观测字段保留，但执行真相源已经统一为 native `thread_id`
 
 ## 7.2 run 策略
 
-每次 prompt 执行都拉起一个新的 `acpx prompt` worker。
+每次 prompt 执行都拉起一个新的 `codex exec` 或 `codex exec resume` worker。
 
 特点：
 
 - worker 是短生命周期
-- 线程 session 是长期存在
+- native thread 是长期存在
 - 这样既能保留上下文，又不会让一个 worker 常驻不退
-- 对 DM 中已选择的 Codex 原生线程，worker 改为 `codex exec resume --json`
+- 未绑定 surface 先执行 `codex exec --json`
+- 已绑定 surface 执行 `codex exec resume --json <thread_id>`
 
 ## 7.3 并发策略
 
@@ -490,10 +486,9 @@ codex-{projectId}-{threadId}
 
 - 周期性扫描 `warm` 状态线程
 - 如果超过 `root.idleTtlHours` 没有活动
-- 调用 `acpx sessions close`
 - 将线程状态置为 `closed`
 
-线程再次收到消息时，会重新 `ensureSession`，继续使用同一个线程记录。
+线程再次收到消息时，会继续复用该线程记录上的 native `thread_id`；runtime 不再尝试关闭 `acpx` session。
 
 ## 10. 数据模型
 
@@ -520,7 +515,7 @@ codex-{projectId}-{threadId}
 channel + peer_id -> session_name
 ```
 
-它只用于 DM。
+它不再参与普通 prompt 的主执行路由，当前主要保留给旧会话观测快照和兼容查询使用。
 
 ## 10.2.1 DM Codex 原生线程绑定
 
@@ -546,7 +541,9 @@ channel + peer_id -> codex_thread_id
 
 - `projects` 表示 CA 视角下的项目
 - `project_chats` 表示一个项目对应的飞书项目群
-- `codex_threads` 表示一个飞书话题和一个 Codex 线程的一一映射
+- `codex_threads` 表示“飞书 surface 到 native Codex thread”的绑定记录
+- `codex_threads` 以 `(chat_id, feishu_thread_id)` 唯一标识一个飞书话题 surface，而不是再把 `thread_id` 当作唯一主键
+- 因此同一个 native `thread_id` 可以被多个飞书话题引用；项目摘要中的线程数按去重后的 native `thread_id` 统计
 
 ## 10.4 Run 观测
 

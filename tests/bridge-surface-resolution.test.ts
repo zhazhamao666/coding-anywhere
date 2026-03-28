@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BridgeService } from "../src/bridge-service.js";
 
 describe("bridge thread surface resolution", () => {
-  it("resolves a project thread surface to the stored session", () => {
+  it("resolves a project thread surface to the stored native thread", () => {
     const store = {
       getRoot: vi.fn().mockReturnValue({
         id: "root",
@@ -44,7 +44,9 @@ describe("bridge thread surface resolution", () => {
 
     expect(store.getCodexThreadBySurface).toHaveBeenCalledWith("oc_chat_1", "omt_1");
     expect(result.context).toEqual({
-      sessionName: "codex-proj-a-thread-a",
+      targetKind: "codex_thread",
+      threadId: "thread-a",
+      sessionName: "thread-a",
       cwd: "D:/repo",
     });
   });

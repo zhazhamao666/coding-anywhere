@@ -262,10 +262,9 @@ export class SessionStore {
         @updatedAt,
         @archivedAt
       )
-      ON CONFLICT(thread_id) DO UPDATE SET
+      ON CONFLICT(chat_id, feishu_thread_id) DO UPDATE SET
+        thread_id = excluded.thread_id,
         project_id = excluded.project_id,
-        feishu_thread_id = excluded.feishu_thread_id,
-        chat_id = excluded.chat_id,
         anchor_message_id = excluded.anchor_message_id,
         latest_message_id = excluded.latest_message_id,
         session_name = excluded.session_name,
@@ -368,21 +367,49 @@ export class SessionStore {
     });
   }
 
+  public rebindCodexThreadSurface(input: {
+    chatId: string;
+    feishuThreadId: string;
+    threadId: string;
+    sessionName: string;
+    title: string;
+    status?: CodexThreadRecord["status"];
+  }): void {
+    const updatedAt = new Date().toISOString();
+
+    this.db.prepare(`
+      UPDATE codex_threads
+      SET
+        thread_id = @threadId,
+        session_name = @sessionName,
+        title = @title,
+        status = COALESCE(@status, status),
+        updated_at = @updatedAt,
+        last_activity_at = @updatedAt
+      WHERE chat_id = @chatId AND feishu_thread_id = @feishuThreadId
+    `).run({
+      ...input,
+      status: input.status ?? null,
+      updatedAt,
+    });
+  }
+
   public listReapableThreads(cutoffIso: string): ReapableThread[] {
     const rows = this.db.prepare(`
       SELECT
         ct.thread_id,
         ct.project_id,
-        ct.session_name,
+        MIN(ct.session_name) AS session_name,
         p.cwd,
-        ct.last_activity_at
+        MIN(ct.last_activity_at) AS last_activity_at
       FROM codex_threads AS ct
       INNER JOIN projects AS p
         ON p.project_id = ct.project_id
       WHERE
         ct.status = 'warm'
         AND ct.last_activity_at < ?
-      ORDER BY ct.last_activity_at ASC
+      GROUP BY ct.thread_id, ct.project_id, p.cwd
+      ORDER BY MIN(ct.last_activity_at) ASC
     `).all(cutoffIso) as ReapableThreadRow[];
 
     return rows.map(rowToReapableThread);
@@ -395,12 +422,12 @@ export class SessionStore {
         p.name,
         pc.chat_id,
         (
-          SELECT COUNT(*)
+          SELECT COUNT(DISTINCT ct.thread_id)
           FROM codex_threads AS ct
           WHERE ct.project_id = p.project_id
         ) AS thread_count,
         (
-          SELECT COUNT(*)
+          SELECT COUNT(DISTINCT ct.thread_id)
           FROM codex_threads AS ct
           WHERE ct.project_id = p.project_id AND ct.status = 'running'
         ) AS running_thread_count,
@@ -459,6 +486,8 @@ export class SessionStore {
         archived_at
       FROM codex_threads
       WHERE thread_id = ?
+      ORDER BY updated_at DESC, chat_id ASC, feishu_thread_id ASC
+      LIMIT 1
     `).get(threadId) as ThreadSummaryRow | undefined;
 
     return row ? rowToThreadSummary(row) : undefined;
@@ -570,6 +599,37 @@ export class SessionStore {
       errorText: input.errorText ?? null,
       startedAt,
       updatedAt,
+    });
+  }
+
+  public updateRunContext(input: {
+    runId: string;
+    sessionName: string;
+    threadId?: string | null;
+    projectId?: string | null;
+    deliveryChatId?: string | null;
+    deliverySurfaceType?: "thread" | null;
+    deliverySurfaceRef?: string | null;
+  }): void {
+    this.db.prepare(`
+      UPDATE observability_runs
+      SET
+        session_name = @sessionName,
+        thread_id = @threadId,
+        project_id = @projectId,
+        delivery_chat_id = @deliveryChatId,
+        delivery_surface_type = @deliverySurfaceType,
+        delivery_surface_ref = @deliverySurfaceRef,
+        updated_at = @updatedAt
+      WHERE run_id = @runId
+    `).run({
+      ...input,
+      threadId: input.threadId ?? null,
+      projectId: input.projectId ?? null,
+      deliveryChatId: input.deliveryChatId ?? null,
+      deliverySurfaceType: input.deliverySurfaceType ?? null,
+      deliverySurfaceRef: input.deliverySurfaceRef ?? null,
+      updatedAt: new Date().toISOString(),
     });
   }
 
@@ -966,7 +1026,8 @@ export class SessionStore {
       );
 
       CREATE TABLE IF NOT EXISTS codex_threads (
-        thread_id TEXT PRIMARY KEY,
+        binding_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_id TEXT NOT NULL,
         project_id TEXT NOT NULL,
         feishu_thread_id TEXT NOT NULL,
         chat_id TEXT NOT NULL,
@@ -1031,15 +1092,15 @@ export class SessionStore {
       CREATE INDEX IF NOT EXISTS idx_observability_run_events_run_seq
       ON observability_run_events(run_id, seq);
 
-      CREATE INDEX IF NOT EXISTS idx_codex_threads_surface
-      ON codex_threads(chat_id, feishu_thread_id);
     `);
 
     this.migrateLegacyRootTable();
     this.migrateThreadBindingsTable();
+    this.migrateCodexThreadsTable();
     this.migrateCodexWindowBindingsTable();
     this.migrateObservabilityRunsTable();
     this.dropObsoleteTables();
+    this.ensureCodexThreadIndexes();
   }
 
   private migrateLegacyRootTable(): void {
@@ -1131,6 +1192,86 @@ export class SessionStore {
     `);
   }
 
+  private migrateCodexThreadsTable(): void {
+    const columns = this.db.prepare(`PRAGMA table_info(codex_threads)`).all() as Array<{
+      name: string;
+      pk: number;
+    }>;
+
+    if (columns.length === 0) {
+      return;
+    }
+
+    const hasBindingId = columns.some(column => column.name === "binding_id");
+    const threadIdColumn = columns.find(column => column.name === "thread_id");
+    if (hasBindingId || threadIdColumn?.pk !== 1) {
+      return;
+    }
+
+    this.db.exec(`
+      ALTER TABLE codex_threads RENAME TO codex_threads_legacy;
+
+      CREATE TABLE codex_threads (
+        binding_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        feishu_thread_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        anchor_message_id TEXT NOT NULL,
+        latest_message_id TEXT NOT NULL,
+        session_name TEXT NOT NULL,
+        title TEXT NOT NULL,
+        owner_open_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        last_run_id TEXT,
+        last_activity_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        archived_at TEXT,
+        UNIQUE(chat_id, feishu_thread_id),
+        FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
+      );
+
+      INSERT INTO codex_threads (
+        thread_id,
+        project_id,
+        feishu_thread_id,
+        chat_id,
+        anchor_message_id,
+        latest_message_id,
+        session_name,
+        title,
+        owner_open_id,
+        status,
+        last_run_id,
+        last_activity_at,
+        created_at,
+        updated_at,
+        archived_at
+      )
+      SELECT
+        thread_id,
+        project_id,
+        feishu_thread_id,
+        chat_id,
+        anchor_message_id,
+        latest_message_id,
+        session_name,
+        title,
+        owner_open_id,
+        status,
+        last_run_id,
+        last_activity_at,
+        created_at,
+        updated_at,
+        archived_at
+      FROM codex_threads_legacy
+      ORDER BY updated_at ASC, chat_id ASC, feishu_thread_id ASC;
+
+      DROP TABLE codex_threads_legacy;
+    `);
+  }
+
   private migrateObservabilityRunsTable(): void {
     const columns = this.db.prepare(`PRAGMA table_info(observability_runs)`).all() as Array<{
       name: string;
@@ -1172,6 +1313,16 @@ export class SessionStore {
         updated_at TEXT NOT NULL,
         PRIMARY KEY (channel, peer_id)
       );
+    `);
+  }
+
+  private ensureCodexThreadIndexes(): void {
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_codex_threads_surface
+      ON codex_threads(chat_id, feishu_thread_id);
+
+      CREATE INDEX IF NOT EXISTS idx_codex_threads_thread_id
+      ON codex_threads(thread_id, updated_at DESC);
     `);
   }
 
