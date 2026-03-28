@@ -65,6 +65,27 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("4.3s");
   });
 
+  it("summarizes terminal assistant output in the card and points readers to the final message", () => {
+    const card = buildBridgeCard(createState({
+      status: "done",
+      stage: "done",
+      preview: [
+        "第一段：任务已经完成。",
+        "第二段：我调整了终态卡的展示策略。",
+        "第三段：完整回复继续保留在下方消息中。",
+        "第四段：这行不应该完整出现在终态卡中。",
+      ].join("\n"),
+      elapsedMs: 4_250,
+    }));
+
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain("完整回复请查看下方消息");
+    expect(serialized).toContain("第一段：任务已经完成。");
+    expect(serialized).toContain("第二段：我调整了终态卡的展示策略。");
+    expect(serialized).toContain("第三段：完整回复继续保留在下方消息中。");
+    expect(serialized).not.toContain("第四段：这行不应该完整出现在终态卡中。");
+  });
+
   it("builds the navigation hub card in schema 2.0 format", () => {
     const card = buildNavigationCard({
       title: "项目列表",
