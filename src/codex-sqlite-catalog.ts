@@ -148,8 +148,8 @@ export class CodexSqliteCatalog {
     }
   }
 
-  public listRecentConversation(threadId: string, limit = 6): CodexCatalogConversationItem[] {
-    if (limit <= 0) {
+  public listRecentConversation(threadId: string, limit?: number): CodexCatalogConversationItem[] {
+    if (typeof limit === "number" && limit <= 0) {
       return [];
     }
 
@@ -468,7 +468,7 @@ interface SessionMeta {
   createdAt: string;
 }
 
-function readRecentConversation(filePath: string, limit: number): CodexCatalogConversationItem[] {
+function readRecentConversation(filePath: string, limit?: number): CodexCatalogConversationItem[] {
   const content = readFileSync(filePath, "utf8");
   const items: CodexCatalogConversationItem[] = [];
 
@@ -506,7 +506,7 @@ function readRecentConversation(filePath: string, limit: number): CodexCatalogCo
     });
   }
 
-  return items.slice(-limit);
+  return typeof limit === "number" ? items.slice(-limit) : items;
 }
 
 function extractConversationText(content: unknown): string {

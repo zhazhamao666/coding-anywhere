@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** After a Feishu DM switches to a Codex native thread, show the thread's recent conversation in the switch-success card so the user can immediately recover context.
+**Goal:** After a Feishu DM switches to a Codex native thread, show the thread's last 1 user message plus last 4 assistant messages in the switch-success card so the user can immediately recover context.
 
 **Architecture:** Extend the Codex catalog with a rollout-backed recent-conversation reader, then have `BridgeService` include that preview when building the DM thread-switch success card. Keep the behavior scoped to the switch-success card so `/ca session` and `/ca project current` remain concise.
 
@@ -59,7 +59,7 @@ Expected: PASS
 
 **Step 1: Write minimal implementation**
 
-Update the catalog interface used by `BridgeService`, fetch recent conversation during `/ca thread switch`, and include a `最近对话` section in the switch-success card. Keep the preview compact and text-only.
+Update the catalog interface used by `BridgeService`, fetch recent conversation during `/ca thread switch`, and include a `最近对话` section in the switch-success card. Render the last 1 user message plus the last 4 assistant messages, with no truncation.
 
 **Step 2: Run test to verify it passes**
 
@@ -73,7 +73,7 @@ Expected: PASS
 
 **Step 1: Update docs**
 
-Document that DM thread switching now returns a recent-conversation preview for the selected Codex thread.
+Document that DM thread switching now returns the last 1 user message plus the last 4 assistant messages as an untruncated preview for the selected Codex thread.
 
 **Step 2: Run focused verification**
 

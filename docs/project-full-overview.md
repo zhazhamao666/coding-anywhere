@@ -61,7 +61,7 @@
 32. `npm run dev` 与 `npm run start` 维持前台子进程模型，并显式转发 `SIGINT` / `SIGTERM`，便于在当前终端 `Ctrl+C` 或关闭窗口时一起退出
 33. 飞书 SDK 传入的数组形态日志会先归一化成单条字符串，再交给项目日志器输出，减少控制台中出现 JSON 数组样式的日志
 34. DM 里切到 Codex 原生线程后，普通消息不再走 `acpx sessions ensure + prompt`，而是走 `codex exec resume <thread_id> --json`
-35. DM 中切换到某个 Codex 原生线程后，切换成功卡片会附带该线程最近几轮对话预览，便于快速恢复上下文
+35. DM 中切换到某个 Codex 原生线程后，切换成功卡片会附带“最后 1 条 user 消息 + 最后 4 条 assistant 消息”的原文预览，便于快速恢复上下文
 
 ### 2.3 当前仍未打通的部分
 
@@ -425,7 +425,7 @@ Feishu group thread text
 - `/ca project list` 会返回项目列表卡片
 - `/ca project current` 会返回当前项目摘要卡片
 - `/ca thread list <projectId>` 与 `/ca thread list-current` 会返回线程列表卡片
-- DM 中 `/ca thread switch <threadId>` 成功后会返回线程切换确认卡，并附带最近对话预览
+- DM 中 `/ca thread switch <threadId>` 成功后会返回线程切换确认卡，并附带“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
 - `/ca thread create*` 成功后会返回线程摘要卡片
 - DM 中的项目列表卡和线程列表卡现在带“查看线程”“切换到此线程”行级按钮
 - DM 中点选线程后，CA 只记录当前窗口绑定到哪个 `codex_thread_id`
@@ -635,7 +635,7 @@ channel + peer_id -> codex_thread_id
 - 可以在群主时间线快速确认当前项目绑定
 - 可以通过导航卡查看当前上下文、项目概览和线程摘要
 - 可以通过结构化列表卡快速浏览项目和线程
-- 在 DM 中切到某个 Codex 原生线程后，可以直接看到该线程最近的对话预览
+- 在 DM 中切到某个 Codex 原生线程后，可以直接看到该线程“最后 1 条 user + 最后 4 条 assistant”消息的原文预览
 - 可以通过摘要卡快速确认当前项目和新建线程结果
 - 输入未知子命令时也能自动回到导航卡
 - 可以在群主时间线里直接绑定当前群，而不用手工输入 `chatId`

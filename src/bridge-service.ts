@@ -687,8 +687,15 @@ export class BridgeService {
         codexThreadId: thread.threadId,
       });
 
-      const recentConversation = this.dependencies.codexCatalog.listRecentConversation(thread.threadId, 4);
-      return [this.buildCodexThreadSwitchedCardReply(input, project, thread, recentConversation)];
+      const recentConversation = this.dependencies.codexCatalog.listRecentConversation(thread.threadId);
+      return [
+        this.buildCodexThreadSwitchedCardReply(
+          input,
+          project,
+          thread,
+          selectSwitchCardConversation(recentConversation),
+        ),
+      ];
     }
 
     if (action === "list" || action === "list-current") {
@@ -1169,7 +1176,7 @@ export class BridgeService {
     recentConversation: CodexCatalogConversationItem[],
   ): BridgeReply {
     const conversationItems = recentConversation.length > 0
-      ? recentConversation.map(item => `${item.role === "user" ? "用户" : "助手"}：${formatConversationPreview(item.text)}`)
+      ? recentConversation.map(item => `${item.role === "user" ? "用户" : "助手"}：${item.text}`)
       : ["暂未读取到可展示的最近对话。"];
 
     return {
@@ -1333,13 +1340,13 @@ function buildRunId(): string {
   return `run-${randomUUID()}`;
 }
 
-function formatConversationPreview(text: string, maxLength = 140): string {
-  const compact = text.replace(/\s+/g, " ").trim();
-  if (compact.length <= maxLength) {
-    return compact;
-  }
+function selectSwitchCardConversation(
+  items: CodexCatalogConversationItem[],
+): CodexCatalogConversationItem[] {
+  const latestUser = [...items].reverse().find(item => item.role === "user");
+  const latestAssistants = items.filter(item => item.role === "assistant").slice(-4);
 
-  return `${compact.slice(0, maxLength - 1)}…`;
+  return items.filter(item => item === latestUser || latestAssistants.includes(item));
 }
 
 function findFinalAssistantText(events: AcpxEvent[]): string {

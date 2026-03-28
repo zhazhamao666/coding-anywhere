@@ -78,8 +78,13 @@ describe("DM Codex browser", () => {
     expect(switchCardText).toContain("线程已切换");
     expect(switchCardText).toContain("thread-alpha-2");
     expect(switchCardText).toContain("最近对话");
-    expect(switchCardText).toContain("请先检查 Alpha 的失败原因");
-    expect(switchCardText).toContain("我会先查看报错、命令和最近一次输出");
+    expect(switchCardText).toContain("最后一条用户消息，包含完整的长文本，不应该被截断。最后一条用户消息，包含完整的长文本，不应该被截断。最后一条用户消息，包含完整的长文本，不应该被截断。");
+    expect(switchCardText).toContain("第二条应展示的助手回复");
+    expect(switchCardText).toContain("第三条应展示的助手回复");
+    expect(switchCardText).toContain("第四条应展示的助手回复");
+    expect(switchCardText).toContain("第五条应展示的助手回复");
+    expect(switchCardText).not.toContain("更早的用户消息，不应展示");
+    expect(switchCardText).not.toContain("第一条应展示的助手回复");
     expect((store as any).getCodexWindowBinding("feishu", "ou_demo")).toMatchObject({
       codexThreadId: "thread-alpha-2",
     });
@@ -192,28 +197,54 @@ function createCatalogDouble() {
     getProject: vi.fn((projectKey: string) => projects.find(project => project.projectKey === projectKey)),
     listThreads: vi.fn((projectKey: string) => threads.filter(thread => thread.projectKey === projectKey)),
     getThread: vi.fn((threadId: string) => threads.find(thread => thread.threadId === threadId)),
-    listRecentConversation: vi.fn((threadId: string, limit = 6) => {
+    listRecentConversation: vi.fn((threadId: string, limit?: number) => {
       const conversations: Record<string, Array<{ role: "user" | "assistant"; text: string; timestamp: string }>> = {
         "thread-alpha-2": [
           {
             role: "user",
-            text: "请先检查 Alpha 的失败原因",
-            timestamp: "2026-03-26T01:58:00.000Z",
+            text: "更早的用户消息，不应展示",
+            timestamp: "2026-03-26T01:55:00.000Z",
           },
           {
             role: "assistant",
-            text: "我会先查看报错、命令和最近一次输出。",
-            timestamp: "2026-03-26T01:59:00.000Z",
+            text: "更早的助手回复，不应展示",
+            timestamp: "2026-03-26T01:56:00.000Z",
+          },
+          {
+            role: "assistant",
+            text: "第一条应展示的助手回复",
+            timestamp: "2026-03-26T01:57:00.000Z",
+          },
+          {
+            role: "assistant",
+            text: "第二条应展示的助手回复",
+            timestamp: "2026-03-26T01:58:00.000Z",
           },
           {
             role: "user",
-            text: "确认后直接修复。",
+            text: "最后一条用户消息，包含完整的长文本，不应该被截断。最后一条用户消息，包含完整的长文本，不应该被截断。最后一条用户消息，包含完整的长文本，不应该被截断。",
+            timestamp: "2026-03-26T01:59:00.000Z",
+          },
+          {
+            role: "assistant",
+            text: "第三条应展示的助手回复",
             timestamp: "2026-03-26T02:00:00.000Z",
+          },
+          {
+            role: "assistant",
+            text: "第四条应展示的助手回复",
+            timestamp: "2026-03-26T02:01:00.000Z",
+          },
+          {
+            role: "assistant",
+            text: "第五条应展示的助手回复",
+            timestamp: "2026-03-26T02:02:00.000Z",
           },
         ],
       };
 
-      return (conversations[threadId] ?? []).slice(-limit);
+      const items = conversations[threadId] ?? [];
+      return typeof limit === "number" ? items.slice(-limit) : items;
     }),
   };
 }
