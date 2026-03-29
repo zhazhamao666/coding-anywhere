@@ -205,6 +205,67 @@ describe("CodexRealHarness", () => {
     expect(existsSync(result.workspaceDir)).toBe(false);
   });
 
+  it("allows the observed structured create smoke budgets by default", async () => {
+    const spawnCodex = vi.fn().mockImplementation(({ outputLastMessagePath }) => {
+      if (!outputLastMessagePath) {
+        throw new Error("outputLastMessagePath missing");
+      }
+
+      writeFileSync(
+        outputLastMessagePath,
+        JSON.stringify({ token: "TOKEN-123" }),
+        "utf8",
+      );
+
+      return createFakeCodexChild(
+        [
+          JSON.stringify({
+            type: "thread.started",
+            thread_id: "thread_123",
+          }),
+          JSON.stringify({
+            type: "turn.completed",
+            usage: {
+              input_tokens: 57_153,
+              cached_input_tokens: 0,
+              output_tokens: 829,
+            },
+          }),
+        ],
+        0,
+      );
+    });
+
+    const harness = createCodexRealHarness({
+      env: {
+        TEST_CODEX_REAL: "1",
+      },
+      spawnCodex,
+      tempRoot: rootDir,
+    });
+
+    await expect(
+      harness.runEphemeralSmoke({
+        prompt: "Read TOKEN.txt and return JSON with a token field.",
+        outputSchema: {
+          type: "object",
+          properties: {
+            token: {
+              type: "string",
+            },
+          },
+          required: ["token"],
+          additionalProperties: false,
+        },
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        threadId: "thread_123",
+        lastMessage: JSON.stringify({ token: "TOKEN-123" }),
+      }),
+    );
+  });
+
   it("rejects once the configured call budget is exhausted", async () => {
     const spawnCodex = vi.fn().mockReturnValue(
       createFakeCodexChild(
@@ -361,46 +422,51 @@ const liveSmoke = shouldRunRealCodexSmoke({
 });
 
 const maybeIt = liveSmoke ? it : it.skip;
+const liveSmokeTimeoutMs = 60_000;
 
-maybeIt("runs a real structured Codex create smoke only when TEST_CODEX_REAL=1", async () => {
-  const harness = createCodexRealHarness({
-    env: process.env,
-  });
+maybeIt(
+  "runs a real structured Codex create smoke only when TEST_CODEX_REAL=1",
+  async () => {
+    const harness = createCodexRealHarness({
+      env: process.env,
+    });
 
-  const result = await harness.runEphemeralSmoke({
-    prompt: "Read TOKEN.txt and return JSON with a token field.",
-    outputSchema: {
-      type: "object",
-      properties: {
-        token: {
-          type: "string",
+    const result = await harness.runEphemeralSmoke({
+      prompt: "Read TOKEN.txt and return JSON with a token field.",
+      outputSchema: {
+        type: "object",
+        properties: {
+          token: {
+            type: "string",
+          },
         },
+        required: ["token"],
+        additionalProperties: false,
       },
-      required: ["token"],
-      additionalProperties: false,
-    },
-    seedWorkspace(workspaceDir) {
-      const fixturePath = path.join(
-        path.dirname(fileURLToPath(import.meta.url)),
-        "fixtures",
-        "codex",
-        "workspaces",
-        "create",
-        "TOKEN.txt",
-      );
-      writeFileSync(
-        path.join(workspaceDir, "TOKEN.txt"),
-        readFileSync(fixturePath, "utf8"),
-        "utf8",
-      );
-    },
-  });
+      seedWorkspace(workspaceDir) {
+        const fixturePath = path.join(
+          path.dirname(fileURLToPath(import.meta.url)),
+          "fixtures",
+          "codex",
+          "workspaces",
+          "create",
+          "TOKEN.txt",
+        );
+        writeFileSync(
+          path.join(workspaceDir, "TOKEN.txt"),
+          readFileSync(fixturePath, "utf8"),
+          "utf8",
+        );
+      },
+    });
 
-  expect(result.threadId).toBeDefined();
-  expect(result.rawLines.length).toBeGreaterThan(0);
-  expect(result.lastMessage).toBeDefined();
-  expect(JSON.parse(result.lastMessage ?? "{}")).toEqual({ token: "TOKEN-123" });
-});
+    expect(result.threadId).toBeDefined();
+    expect(result.rawLines.length).toBeGreaterThan(0);
+    expect(result.lastMessage).toBeDefined();
+    expect(JSON.parse(result.lastMessage ?? "{}")).toEqual({ token: "TOKEN-123" });
+  },
+  liveSmokeTimeoutMs,
+);
 
 function createFakeCodexChild(lines: string[], exitCode: number) {
   return Object.assign(Promise.resolve({ exitCode }), {

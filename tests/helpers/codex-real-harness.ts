@@ -201,12 +201,12 @@ function resolveBudgets(
     ),
     maxInputTokens: resolveInteger(
       options.maxInputTokens ?? env.TEST_CODEX_MAX_INPUT_TOKENS,
-      45_000,
+      65_000,
       "TEST_CODEX_MAX_INPUT_TOKENS",
     ),
     maxOutputTokens: resolveInteger(
       options.maxOutputTokens ?? env.TEST_CODEX_MAX_OUTPUT_TOKENS,
-      800,
+      1_000,
       "TEST_CODEX_MAX_OUTPUT_TOKENS",
     ),
   };
