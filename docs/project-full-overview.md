@@ -648,6 +648,13 @@ channel + peer_id -> codex_thread_id
 
 ## 15. 推荐验证路径
 
+### 15.0 Codex 侧回归
+
+1. 运行 `tests/acpx-runner.test.ts`，默认使用录制的 Codex JSONL transcript fixture 回放 runner 协议
+2. 仅在显式开启 `TEST_CODEX_REAL=1` 时，运行真实 Codex CLI smoke
+3. 真实 Codex smoke 只做最小 create/resume 验证，并限制调用次数与 token 预算
+4. 真实 Codex smoke 结束后必须清理临时工作区与隔离状态目录
+
 ### 15.1 基础回归
 
 1. `npm run doctor`

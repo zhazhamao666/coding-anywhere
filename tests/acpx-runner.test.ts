@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { Readable } from "node:stream";
+import path from "node:path";
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -66,30 +68,7 @@ describe("AcpxRunner", () => {
   });
 
   it("creates a native thread through codex exec and returns the thread id", async () => {
-    const lines = [
-      JSON.stringify({
-        type: "thread.started",
-        thread_id: "thread-native-1",
-      }),
-      JSON.stringify({
-        type: "item.completed",
-        item: {
-          type: "agent_message",
-          text: "READY",
-        },
-      }),
-      JSON.stringify({
-        type: "turn.completed",
-      }),
-    ];
-    const child = Object.assign(
-      Promise.resolve({
-        exitCode: 0,
-      }),
-      {
-        stdout: Readable.from([`${lines[0]}\n${lines[1]}\n${lines[2]}\n`]),
-      },
-    );
+    const child = createChildFromFixture("create-thread.jsonl", 0);
     execaMock.mockReturnValue(child);
 
     const runner = new AcpxRunner("acpx", "codex");
@@ -114,10 +93,15 @@ describe("AcpxRunner", () => {
         reject: false,
       },
     );
-    expect(outcome.threadId).toBe("thread-native-1");
+    expect(outcome.threadId).toBe("019d34e0-254e-70f1-9dd5-097fb862d391");
     expect(seenEvents).toEqual([
-      { type: "text", content: "READY" },
-      { type: "done", content: "READY" },
+      {
+        type: "tool_call",
+        toolName: "powershell.exe -Command \"Get-Content 'C:\\Users\\eijud\\.agents\\skills\\using-superpowers\\SKILL.md' -Encoding utf8\"",
+        content: "powershell.exe -Command \"Get-Content 'C:\\Users\\eijud\\.agents\\skills\\using-superpowers\\SKILL.md' -Encoding utf8\"",
+      },
+      { type: "text", content: "OK" },
+      { type: "done", content: "OK" },
     ]);
   });
 
@@ -135,37 +119,7 @@ describe("AcpxRunner", () => {
   });
 
   it("resumes an existing native thread and preserves streamed text chunks", async () => {
-    const lines = [
-      JSON.stringify({
-        type: "item.completed",
-        item: {
-          type: "agent_message",
-          text: "你",
-        },
-      }),
-      JSON.stringify({
-        type: "item.completed",
-        item: {
-          type: "agent_message",
-          text: "好",
-        },
-      }),
-      JSON.stringify({
-        type: "turn.completed",
-      }),
-    ];
-
-    const child = Object.assign(
-      Promise.resolve({
-        exitCode: 0,
-      }),
-      {
-        stdout: Readable.from([
-          `${lines[0]}\n${lines[1].slice(0, 24)}`,
-          `${lines[1].slice(24)}\n${lines[2]}\n`,
-        ]),
-      },
-    );
+    const child = createChildFromFixture("resume-thread.jsonl", 0);
     execaMock.mockReturnValue(child);
 
     const runner = new AcpxRunner("acpx", "codex");
@@ -200,14 +154,71 @@ describe("AcpxRunner", () => {
       },
     );
     expect(seenEvents).toEqual([
-      { type: "text", content: "你" },
-      { type: "text", content: "你好" },
-      { type: "done", content: "你好" },
+      {
+        type: "tool_call",
+        toolName: "powershell.exe -Command \"git status --short\"",
+        content: "powershell.exe -Command \"git status --short\"",
+      },
+      { type: "text", content: "RESUMED" },
+      { type: "done", content: "RESUMED" },
     ]);
     expect(outcome.events).toEqual([
-      { type: "text", content: "你" },
-      { type: "text", content: "你好" },
-      { type: "done", content: "你好" },
+      {
+        type: "tool_call",
+        toolName: "powershell.exe -Command \"git status --short\"",
+        content: "powershell.exe -Command \"git status --short\"",
+      },
+      { type: "text", content: "RESUMED" },
+      { type: "done", content: "RESUMED" },
+    ]);
+  });
+
+  it("reports a failed command execution as an error and still completes the turn", async () => {
+    const child = createChildFromFixture("command-failure.jsonl", 1);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "test",
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(seenEvents).toEqual([
+      { type: "tool_call", toolName: "npm test", content: "npm test" },
+      { type: "error", content: "npm ERR! Test failed" },
+      { type: "done", content: undefined },
+    ]);
+    expect(outcome.events).toEqual([
+      { type: "tool_call", toolName: "npm test", content: "npm test" },
+      { type: "error", content: "npm ERR! Test failed" },
+      { type: "done", content: undefined },
     ]);
   });
 });
+
+function createChildFromFixture(fileName: string, exitCode: number) {
+  const fixturePath = path.join(process.cwd(), "tests", "fixtures", "codex", fileName);
+  const lines = readFileSync(fixturePath, "utf8")
+    .trim()
+    .split(/\r?\n/)
+    .map(line => `${line}\n`);
+
+  return Object.assign(
+    Promise.resolve({
+      exitCode,
+    }),
+    {
+      stdout: Readable.from(lines),
+    },
+  );
+}
