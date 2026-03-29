@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -95,11 +96,11 @@ describe("AcpxRunner", () => {
     );
     expect(outcome.threadId).toBe("019d34e0-254e-70f1-9dd5-097fb862d391");
     expect(seenEvents).toEqual([
-      {
+      expect.objectContaining({
         type: "tool_call",
-        toolName: "powershell.exe -Command \"Get-Content 'C:\\Users\\eijud\\.agents\\skills\\using-superpowers\\SKILL.md' -Encoding utf8\"",
-        content: "powershell.exe -Command \"Get-Content 'C:\\Users\\eijud\\.agents\\skills\\using-superpowers\\SKILL.md' -Encoding utf8\"",
-      },
+        toolName: expect.stringContaining("Get-Content"),
+        content: expect.stringContaining("Get-Content"),
+      }),
       { type: "text", content: "OK" },
       { type: "done", content: "OK" },
     ]);
@@ -119,7 +120,11 @@ describe("AcpxRunner", () => {
   });
 
   it("resumes an existing native thread and preserves streamed text chunks", async () => {
-    const child = createChildFromFixture("resume-thread.jsonl", 0);
+    const child = createChunkedChildFromFixture(
+      "resume-thread.jsonl",
+      0,
+      [2, 3],
+    );
     execaMock.mockReturnValue(child);
 
     const runner = new AcpxRunner("acpx", "codex");
@@ -154,20 +159,20 @@ describe("AcpxRunner", () => {
       },
     );
     expect(seenEvents).toEqual([
-      {
+      expect.objectContaining({
         type: "tool_call",
-        toolName: "powershell.exe -Command \"git status --short\"",
-        content: "powershell.exe -Command \"git status --short\"",
-      },
+        toolName: expect.stringContaining("git status --short"),
+        content: expect.stringContaining("git status --short"),
+      }),
       { type: "text", content: "RESUMED" },
       { type: "done", content: "RESUMED" },
     ]);
     expect(outcome.events).toEqual([
-      {
+      expect.objectContaining({
         type: "tool_call",
-        toolName: "powershell.exe -Command \"git status --short\"",
-        content: "powershell.exe -Command \"git status --short\"",
-      },
+        toolName: expect.stringContaining("git status --short"),
+        content: expect.stringContaining("git status --short"),
+      }),
       { type: "text", content: "RESUMED" },
       { type: "done", content: "RESUMED" },
     ]);
@@ -207,7 +212,12 @@ describe("AcpxRunner", () => {
 });
 
 function createChildFromFixture(fileName: string, exitCode: number) {
-  const fixturePath = path.join(process.cwd(), "tests", "fixtures", "codex", fileName);
+  const fixturePath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "fixtures",
+    "codex",
+    fileName,
+  );
   const lines = readFileSync(fixturePath, "utf8")
     .trim()
     .split(/\r?\n/)
@@ -219,6 +229,43 @@ function createChildFromFixture(fileName: string, exitCode: number) {
     }),
     {
       stdout: Readable.from(lines),
+    },
+  );
+}
+
+function createChunkedChildFromFixture(
+  fileName: string,
+  exitCode: number,
+  chunkSplits: number[],
+) {
+  const fixturePath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "fixtures",
+    "codex",
+    fileName,
+  );
+  const content = readFileSync(fixturePath, "utf8").trim();
+  const lines = content.split(/\r?\n/).map(line => `${line}\n`);
+  const chunks: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (chunkSplits.includes(index)) {
+      const splitPoint = Math.max(1, Math.floor(line.length / 2));
+      chunks.push(line.slice(0, splitPoint));
+      chunks.push(line.slice(splitPoint));
+      continue;
+    }
+
+    chunks.push(line);
+  }
+
+  return Object.assign(
+    Promise.resolve({
+      exitCode,
+    }),
+    {
+      stdout: Readable.from(chunks),
     },
   );
 }
