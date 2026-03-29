@@ -19,10 +19,12 @@ export interface DoctorReport {
 export function inspectEnvironment(input?: {
   cwd?: string;
   configPath?: string;
+  codexHomePath?: string;
   resolveCommand?: (command: string) => string | undefined;
 }): DoctorReport {
   const cwd = input?.cwd ?? process.cwd();
   const configPath = input?.configPath ?? path.join(cwd, "config.toml");
+  const codexHomePath = input?.codexHomePath ?? resolveCodexHomePath();
   const resolveCommand =
     input?.resolveCommand ?? ((command: string) => resolveExecutable(command, { cwd }));
 
@@ -84,10 +86,31 @@ export function inspectEnvironment(input?: {
     message: `CA root cwd must exist: ${config.root.cwd}`,
   });
 
+  checks.push({
+    id: "codex.realSmokeAuth",
+    ok: existsSync(path.join(codexHomePath, "auth.json")),
+    severity: "warning",
+    message:
+      "Real Codex smoke tests require an authenticated ~/.codex/auth.json (or equivalent codex home).",
+  });
+
+  checks.push({
+    id: "codex.realSmokeOptIn",
+    ok: false,
+    severity: "warning",
+    message:
+      "Real Codex smoke tests are opt-in and cost-bearing. Use TEST_CODEX_REAL=1 (and TEST_CODEX_RESUME=1 for resume) only when intentionally spending real Codex calls.",
+  });
+
   return {
     ok: checks.every(check => check.ok || check.severity !== "blocking"),
     checks,
   };
+}
+
+function resolveCodexHomePath(): string {
+  const userHome = process.env.USERPROFILE ?? process.env.HOME ?? process.cwd();
+  return path.join(userHome, ".codex");
 }
 
 export function formatDoctorReport(report: DoctorReport): string {

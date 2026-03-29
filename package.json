@@ -10,6 +10,9 @@
     "init:config": "tsx src/init-config.ts",
     "start": "node scripts/start.mjs",
     "test": "vitest run",
+    "test:bridge:codex": "vitest run tests/bridge-real-codex.test.ts",
+    "test:codex:real": "vitest run tests/codex-real-smoke.test.ts",
+    "test:codex:resume": "vitest run tests/codex-real-resume.test.ts",
     "test:watch": "vitest"
   },
   "keywords": [],
