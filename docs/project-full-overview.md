@@ -689,6 +689,7 @@ channel + peer_id -> codex_thread_id
 5. 需要验证线程续跑时，再运行 `tests/codex-real-resume.test.ts` 并同时设置 `TEST_CODEX_RESUME=1`
 6. resume smoke 会先构建一个隔离的 Codex home，只复制认证和配置文件，不会复用旧的 `session_index.jsonl` 或 `state_*.sqlite`
 7. resume smoke 的真实 token 消耗明显高于 create smoke，应继续保持显式 opt-in，并按需要单独调节预算上限
+8. 桥级集成验证现在覆盖了 `tests/bridge-real-codex.test.ts`，默认通过真实 `BridgeService` + `AcpxRunner` 配合 transcript 夹具回放，不依赖真实 Feishu 或真实 Codex 调用
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 
