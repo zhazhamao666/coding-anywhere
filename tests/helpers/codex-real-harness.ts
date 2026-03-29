@@ -81,8 +81,6 @@ export function createCodexRealHarness(options: CodexRealHarnessOptions = {}) {
         );
       }
 
-      callCount += 1;
-
       const workspaceDir = await mkdtemp(
         path.join(options.tempRoot ?? os.tmpdir(), "codex-real-"),
       );
@@ -109,6 +107,7 @@ export function createCodexRealHarness(options: CodexRealHarnessOptions = {}) {
           input: input.prompt,
           env,
         });
+        callCount += 1;
 
         const transcript = await collectCodexTranscript(child.stdout);
         const result = await child;
@@ -215,14 +214,20 @@ async function collectCodexTranscript(stdout: SpawnedCodexProcess["stdout"]) {
     buffer += chunkToString(chunk);
     const split = flushBuffer(buffer, rawLines, parsed => {
       threadId = threadId ?? parseThreadId(parsed);
-      usage = usage ?? parseUsage(parsed);
+      const nextUsage = parseUsage(parsed);
+      if (nextUsage) {
+        usage = nextUsage;
+      }
     });
     buffer = split.remainingBuffer;
   }
 
   const finalSplit = flushBuffer(buffer, rawLines, parsed => {
     threadId = threadId ?? parseThreadId(parsed);
-    usage = usage ?? parseUsage(parsed);
+    const nextUsage = parseUsage(parsed);
+    if (nextUsage) {
+      usage = nextUsage;
+    }
   });
 
   buffer = finalSplit.remainingBuffer;
@@ -231,7 +236,10 @@ async function collectCodexTranscript(stdout: SpawnedCodexProcess["stdout"]) {
     const parsed = tryParseJson(buffer);
     if (parsed) {
       threadId = threadId ?? parseThreadId(parsed);
-      usage = usage ?? parseUsage(parsed);
+      const nextUsage = parseUsage(parsed);
+      if (nextUsage) {
+        usage = nextUsage;
+      }
     }
   }
 

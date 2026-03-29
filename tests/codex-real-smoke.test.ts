@@ -161,6 +161,28 @@ describe("CodexRealHarness", () => {
     expect(readdirSync(rootDir)).toEqual([]);
   });
 
+  it("does not consume call budget when workspace setup fails before spawn", async () => {
+    const spawnCodex = vi.fn();
+    const harness = createCodexRealHarness({
+      env: {
+        TEST_CODEX_REAL: "1",
+        TEST_CODEX_MAX_CALLS: "1",
+      },
+      spawnCodex,
+      tempRoot: rootDir,
+    });
+
+    rmSync(rootDir, { recursive: true, force: true });
+
+    await expect(
+      harness.runEphemeralSmoke({
+        prompt: "Setup should fail",
+      }),
+    ).rejects.toThrow();
+    expect(harness.getCallCount()).toBe(0);
+    expect(spawnCodex).not.toHaveBeenCalled();
+  });
+
   it("rejects when token usage exceeds the configured budget", async () => {
     const spawnCodex = vi.fn().mockReturnValue(
       createFakeCodexChild(
@@ -198,6 +220,47 @@ describe("CodexRealHarness", () => {
         prompt: "Budgeted call",
       }),
     ).rejects.toThrow(/TEST_CODEX_MAX_(INPUT|OUTPUT)_TOKENS/i);
+    expect(harness.getCallCount()).toBe(1);
+    expect(readdirSync(rootDir)).toEqual([]);
+  });
+
+  it("cleans up the workspace when Codex exits non-zero", async () => {
+    const spawnCodex = vi.fn().mockReturnValue(
+      createFakeCodexChild(
+        [
+          JSON.stringify({
+            type: "thread.started",
+            thread_id: "thread_123",
+          }),
+          JSON.stringify({
+            type: "turn.completed",
+            usage: {
+              input_tokens: 3,
+              cached_input_tokens: 0,
+              output_tokens: 2,
+            },
+          }),
+        ],
+        1,
+      ),
+    );
+
+    const harness = createCodexRealHarness({
+      env: {
+        TEST_CODEX_REAL: "1",
+        TEST_CODEX_MAX_CALLS: "2",
+        TEST_CODEX_MAX_INPUT_TOKENS: "20",
+        TEST_CODEX_MAX_OUTPUT_TOKENS: "10",
+      },
+      spawnCodex,
+      tempRoot: rootDir,
+    });
+
+    await expect(
+      harness.runEphemeralSmoke({
+        prompt: "Fail this call",
+      }),
+    ).rejects.toThrow(/CODEX_SMOKE_EXIT_1/);
     expect(harness.getCallCount()).toBe(1);
     expect(readdirSync(rootDir)).toEqual([]);
   });
