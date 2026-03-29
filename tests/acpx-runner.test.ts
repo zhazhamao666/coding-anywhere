@@ -209,6 +209,88 @@ describe("AcpxRunner", () => {
       { type: "done", content: undefined },
     ]);
   });
+
+  it("surfaces native plan-mode todo items as waiting progress and still completes", async () => {
+    const child = createChildFromFixture("plan-mode.jsonl", 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "enter plan mode",
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(seenEvents).toEqual([
+      {
+        type: "waiting",
+        content: "Ask whether to continue; Wait for user choice",
+      },
+      expect.objectContaining({
+        type: "text",
+        content: expect.stringContaining("`request_user_input` is unavailable"),
+      }),
+      expect.objectContaining({
+        type: "done",
+        content: expect.stringContaining("`request_user_input` is unavailable"),
+      }),
+    ]);
+    expect(outcome.events).toEqual(seenEvents);
+  });
+
+  it("surfaces native sub-agent lifecycle calls without losing the final delegated answer", async () => {
+    const child = createChildFromFixture("sub-agent.jsonl", 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "delegate a sub-agent",
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(seenEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "tool_call",
+          toolName: expect.stringContaining("spawn_agent"),
+          content: expect.stringContaining("spawn_agent"),
+        }),
+        expect.objectContaining({
+          type: "tool_call",
+          toolName: expect.stringContaining("wait"),
+          content: expect.stringContaining("wait"),
+        }),
+        {
+          type: "text",
+          content: "subagent-fixture",
+        },
+        {
+          type: "done",
+          content: "subagent-fixture",
+        },
+      ]),
+    );
+    expect(outcome.events).toEqual(seenEvents);
+  });
 });
 
 function createChildFromFixture(fileName: string, exitCode: number) {

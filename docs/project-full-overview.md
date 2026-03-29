@@ -245,6 +245,8 @@ Codex 执行适配层。
 - 通过 `codex exec --json` 创建新的 native thread
 - 通过 `codex exec resume --json` 续跑已有 native thread
 - 解析 `codex exec` / `codex exec resume` 的 JSONL 事件流
+- 将 native `todo_list` 计划事件归一化为 bridge `waiting`
+- 将 native `collab_tool_call` 子代理事件归一化为 bridge `tool_call`
 - 兼容解析旧的 `acpx` 事件格式，但正常 prompt 主链路不再依赖 `acpx prompt`
 
 ### 5.6.1 `src/codex-sqlite-catalog.ts`
@@ -692,6 +694,8 @@ channel + peer_id -> codex_thread_id
 8. 桥级集成验证现在覆盖了 `tests/bridge-real-codex.test.ts`，默认通过真实 `BridgeService` + `AcpxRunner` 配合 transcript 夹具回放，不依赖真实 Feishu 或真实 Codex 调用
 9. `npm run doctor` 现在还会提示真实 Codex smoke 的前提条件，包括 `~/.codex/auth.json` 认证状态，以及这类测试默认是显式 opt-in、带真实调用成本的
 10. 针对 Codex 原生计划行为和子代理行为的扩展测试，会优先使用一次性真实 JSONL 录制生成的 fixture，再回到默认的 transcript 驱动回归，不把这类高成本调用放进常规测试路径
+11. `tests/acpx-runner.test.ts` 现在会直接回放 `plan-mode.jsonl` 与 `sub-agent.jsonl`，校验 native 计划事件和子代理生命周期事件是否被归一化成正确的 runner 事件
+12. `tests/bridge-real-codex.test.ts` 现在也会用同一批 fixture 校验 bridge 层的等待态、工具调用观测和最终回复，不要求额外真实 Codex 调用
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 

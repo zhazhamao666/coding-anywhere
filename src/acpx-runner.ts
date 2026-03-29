@@ -317,6 +317,32 @@ export class AcpxRunner {
   }
 }
 
+function coalesceCodexExecEvent(event: AcpxEvent, assistantText: string): {
+  event: AcpxEvent;
+  assistantText: string;
+} {
+  switch (event.type) {
+    case "text":
+      return {
+        assistantText: event.content,
+        event,
+      };
+    case "done":
+      return {
+        assistantText,
+        event: {
+          ...event,
+          content: event.content ?? (assistantText || undefined),
+        },
+      };
+    default:
+      return {
+        assistantText,
+        event,
+      };
+  }
+}
+
 async function flushAcpxBuffer(input: {
   buffer: string;
   assistantText: string;
@@ -400,7 +426,7 @@ async function flushCodexExecBuffer(input: {
 
     threadId = threadId ?? parsed.threadId;
     if (parsed.event) {
-      const coalesced = coalesceAcpxEvent(parsed.event, nextAssistantText);
+      const coalesced = coalesceCodexExecEvent(parsed.event, nextAssistantText);
       nextAssistantText = coalesced.assistantText;
       input.events.push(coalesced.event);
       await onAcpxEvent(input.onEvent, coalesced.event);
@@ -414,7 +440,7 @@ async function flushCodexExecBuffer(input: {
       if (parsed) {
         threadId = threadId ?? parsed.threadId;
         if (parsed.event) {
-          const coalesced = coalesceAcpxEvent(parsed.event, nextAssistantText);
+          const coalesced = coalesceCodexExecEvent(parsed.event, nextAssistantText);
           nextAssistantText = coalesced.assistantText;
           input.events.push(coalesced.event);
           await onAcpxEvent(input.onEvent, coalesced.event);
@@ -456,6 +482,23 @@ function parseCodexExecLine(line: string): { event?: AcpxEvent; threadId?: strin
           },
         };
       }
+      if (parsed?.item?.type === "todo_list") {
+        return {
+          event: {
+            type: "waiting",
+            content: formatTodoList(parsed.item.items),
+          },
+        };
+      }
+      if (parsed?.item?.type === "collab_tool_call") {
+        return {
+          event: {
+            type: "tool_call",
+            toolName: parsed.item.tool ?? "collab_tool_call",
+            content: parsed.item.tool ?? "collab_tool_call",
+          },
+        };
+      }
       return undefined;
     case "item.completed":
       if (parsed?.item?.type === "agent_message") {
@@ -485,6 +528,18 @@ function parseCodexExecLine(line: string): { event?: AcpxEvent; threadId?: strin
     default:
       return undefined;
   }
+}
+
+function formatTodoList(items: any): string | undefined {
+  if (!Array.isArray(items)) {
+    return undefined;
+  }
+
+  const texts = items
+    .map(item => item?.text)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+
+  return texts.length > 0 ? texts.join("; ") : undefined;
 }
 
 async function onAcpxEvent(

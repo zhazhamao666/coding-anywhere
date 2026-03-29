@@ -240,7 +240,187 @@ describe("BridgeService real runner bridge coverage", () => {
       ]),
     );
   });
+
+  it("surfaces native plan-mode waiting progress through the bridge without getting stuck", async () => {
+    store.createProject({
+      projectId: "proj-native",
+      name: "coding-anywhere",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-plan-current",
+    });
+
+    execaMock.mockReturnValue(
+      createChildFromFixture("plan-mode.jsonl", 0),
+    );
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const service = new BridgeService({
+      store,
+      runner,
+      codexCatalog: buildNativeCatalog({
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        projectKey: "proj-native",
+        threadId: "thread-plan-current",
+        title: "plan-mode",
+      }),
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "进入计划模式",
+    });
+
+    expect(execaMock).toHaveBeenCalledTimes(1);
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: expect.stringContaining("`request_user_input` is unavailable"),
+      },
+    ]);
+
+    const observabilityStore = store as any;
+    const runs = observabilityStore.listRuns({ limit: 10 });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      threadId: "thread-plan-current",
+      sessionName: "thread-plan-current",
+      status: "done",
+      stage: "done",
+    });
+    expect(observabilityStore.listRunEvents(runs[0].runId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "waiting",
+          preview: "[ca] waiting: Ask whether to continue; Wait for user choice",
+        }),
+        expect.objectContaining({
+          stage: "text",
+          preview: expect.stringContaining("`request_user_input` is unavailable"),
+        }),
+        expect.objectContaining({
+          stage: "done",
+          preview: expect.stringContaining("`request_user_input` is unavailable"),
+        }),
+      ]),
+    );
+  });
+
+  it("records native sub-agent lifecycle tool calls through the bridge and preserves the delegated final reply", async () => {
+    store.createProject({
+      projectId: "proj-native",
+      name: "coding-anywhere",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-subagent-current",
+    });
+
+    execaMock.mockReturnValue(
+      createChildFromFixture("sub-agent.jsonl", 0),
+    );
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const service = new BridgeService({
+      store,
+      runner,
+      codexCatalog: buildNativeCatalog({
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        projectKey: "proj-native",
+        threadId: "thread-subagent-current",
+        title: "sub-agent",
+      }),
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "委派一个子代理",
+    });
+
+    expect(execaMock).toHaveBeenCalledTimes(1);
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "subagent-fixture",
+      },
+    ]);
+
+    const observabilityStore = store as any;
+    const runs = observabilityStore.listRuns({ limit: 10 });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      threadId: "thread-subagent-current",
+      sessionName: "thread-subagent-current",
+      status: "done",
+      stage: "done",
+    });
+    expect(observabilityStore.listRunEvents(runs[0].runId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "tool_call",
+          toolName: "spawn_agent",
+          preview: "[ca] tool_call: spawn_agent",
+        }),
+        expect.objectContaining({
+          stage: "tool_call",
+          toolName: "wait",
+          preview: "[ca] tool_call: wait",
+        }),
+        expect.objectContaining({
+          stage: "done",
+          preview: "subagent-fixture",
+        }),
+      ]),
+    );
+  });
 });
+
+function buildNativeCatalog(input: {
+  cwd: string;
+  projectKey: string;
+  threadId: string;
+  title: string;
+}) {
+  const project = {
+    projectKey: input.projectKey,
+    cwd: input.cwd,
+    displayName: "coding-anywhere",
+    threadCount: 1,
+    activeThreadCount: 1,
+    lastUpdatedAt: "2026-03-29T00:00:00.000Z",
+    gitBranch: "main",
+  };
+  const thread = {
+    threadId: input.threadId,
+    projectKey: input.projectKey,
+    cwd: input.cwd,
+    displayName: "coding-anywhere",
+    title: input.title,
+    source: "vscode",
+    archived: false,
+    updatedAt: "2026-03-29T00:00:00.000Z",
+    createdAt: "2026-03-28T00:00:00.000Z",
+    gitBranch: "main",
+    cliVersion: "0.116.0",
+    rolloutPath: "D:/rollout",
+  };
+
+  return {
+    listProjects: vi.fn(() => [project]),
+    getProject: vi.fn(() => project),
+    listThreads: vi.fn(() => [thread]),
+    getThread: vi.fn(() => thread),
+  };
+}
 
 function createChildFromFixture(fileName: string, exitCode: number) {
   const fixturePath = path.join(
