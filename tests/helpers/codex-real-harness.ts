@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, copyFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -29,11 +29,29 @@ export interface CodexRealHarnessOptions {
   maxOutputTokens?: number;
 }
 
+export interface CodexIsolatedHome {
+  homeDir: string;
+  codexDir: string;
+  env: NodeJS.ProcessEnv;
+  cleanup: () => Promise<void>;
+}
+
+export interface CodexIsolatedHomeOptions {
+  env?: NodeJS.ProcessEnv;
+  tempRoot?: string;
+  sourceCodexHome?: string;
+}
+
 export interface CodexSmokeInvocation {
   prompt: string;
   seedWorkspace?: (workspaceDir: string) => void | Promise<void>;
   extraArgs?: string[];
   outputSchema?: Record<string, unknown>;
+}
+
+export interface CodexPersistentSmokeInvocation extends CodexSmokeInvocation {
+  isolatedHome: CodexIsolatedHome;
+  resumeThreadId?: string;
 }
 
 export type SpawnedCodexProcess = Promise<{ exitCode?: number }> & {
@@ -60,6 +78,38 @@ export function shouldRunRealCodexSmoke(env: NodeJS.ProcessEnv = process.env): b
   return env.TEST_CODEX_REAL === "1";
 }
 
+export function shouldRunRealCodexResumeSmoke(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.TEST_CODEX_REAL === "1" && env.TEST_CODEX_RESUME === "1";
+}
+
+export async function createCodexIsolatedHome(
+  options: CodexIsolatedHomeOptions = {},
+): Promise<CodexIsolatedHome> {
+  const env = {
+    ...process.env,
+    ...options.env,
+  };
+  const homeDir = await mkdtemp(path.join(options.tempRoot ?? os.tmpdir(), "codex-home-"));
+  const codexDir = path.join(homeDir, ".codex");
+  const sourceCodexHome = options.sourceCodexHome ?? resolveDefaultCodexHome(env);
+
+  await mkdir(codexDir, { recursive: true });
+  await copyBootstrapCodexFiles(sourceCodexHome, codexDir);
+
+  return {
+    homeDir,
+    codexDir,
+    env: {
+      ...env,
+      HOME: homeDir,
+      USERPROFILE: homeDir,
+    },
+    async cleanup() {
+      await rm(homeDir, { recursive: true, force: true });
+    },
+  };
+}
+
 export function createCodexRealHarness(options: CodexRealHarnessOptions = {}) {
   const env = {
     ...process.env,
@@ -75,101 +125,40 @@ export function createCodexRealHarness(options: CodexRealHarnessOptions = {}) {
       return callCount;
     },
     async runEphemeralSmoke(input: CodexSmokeInvocation): Promise<CodexRealSmokeResult> {
-      if (!shouldRunRealCodexSmoke(env)) {
-        throw new Error("TEST_CODEX_REAL_REQUIRED");
-      }
-
-      if (callCount >= budgets.maxCalls) {
-        throw new Error(
-          `TEST_CODEX_MAX_CALLS exceeded: ${callCount + 1} > ${budgets.maxCalls}`,
-        );
-      }
-
-      const workspaceDir = await mkdtemp(
-        path.join(options.tempRoot ?? os.tmpdir(), "codex-real-"),
-      );
-      const outputSchemaPath = input.outputSchema
-        ? path.join(workspaceDir, "codex-output-schema.json")
-        : undefined;
-      const outputLastMessagePath = input.outputSchema
-        ? path.join(workspaceDir, "codex-last-message.txt")
-        : undefined;
-
-      try {
-        if (input.seedWorkspace) {
-          await input.seedWorkspace(workspaceDir);
-        }
-
-        if (outputSchemaPath && input.outputSchema) {
-          await writeFile(
-            outputSchemaPath,
-            `${JSON.stringify(input.outputSchema, null, 2)}\n`,
-            "utf8",
-          );
-        }
-
-        const child = spawnCodex({
-          command: codexCommand,
-          args: [
-            "exec",
-            "--json",
-            "--ephemeral",
-            "--skip-git-repo-check",
-            "--sandbox",
-            "read-only",
-            ...(outputSchemaPath
-              ? ["--output-schema", outputSchemaPath]
-              : []),
-            ...(outputLastMessagePath
-              ? ["--output-last-message", outputLastMessagePath]
-              : []),
-            ...(input.extraArgs ?? []),
-            "--cd",
-            workspaceDir,
-          ],
-          cwd: workspaceDir,
-          input: input.prompt,
-          env,
-          outputSchemaPath,
-          outputLastMessagePath,
-        });
-        callCount += 1;
-
-        const transcript = await collectCodexTranscript(child.stdout);
-        const result = await child;
-        const exitCode = result.exitCode ?? 0;
-
-        if (exitCode !== 0) {
-          throw new Error(`CODEX_SMOKE_EXIT_${exitCode}`);
-        }
-
-        const usage = transcript.usage;
-        if (!usage) {
-          throw new Error("CODEX_SMOKE_USAGE_MISSING");
-        }
-
-        let lastMessage: string | undefined;
-        if (outputLastMessagePath) {
-          const rawLastMessage = await readFile(outputLastMessagePath, "utf8");
-          lastMessage = rawLastMessage.trimEnd();
-          if (!lastMessage) {
-            throw new Error("CODEX_SMOKE_LAST_MESSAGE_MISSING");
-          }
-        }
-
-        enforceBudgets(budgets, usage);
-
-        return {
-          workspaceDir,
-          rawLines: transcript.rawLines,
-          threadId: transcript.threadId,
-          usage,
-          lastMessage,
-          exitCode,
-        };
-      } finally {
-        await rm(workspaceDir, { recursive: true, force: true });
-      }
+      return runCodexSmoke({
+        env,
+        tempRoot: options.tempRoot,
+        spawnCodex,
+        codexCommand,
+        budgets,
+        callCountRef: () => callCount,
+        incrementCallCount: () => {
+          callCount += 1;
+        },
+        input,
+        ephemeral: true,
+      });
+    },
+    async runPersistentSmoke(
+      input: CodexPersistentSmokeInvocation,
+    ): Promise<CodexRealSmokeResult> {
+      return runCodexSmoke({
+        env: {
+          ...env,
+          ...input.isolatedHome.env,
+        },
+        tempRoot: options.tempRoot,
+        spawnCodex,
+        codexCommand,
+        budgets,
+        callCountRef: () => callCount,
+        incrementCallCount: () => {
+          callCount += 1;
+        },
+        input,
+        ephemeral: false,
+        resumeThreadId: input.resumeThreadId,
+      });
     },
   };
 }
@@ -230,6 +219,149 @@ function resolveInteger(
   }
 
   return fallback;
+}
+
+async function runCodexSmoke(input: {
+  env: NodeJS.ProcessEnv;
+  tempRoot?: string;
+  spawnCodex: SpawnCodex;
+  codexCommand: string;
+  budgets: ResolvedBudgets;
+  callCountRef: () => number;
+  incrementCallCount: () => void;
+  input: CodexSmokeInvocation | CodexPersistentSmokeInvocation;
+  ephemeral: boolean;
+  cwd?: string;
+  resumeThreadId?: string;
+}): Promise<CodexRealSmokeResult> {
+  if (!shouldRunRealCodexSmoke(input.env)) {
+    throw new Error("TEST_CODEX_REAL_REQUIRED");
+  }
+
+  if (input.callCountRef() >= input.budgets.maxCalls) {
+    throw new Error(
+      `TEST_CODEX_MAX_CALLS exceeded: ${input.callCountRef() + 1} > ${input.budgets.maxCalls}`,
+    );
+  }
+
+  const workspaceDir = await mkdtemp(
+    path.join(input.tempRoot ?? os.tmpdir(), "codex-real-"),
+  );
+  const outputSchemaPath = input.input.outputSchema
+    ? path.join(workspaceDir, "codex-output-schema.json")
+    : undefined;
+  const outputLastMessagePath = input.input.outputSchema
+    ? path.join(workspaceDir, "codex-last-message.txt")
+    : undefined;
+
+  try {
+    if (input.input.seedWorkspace) {
+      await input.input.seedWorkspace(workspaceDir);
+    }
+
+    if (outputSchemaPath && input.input.outputSchema) {
+      await writeFile(
+        outputSchemaPath,
+        `${JSON.stringify(input.input.outputSchema, null, 2)}\n`,
+        "utf8",
+      );
+    }
+
+    const child = input.spawnCodex({
+      command: input.codexCommand,
+      args: buildSmokeArgs({
+        outputSchemaPath,
+        outputLastMessagePath,
+        extraArgs: input.input.extraArgs ?? [],
+        ephemeral: input.ephemeral,
+        workspaceDir,
+        resumeThreadId: input.resumeThreadId,
+      }),
+      cwd: input.cwd ?? workspaceDir,
+      env: input.env,
+      input: input.input.prompt,
+      outputSchemaPath,
+      outputLastMessagePath,
+    });
+    input.incrementCallCount();
+
+    const transcript = await collectCodexTranscript(child.stdout);
+    const result = await child;
+    const exitCode = result.exitCode ?? 0;
+
+    if (exitCode !== 0) {
+      throw new Error(`CODEX_SMOKE_EXIT_${exitCode}`);
+    }
+
+    const usage = transcript.usage;
+    if (!usage) {
+      throw new Error("CODEX_SMOKE_USAGE_MISSING");
+    }
+
+    let lastMessage: string | undefined;
+    if (outputLastMessagePath) {
+      const rawLastMessage = await readFile(outputLastMessagePath, "utf8");
+      lastMessage = rawLastMessage.trimEnd();
+      if (!lastMessage) {
+        throw new Error("CODEX_SMOKE_LAST_MESSAGE_MISSING");
+      }
+    }
+
+    enforceBudgets(input.budgets, usage);
+
+    return {
+      workspaceDir,
+      rawLines: transcript.rawLines,
+      threadId: transcript.threadId,
+      usage,
+      lastMessage,
+      exitCode,
+    };
+  } finally {
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
+function buildSmokeArgs(input: {
+  outputSchemaPath?: string;
+  outputLastMessagePath?: string;
+  extraArgs: string[];
+  ephemeral: boolean;
+  workspaceDir: string;
+  resumeThreadId?: string;
+}): string[] {
+  return input.resumeThreadId
+    ? [
+        "exec",
+        "resume",
+        "--json",
+        ...(input.ephemeral ? ["--ephemeral"] : []),
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        ...(input.outputSchemaPath ? ["--output-schema", input.outputSchemaPath] : []),
+        ...(input.outputLastMessagePath
+          ? ["--output-last-message", input.outputLastMessagePath]
+          : []),
+        ...input.extraArgs,
+        input.resumeThreadId,
+        "-",
+      ]
+    : [
+        "exec",
+        "--json",
+        ...(input.ephemeral ? ["--ephemeral"] : []),
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        ...(input.outputSchemaPath ? ["--output-schema", input.outputSchemaPath] : []),
+        ...(input.outputLastMessagePath
+          ? ["--output-last-message", input.outputLastMessagePath]
+          : []),
+        ...input.extraArgs,
+        "--cd",
+        input.workspaceDir,
+      ];
 }
 
 async function collectCodexTranscript(stdout: SpawnedCodexProcess["stdout"]) {
@@ -416,4 +548,34 @@ function enforceBudgets(budgets: ResolvedBudgets, usage: CodexTokenUsage) {
       `TEST_CODEX_MAX_OUTPUT_TOKENS exceeded: ${usage.outputTokens} > ${budgets.maxOutputTokens}`,
     );
   }
+}
+
+async function copyBootstrapCodexFiles(sourceCodexHome: string, targetCodexHome: string) {
+  const bootstrapFiles = ["auth.json", "config.toml", "AGENTS.md", "version.json"];
+
+  for (const fileName of bootstrapFiles) {
+    const sourcePath = path.join(sourceCodexHome, fileName);
+    const targetPath = path.join(targetCodexHome, fileName);
+    try {
+      await copyFile(sourcePath, targetPath);
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+    }
+  }
+}
+
+function resolveDefaultCodexHome(env: NodeJS.ProcessEnv): string {
+  const profileRoot = env.USERPROFILE ?? env.HOME ?? os.homedir();
+  return path.join(profileRoot, ".codex");
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "ENOENT",
+  );
 }
