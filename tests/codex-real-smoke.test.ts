@@ -1,5 +1,6 @@
 import {
   existsSync,
+  readFileSync,
   mkdtempSync,
   readdirSync,
   rmSync,
@@ -8,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -112,6 +114,94 @@ describe("CodexRealHarness", () => {
         },
       }),
     ]);
+    expect(existsSync(result.workspaceDir)).toBe(false);
+  });
+
+  it("supports structured output capture for live smoke runs", async () => {
+    const spawnCodex = vi.fn().mockImplementation(({ outputLastMessagePath }) => {
+      if (!outputLastMessagePath) {
+        throw new Error("outputLastMessagePath missing");
+      }
+
+      writeFileSync(
+        outputLastMessagePath,
+        JSON.stringify({ token: "TOKEN-123" }),
+        "utf8",
+      );
+
+      return createFakeCodexChild(
+        [
+          JSON.stringify({
+            type: "thread.started",
+            thread_id: "thread_123",
+          }),
+          JSON.stringify({
+            type: "turn.completed",
+            usage: {
+              input_tokens: 10,
+              cached_input_tokens: 2,
+              output_tokens: 3,
+            },
+          }),
+        ],
+        0,
+      );
+    });
+
+    const harness = createCodexRealHarness({
+      env: {
+        TEST_CODEX_REAL: "1",
+        TEST_CODEX_MAX_CALLS: "2",
+        TEST_CODEX_MAX_INPUT_TOKENS: "20",
+        TEST_CODEX_MAX_OUTPUT_TOKENS: "10",
+      },
+      spawnCodex,
+      tempRoot: rootDir,
+    });
+
+    const result = await harness.runEphemeralSmoke({
+      prompt: "Read TOKEN.txt and return JSON with a token field.",
+      outputSchema: {
+        type: "object",
+        properties: {
+          token: {
+            type: "string",
+          },
+        },
+        required: ["token"],
+        additionalProperties: false,
+      },
+      seedWorkspace(workspaceDir) {
+        const fixturePath = path.join(
+          path.dirname(fileURLToPath(import.meta.url)),
+          "fixtures",
+          "codex",
+          "workspaces",
+          "create",
+          "TOKEN.txt",
+        );
+        writeFileSync(
+          path.join(workspaceDir, "TOKEN.txt"),
+          readFileSync(fixturePath, "utf8"),
+          "utf8",
+        );
+      },
+    });
+
+    expect(spawnCodex).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "codex",
+        args: expect.arrayContaining([
+          "--output-schema",
+          expect.stringContaining("codex-output-schema.json"),
+          "--output-last-message",
+          expect.stringContaining("codex-last-message.txt"),
+        ]),
+      }),
+    );
+    expect(result.threadId).toBe("thread_123");
+    expect(result.lastMessage).toBe(JSON.stringify({ token: "TOKEN-123" }));
+    expect(JSON.parse(result.lastMessage ?? "{}")).toEqual({ token: "TOKEN-123" });
     expect(existsSync(result.workspaceDir)).toBe(false);
   });
 
@@ -272,20 +362,44 @@ const liveSmoke = shouldRunRealCodexSmoke({
 
 const maybeIt = liveSmoke ? it : it.skip;
 
-maybeIt("runs a real Codex smoke only when TEST_CODEX_REAL=1", async () => {
+maybeIt("runs a real structured Codex create smoke only when TEST_CODEX_REAL=1", async () => {
   const harness = createCodexRealHarness({
     env: process.env,
   });
 
   const result = await harness.runEphemeralSmoke({
-    prompt: "Reply with exactly OK.",
+    prompt: "Read TOKEN.txt and return JSON with a token field.",
+    outputSchema: {
+      type: "object",
+      properties: {
+        token: {
+          type: "string",
+        },
+      },
+      required: ["token"],
+      additionalProperties: false,
+    },
     seedWorkspace(workspaceDir) {
-      writeFileSync(path.join(workspaceDir, "TOKEN.txt"), "TOKEN-123", "utf8");
+      const fixturePath = path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "fixtures",
+        "codex",
+        "workspaces",
+        "create",
+        "TOKEN.txt",
+      );
+      writeFileSync(
+        path.join(workspaceDir, "TOKEN.txt"),
+        readFileSync(fixturePath, "utf8"),
+        "utf8",
+      );
     },
   });
 
   expect(result.threadId).toBeDefined();
   expect(result.rawLines.length).toBeGreaterThan(0);
+  expect(result.lastMessage).toBeDefined();
+  expect(JSON.parse(result.lastMessage ?? "{}")).toEqual({ token: "TOKEN-123" });
 });
 
 function createFakeCodexChild(lines: string[], exitCode: number) {

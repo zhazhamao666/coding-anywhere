@@ -685,6 +685,7 @@ channel + peer_id -> codex_thread_id
 1. `npm run -s test -- tests/codex-real-smoke.test.ts`
 2. 需要触发真实调用时再设置 `TEST_CODEX_REAL=1`
 3. 如需收紧调用预算，可额外设置 `TEST_CODEX_MAX_CALLS`、`TEST_CODEX_MAX_INPUT_TOKENS`、`TEST_CODEX_MAX_OUTPUT_TOKENS`
+4. 其中的 create smoke 会使用一个只包含 `TOKEN.txt` 的最小工作区，并通过 `--output-schema` + `--output-last-message` 校验结构化最终结果
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 

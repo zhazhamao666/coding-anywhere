@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -15,6 +15,7 @@ export interface CodexRealSmokeResult {
   rawLines: string[];
   threadId?: string;
   usage?: CodexTokenUsage;
+  lastMessage?: string;
   exitCode: number;
 }
 
@@ -32,6 +33,7 @@ export interface CodexSmokeInvocation {
   prompt: string;
   seedWorkspace?: (workspaceDir: string) => void | Promise<void>;
   extraArgs?: string[];
+  outputSchema?: Record<string, unknown>;
 }
 
 export type SpawnedCodexProcess = Promise<{ exitCode?: number }> & {
@@ -44,6 +46,8 @@ export type SpawnCodex = (input: {
   cwd: string;
   input: string;
   env: NodeJS.ProcessEnv;
+  outputSchemaPath?: string;
+  outputLastMessagePath?: string;
 }) => SpawnedCodexProcess;
 
 interface ResolvedBudgets {
@@ -84,10 +88,24 @@ export function createCodexRealHarness(options: CodexRealHarnessOptions = {}) {
       const workspaceDir = await mkdtemp(
         path.join(options.tempRoot ?? os.tmpdir(), "codex-real-"),
       );
+      const outputSchemaPath = input.outputSchema
+        ? path.join(workspaceDir, "codex-output-schema.json")
+        : undefined;
+      const outputLastMessagePath = input.outputSchema
+        ? path.join(workspaceDir, "codex-last-message.txt")
+        : undefined;
 
       try {
         if (input.seedWorkspace) {
           await input.seedWorkspace(workspaceDir);
+        }
+
+        if (outputSchemaPath && input.outputSchema) {
+          await writeFile(
+            outputSchemaPath,
+            `${JSON.stringify(input.outputSchema, null, 2)}\n`,
+            "utf8",
+          );
         }
 
         const child = spawnCodex({
@@ -99,6 +117,12 @@ export function createCodexRealHarness(options: CodexRealHarnessOptions = {}) {
             "--skip-git-repo-check",
             "--sandbox",
             "read-only",
+            ...(outputSchemaPath
+              ? ["--output-schema", outputSchemaPath]
+              : []),
+            ...(outputLastMessagePath
+              ? ["--output-last-message", outputLastMessagePath]
+              : []),
             ...(input.extraArgs ?? []),
             "--cd",
             workspaceDir,
@@ -106,6 +130,8 @@ export function createCodexRealHarness(options: CodexRealHarnessOptions = {}) {
           cwd: workspaceDir,
           input: input.prompt,
           env,
+          outputSchemaPath,
+          outputLastMessagePath,
         });
         callCount += 1;
 
@@ -122,6 +148,15 @@ export function createCodexRealHarness(options: CodexRealHarnessOptions = {}) {
           throw new Error("CODEX_SMOKE_USAGE_MISSING");
         }
 
+        let lastMessage: string | undefined;
+        if (outputLastMessagePath) {
+          const rawLastMessage = await readFile(outputLastMessagePath, "utf8");
+          lastMessage = rawLastMessage.trimEnd();
+          if (!lastMessage) {
+            throw new Error("CODEX_SMOKE_LAST_MESSAGE_MISSING");
+          }
+        }
+
         enforceBudgets(budgets, usage);
 
         return {
@@ -129,6 +164,7 @@ export function createCodexRealHarness(options: CodexRealHarnessOptions = {}) {
           rawLines: transcript.rawLines,
           threadId: transcript.threadId,
           usage,
+          lastMessage,
           exitCode,
         };
       } finally {
