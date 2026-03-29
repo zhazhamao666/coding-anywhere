@@ -678,6 +678,16 @@ channel + peer_id -> codex_thread_id
 2. 等待超过 `root.idleTtlHours`
 3. 观察线程是否被关闭并进入 `closed`
 
+### 15.4 Codex 真实调用烟测
+
+当需要验证真实 Codex CLI 的 JSONL 协议、线程创建和预算控制时，可以运行：
+
+1. `npm run -s test -- tests/codex-real-smoke.test.ts`
+2. 需要触发真实调用时再设置 `TEST_CODEX_REAL=1`
+3. 如需收紧调用预算，可额外设置 `TEST_CODEX_MAX_CALLS`、`TEST_CODEX_MAX_INPUT_TOKENS`、`TEST_CODEX_MAX_OUTPUT_TOKENS`
+
+这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
+
 ## 16. 一句话总结
 
 这个项目现在已经从“飞书私聊直连 Codex”演进到：
