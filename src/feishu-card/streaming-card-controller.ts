@@ -13,6 +13,7 @@ export class StreamingCardController implements StreamingCardControllerLike {
       peerId: string;
       apiClient: FeishuApiClientLike;
       anchorMessageId?: string;
+      existingMessageId?: string;
     },
   ) {}
 
@@ -64,6 +65,12 @@ export class StreamingCardController implements StreamingCardControllerLike {
 
   private async ensureInitialized(snapshot: ProgressCardState): Promise<void> {
     if (this.messageId) {
+      return;
+    }
+
+    if (this.dependencies.existingMessageId) {
+      this.mode = "fallback";
+      this.messageId = this.dependencies.existingMessageId;
       return;
     }
 

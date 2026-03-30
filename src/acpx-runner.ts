@@ -1,6 +1,13 @@
 import { execa } from "execa";
 
-import type { AcpxEvent, RunContext, RunOutcome } from "./types.js";
+import type {
+  AcpxEvent,
+  PlanChoiceOption,
+  PlanInteractionDraft,
+  PlanTodoItem,
+  RunContext,
+  RunOutcome,
+} from "./types.js";
 
 export function parseAcpxEventLine(line: string): AcpxEvent | undefined {
   let parsed: any;
@@ -483,10 +490,12 @@ function parseCodexExecLine(line: string): { event?: AcpxEvent; threadId?: strin
         };
       }
       if (parsed?.item?.type === "todo_list") {
+        const todos = parseTodoItems(parsed.item.items);
         return {
           event: {
             type: "waiting",
             content: formatTodoList(parsed.item.items),
+            planTodos: todos,
           },
         };
       }
@@ -502,10 +511,12 @@ function parseCodexExecLine(line: string): { event?: AcpxEvent; threadId?: strin
       return undefined;
     case "item.completed":
       if (parsed?.item?.type === "agent_message") {
+        const extracted = extractBridgePlanInteraction(parsed.item.text ?? "");
         return {
           event: {
             type: "text",
-            content: parsed.item.text ?? "",
+            content: extracted.content || extracted.planInteraction?.question || "",
+            planInteraction: extracted.planInteraction,
           },
         };
       }
@@ -531,15 +542,116 @@ function parseCodexExecLine(line: string): { event?: AcpxEvent; threadId?: strin
 }
 
 function formatTodoList(items: any): string | undefined {
+  const texts = parseTodoItems(items)
+    .map(item => item.text)
+    .filter(value => value.length > 0);
+
+  return texts.length > 0 ? texts.join("; ") : undefined;
+}
+
+function parseTodoItems(items: unknown): PlanTodoItem[] {
   if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .map(item => ({
+      text: typeof item?.text === "string" ? item.text : "",
+      completed: item?.completed === true,
+    }))
+    .filter(item => item.text.length > 0);
+}
+
+function extractBridgePlanInteraction(text: string): {
+  content: string;
+  planInteraction?: PlanInteractionDraft;
+} {
+  const match = text.match(/\[bridge-plan-choice\]\s*([\s\S]*?)\s*\[\/bridge-plan-choice\]/);
+  if (!match) {
+    return {
+      content: text,
+    };
+  }
+
+  const rawJson = match[1]?.trim();
+  if (!rawJson) {
+    return {
+      content: stripBridgeDirective(text),
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(rawJson) as {
+      question?: string;
+      choices?: Array<{
+        id?: string;
+        choiceId?: string;
+        label?: string;
+        description?: string;
+        answer?: string;
+        responseText?: string;
+      }>;
+    };
+    const question = typeof parsed.question === "string" ? parsed.question.trim() : "";
+    const choices = Array.isArray(parsed.choices)
+      ? parsed.choices
+        .map(normalizePlanChoice)
+        .filter((choice): choice is PlanChoiceOption => choice !== undefined)
+      : [];
+
+    return {
+      content: stripBridgeDirective(text) || question,
+      planInteraction: question && choices.length > 0
+        ? {
+            question,
+            choices,
+          }
+        : undefined,
+    };
+  } catch {
+    return {
+      content: stripBridgeDirective(text),
+    };
+  }
+}
+
+function normalizePlanChoice(choice: {
+  id?: string;
+  choiceId?: string;
+  label?: string;
+  description?: string;
+  answer?: string;
+  responseText?: string;
+}): PlanChoiceOption | undefined {
+  const choiceId = typeof choice.choiceId === "string"
+    ? choice.choiceId
+    : typeof choice.id === "string"
+      ? choice.id
+      : undefined;
+  const label = typeof choice.label === "string" ? choice.label.trim() : "";
+  const responseText = typeof choice.responseText === "string"
+    ? choice.responseText.trim()
+    : typeof choice.answer === "string"
+      ? choice.answer.trim()
+      : "";
+
+  if (!choiceId || !label || !responseText) {
     return undefined;
   }
 
-  const texts = items
-    .map(item => item?.text)
-    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  return {
+    choiceId,
+    label,
+    responseText,
+    description: typeof choice.description === "string" ? choice.description.trim() : undefined,
+  };
+}
 
-  return texts.length > 0 ? texts.join("; ") : undefined;
+function stripBridgeDirective(text: string): string {
+  return text
+    .replace(/\[bridge-plan-choice\]\s*[\s\S]*?\s*\[\/bridge-plan-choice\]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 async function onAcpxEvent(

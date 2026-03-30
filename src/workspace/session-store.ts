@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -12,6 +13,7 @@ import type {
   ObservabilityRun,
   ObservabilityRunEvent,
   ObservabilityThreadSummary,
+  PendingPlanInteractionRecord,
   ProgressStage,
   ProgressStatus,
   ProjectChatRecord,
@@ -978,6 +980,190 @@ export class SessionStore {
     return rows.map(rowToSessionSnapshot);
   }
 
+  public savePendingPlanInteraction(input: {
+    runId: string;
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+    threadId: string;
+    sessionName: string;
+    question: string;
+    choices: PendingPlanInteractionRecord["choices"];
+  }): PendingPlanInteractionRecord {
+    const interactionId = `plan-${randomUUID()}`;
+    const createdAt = new Date().toISOString();
+    const updateExisting = this.db.prepare(`
+      UPDATE pending_plan_interactions
+      SET
+        status = 'superseded',
+        updated_at = @updatedAt,
+        resolved_at = COALESCE(resolved_at, @updatedAt)
+      WHERE
+        status = 'pending'
+        AND channel = @channel
+        AND peer_id = @peerId
+        AND COALESCE(chat_id, '') = COALESCE(@chatId, '')
+        AND COALESCE(surface_type, '') = COALESCE(@surfaceType, '')
+        AND COALESCE(surface_ref, '') = COALESCE(@surfaceRef, '')
+    `);
+    const insertInteraction = this.db.prepare(`
+      INSERT INTO pending_plan_interactions (
+        interaction_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        thread_id,
+        session_name,
+        question_text,
+        choices_json,
+        status,
+        selected_choice_id,
+        created_at,
+        updated_at,
+        resolved_at
+      ) VALUES (
+        @interactionId,
+        @runId,
+        @channel,
+        @peerId,
+        @chatId,
+        @surfaceType,
+        @surfaceRef,
+        @threadId,
+        @sessionName,
+        @question,
+        @choicesJson,
+        'pending',
+        NULL,
+        @createdAt,
+        @createdAt,
+        NULL
+      )
+    `);
+
+    this.db.transaction(() => {
+      updateExisting.run({
+        ...input,
+        updatedAt: createdAt,
+        chatId: input.chatId ?? null,
+        surfaceType: input.surfaceType ?? null,
+        surfaceRef: input.surfaceRef ?? null,
+      });
+      insertInteraction.run({
+        ...input,
+        interactionId,
+        chatId: input.chatId ?? null,
+        surfaceType: input.surfaceType ?? null,
+        surfaceRef: input.surfaceRef ?? null,
+        choicesJson: JSON.stringify(input.choices),
+        createdAt,
+      });
+    })();
+
+    const created = this.getPendingPlanInteraction(interactionId);
+    if (!created) {
+      throw new Error("PENDING_PLAN_INTERACTION_SAVE_FAILED");
+    }
+
+    return created;
+  }
+
+  public getPendingPlanInteraction(interactionId: string): PendingPlanInteractionRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT
+        interaction_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        thread_id,
+        session_name,
+        question_text,
+        choices_json,
+        status,
+        selected_choice_id,
+        created_at,
+        updated_at,
+        resolved_at
+      FROM pending_plan_interactions
+      WHERE interaction_id = ?
+    `).get(interactionId) as PendingPlanInteractionRow | undefined;
+
+    return row ? rowToPendingPlanInteraction(row) : undefined;
+  }
+
+  public getLatestPendingPlanInteractionForSurface(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+  }): PendingPlanInteractionRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT
+        interaction_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        thread_id,
+        session_name,
+        question_text,
+        choices_json,
+        status,
+        selected_choice_id,
+        created_at,
+        updated_at,
+        resolved_at
+      FROM pending_plan_interactions
+      WHERE
+        status = 'pending'
+        AND channel = @channel
+        AND peer_id = @peerId
+        AND COALESCE(chat_id, '') = COALESCE(@chatId, '')
+        AND COALESCE(surface_type, '') = COALESCE(@surfaceType, '')
+        AND COALESCE(surface_ref, '') = COALESCE(@surfaceRef, '')
+      ORDER BY updated_at DESC, interaction_id DESC
+      LIMIT 1
+    `).get({
+      ...input,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+    }) as PendingPlanInteractionRow | undefined;
+
+    return row ? rowToPendingPlanInteraction(row) : undefined;
+  }
+
+  public resolvePendingPlanInteraction(input: {
+    interactionId: string;
+    selectedChoiceId?: string | null;
+  }): void {
+    const resolvedAt = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE pending_plan_interactions
+      SET
+        status = 'resolved',
+        selected_choice_id = @selectedChoiceId,
+        updated_at = @resolvedAt,
+        resolved_at = @resolvedAt
+      WHERE interaction_id = @interactionId
+    `).run({
+      interactionId: input.interactionId,
+      selectedChoiceId: input.selectedChoiceId ?? null,
+      resolvedAt,
+    });
+  }
+
   public purgeOldObservabilityEvents(maxAgeDays = 7): void {
     const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
 
@@ -1080,6 +1266,25 @@ export class SessionStore {
         FOREIGN KEY (run_id) REFERENCES observability_runs(run_id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS pending_plan_interactions (
+        interaction_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        chat_id TEXT,
+        surface_type TEXT,
+        surface_ref TEXT,
+        thread_id TEXT NOT NULL,
+        session_name TEXT NOT NULL,
+        question_text TEXT NOT NULL,
+        choices_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        selected_choice_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        resolved_at TEXT
+      );
+
       CREATE INDEX IF NOT EXISTS idx_observability_runs_updated_at
       ON observability_runs(updated_at DESC);
 
@@ -1091,6 +1296,12 @@ export class SessionStore {
 
       CREATE INDEX IF NOT EXISTS idx_observability_run_events_run_seq
       ON observability_run_events(run_id, seq);
+
+      CREATE INDEX IF NOT EXISTS idx_pending_plan_interactions_surface
+      ON pending_plan_interactions(channel, peer_id, chat_id, surface_type, surface_ref, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_pending_plan_interactions_status
+      ON pending_plan_interactions(status, updated_at DESC);
 
     `);
 
@@ -1413,6 +1624,25 @@ interface SessionSnapshotRow {
   updated_at: string;
 }
 
+interface PendingPlanInteractionRow {
+  interaction_id: string;
+  run_id: string;
+  channel: string;
+  peer_id: string;
+  chat_id: string | null;
+  surface_type: "thread" | null;
+  surface_ref: string | null;
+  thread_id: string;
+  session_name: string;
+  question_text: string;
+  choices_json: string;
+  status: PendingPlanInteractionRecord["status"];
+  selected_choice_id: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+}
+
 interface CodexThreadRow {
   thread_id: string;
   project_id: string;
@@ -1553,6 +1783,27 @@ function rowToSessionSnapshot(row: SessionSnapshotRow): SessionSnapshot {
     latestRunStatus: row.latest_run_status,
     latestRunStage: row.latest_run_stage,
     updatedAt: row.updated_at,
+  };
+}
+
+function rowToPendingPlanInteraction(row: PendingPlanInteractionRow): PendingPlanInteractionRecord {
+  return {
+    interactionId: row.interaction_id,
+    runId: row.run_id,
+    channel: row.channel,
+    peerId: row.peer_id,
+    chatId: row.chat_id,
+    surfaceType: row.surface_type,
+    surfaceRef: row.surface_ref,
+    threadId: row.thread_id,
+    sessionName: row.session_name,
+    question: row.question_text,
+    choices: JSON.parse(row.choices_json) as PendingPlanInteractionRecord["choices"],
+    status: row.status,
+    selectedChoiceId: row.selected_choice_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    resolvedAt: row.resolved_at,
   };
 }
 

@@ -4,11 +4,17 @@ export function createProgressCardState(input: {
   runId: string;
   rootName: string;
   sessionName?: string;
+  deliveryChatId?: string | null;
+  deliverySurfaceType?: "thread" | null;
+  deliverySurfaceRef?: string | null;
 }): ProgressCardState {
   return {
     runId: input.runId,
     rootName: input.rootName,
     sessionName: input.sessionName,
+    deliveryChatId: input.deliveryChatId ?? null,
+    deliverySurfaceType: input.deliverySurfaceType ?? null,
+    deliverySurfaceRef: input.deliverySurfaceRef ?? null,
     status: "queued",
     stage: "received",
     preview: "[ca] received",
@@ -101,6 +107,7 @@ export function reduceProgressEvent(
         stage: "waiting",
         status: "waiting",
         preview: event.content ? `[ca] waiting: ${event.content}` : "[ca] waiting",
+        planTodos: event.planTodos ?? state.planTodos,
         elapsedMs: nextElapsedMs,
       };
     case "done":

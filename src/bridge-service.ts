@@ -12,6 +12,7 @@ import type {
   BridgeReply,
   CodexCatalogProject,
   CodexCatalogThread,
+  PendingPlanInteractionRecord,
   RootProfile,
   ProgressCardState,
   RunContext,
@@ -86,6 +87,9 @@ export class BridgeService {
       runId: buildRunId(),
       rootName: resolved.root.id,
       sessionName: resolved.sessionName,
+      deliveryChatId: resolved.deliveryChatId,
+      deliverySurfaceType: resolved.deliverySurfaceType,
+      deliverySurfaceRef: resolved.deliverySurfaceRef,
     });
 
     const emitSnapshot = async (
@@ -187,7 +191,25 @@ export class BridgeService {
           ? buildCodexPromptEnvelope(activeResolved.root, routed.prompt)
           : routed.prompt,
         async event => {
-          const snapshot = reduceProgressEvent(currentProgress, event);
+          let snapshot = reduceProgressEvent(currentProgress, event);
+          if (event.type === "text" && event.planInteraction && activeResolved.threadId) {
+            const interaction = this.dependencies.store.savePendingPlanInteraction({
+              runId: currentProgress.runId,
+              channel: input.channel,
+              peerId: input.peerId,
+              chatId: activeResolved.deliveryChatId,
+              surfaceType: activeResolved.deliverySurfaceType,
+              surfaceRef: activeResolved.deliverySurfaceRef,
+              threadId: activeResolved.threadId,
+              sessionName: activeResolved.sessionName,
+              question: event.planInteraction.question,
+              choices: event.planInteraction.choices,
+            });
+            snapshot = {
+              ...snapshot,
+              planInteraction: interaction,
+            };
+          }
           await emitSnapshot(
             snapshot,
             "acpx",
@@ -288,6 +310,72 @@ export class BridgeService {
     }
 
     return this.dependencies.workerManager.schedule(resolved.concurrencyKey, executeWithErrorHandling);
+  }
+
+  public getPendingPlanInteraction(interactionId: string): PendingPlanInteractionRecord | undefined {
+    return this.dependencies.store.getPendingPlanInteraction(interactionId);
+  }
+
+  public async handlePlanChoice(input: {
+    channel: string;
+    peerId: string;
+    interactionId: string;
+    choiceId: string;
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
+  }, options?: {
+    onProgress?: (snapshot: ProgressCardState) => Promise<void> | void;
+  }): Promise<BridgeReply[]> {
+    const interaction = this.dependencies.store.getPendingPlanInteraction(input.interactionId);
+    if (!interaction || interaction.status !== "pending") {
+      return [{
+        kind: "system",
+        text: "[ca] pending plan interaction not found",
+      }];
+    }
+    if (!matchesPlanInteractionSurface(interaction, input)) {
+      return [{
+        kind: "system",
+        text: "[ca] pending plan interaction surface mismatch",
+      }];
+    }
+
+    const choice = interaction.choices.find(item => item.choiceId === input.choiceId);
+    if (!choice) {
+      return [{
+        kind: "system",
+        text: "[ca] pending plan choice not found",
+      }];
+    }
+
+    if (!input.chatId && !input.surfaceType) {
+      const binding = this.dependencies.store.getCodexWindowBinding(input.channel, input.peerId);
+      if (!binding || binding.codexThreadId !== interaction.threadId) {
+        this.dependencies.store.bindCodexWindow({
+          channel: input.channel,
+          peerId: input.peerId,
+          codexThreadId: interaction.threadId,
+        });
+      }
+    }
+
+    this.dependencies.store.resolvePendingPlanInteraction({
+      interactionId: interaction.interactionId,
+      selectedChoiceId: choice.choiceId,
+    });
+
+    return this.handleMessage(
+      {
+        channel: input.channel,
+        peerId: input.peerId,
+        chatId: input.chatId,
+        surfaceType: input.surfaceType,
+        surfaceRef: input.surfaceRef,
+        text: choice.responseText,
+      },
+      options,
+    );
   }
 
   private async handleCommand(
@@ -402,19 +490,23 @@ export class BridgeService {
           ),
         });
       }
-      actions.push(
-        {
-          label: "当前项目",
-          value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
-        },
-        {
-          label: "线程列表",
-          value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-        },
-        {
-          label: "当前会话",
-          value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
-        },
+        actions.push(
+          {
+            label: "当前项目",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
+          },
+          {
+            label: "线程列表",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+          {
+            label: "计划模式",
+            value: this.buildPlanActionValue(actionContext),
+          },
+          {
+            label: "当前会话",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
+          },
         {
           label: "新会话",
           value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
@@ -480,23 +572,27 @@ export class BridgeService {
         summaryLines.push(`**项目路径**：${codexSelection.project.cwd}`);
         summaryLines.push(`**当前线程**：${codexSelection.thread.threadId} · ${codexSelection.thread.title}`);
         summaryLines.push(`**Session**：${codexSelection.thread.threadId}`);
-        actions.push(
-          {
-            label: "项目列表",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
-          },
-          {
-            label: "当前项目",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
-          },
-          {
-            label: "线程列表",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-          },
-          {
-            label: "当前会话",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
-          },
+          actions.push(
+            {
+              label: "项目列表",
+              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
+            },
+            {
+              label: "当前项目",
+              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
+            },
+            {
+              label: "线程列表",
+              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+            },
+            {
+              label: "计划模式",
+              value: this.buildPlanActionValue(actionContext),
+            },
+            {
+              label: "当前会话",
+              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
+            },
           {
             label: "新会话",
             value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
@@ -524,23 +620,27 @@ export class BridgeService {
             });
           }
         }
-        actions.push(
-          {
-            label: "会话状态",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
-          },
-          {
-            label: "当前会话",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
-          },
-          {
-            label: "新会话",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
-          },
-          {
-            label: "项目列表",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
-          },
+          actions.push(
+            {
+              label: "会话状态",
+              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
+            },
+            {
+              label: "当前会话",
+              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
+            },
+            {
+              label: "新会话",
+              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
+            },
+            {
+              label: "计划模式",
+              value: this.buildPlanActionValue(actionContext),
+            },
+            {
+              label: "项目列表",
+              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
+            },
         );
       }
     }
@@ -1468,6 +1568,21 @@ export class BridgeService {
       surfaceRef: context.surfaceRef,
     };
   }
+
+  private buildPlanActionValue(
+    context: {
+      chatId?: string;
+      surfaceType?: "thread";
+      surfaceRef?: string;
+    },
+  ): Record<string, unknown> {
+    return {
+      bridgeAction: "open_plan_form",
+      chatId: context.chatId,
+      surfaceType: context.surfaceType,
+      surfaceRef: context.surfaceRef,
+    };
+  }
 }
 
 function buildSessionName(rootId: string): string {
@@ -1484,6 +1599,25 @@ function buildNativeThreadBootstrapPrompt(topic: string): string {
     "Keep the response minimal.",
     `Topic: ${topic}`,
   ].join("\n");
+}
+
+function matchesPlanInteractionSurface(
+  interaction: PendingPlanInteractionRecord,
+  input: {
+    channel: string;
+    peerId: string;
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
+  },
+): boolean {
+  return (
+    interaction.channel === input.channel &&
+    interaction.peerId === input.peerId &&
+    (interaction.chatId ?? null) === (input.chatId ?? null) &&
+    (interaction.surfaceType ?? null) === (input.surfaceType ?? null) &&
+    (interaction.surfaceRef ?? null) === (input.surfaceRef ?? null)
+  );
 }
 
 function normalizePathKey(value: string): string {

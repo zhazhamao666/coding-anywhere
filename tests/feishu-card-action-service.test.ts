@@ -168,4 +168,231 @@ describe("FeishuCardActionService", () => {
     expect(JSON.stringify(card)).toContain("[ca] current project: none");
     expect(JSON.stringify(card)).toContain("\"command\":\"/ca\"");
   });
+
+  it("returns a raw JSON 2.0 plan form card when the plan-mode button is clicked", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => []),
+      handlePlanChoice: vi.fn(async () => []),
+      getPendingPlanInteraction: vi.fn(() => undefined),
+    };
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: createApiClientDouble() as any,
+    });
+
+    const card = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_card_1",
+      action: {
+        tag: "button",
+        value: {
+          bridgeAction: "open_plan_form",
+          chatId: "oc_chat_current",
+          surfaceType: "thread",
+          surfaceRef: "omt_current",
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+    expect(card).toMatchObject({
+      card: {
+        type: "raw",
+        data: {
+          schema: "2.0",
+          header: {
+            title: {
+              content: "计划模式",
+            },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(card)).toContain("\"bridgeAction\":\"submit_plan_form\"");
+  });
+
+  it("submits a plan form asynchronously and returns an immediate ack card", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(() => new Promise<BridgeReply[]>(() => undefined)),
+      handlePlanChoice: vi.fn(async () => []),
+      getPendingPlanInteraction: vi.fn(() => undefined),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const card = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_plan_card_1",
+      action: {
+        tag: "button",
+        form_value: {
+          plan_prompt: "帮我先梳理这个仓库的改造方案，不要直接改代码",
+        },
+        value: {
+          bridgeAction: "submit_plan_form",
+          chatId: "oc_chat_current",
+          surfaceType: "thread",
+          surfaceRef: "omt_current",
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+        text: "/plan 帮我先梳理这个仓库的改造方案，不要直接改代码",
+      },
+      expect.objectContaining({
+        onProgress: expect.any(Function),
+      }),
+    );
+    expect(card).toMatchObject({
+      card: {
+        type: "raw",
+        data: {
+          header: {
+            title: {
+              content: "计划请求已提交",
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("launches a stored plan choice asynchronously and returns an immediate ack card", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => []),
+      handlePlanChoice: vi.fn(() => new Promise<BridgeReply[]>(() => undefined)),
+      getPendingPlanInteraction: vi.fn(() => ({
+        interactionId: "plan-1",
+        question: "你希望我下一步先做哪件事？",
+        choices: [
+          {
+            choiceId: "tests",
+            label: "先补测试",
+            responseText: "先补测试和验证路径，不要直接改代码。",
+          },
+        ],
+      })),
+    };
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: createApiClientDouble() as any,
+    });
+
+    const card = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_plan_choice_1",
+      action: {
+        tag: "button",
+        value: {
+          bridgeAction: "answer_plan_choice",
+          interactionId: "plan-1",
+          choiceId: "tests",
+          chatId: "oc_chat_current",
+          surfaceType: "thread",
+          surfaceRef: "omt_current",
+        },
+      },
+    });
+
+    expect(bridgeService.getPendingPlanInteraction).toHaveBeenCalledWith("plan-1");
+    expect(bridgeService.handlePlanChoice).toHaveBeenCalledWith(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+        interactionId: "plan-1",
+        choiceId: "tests",
+      },
+      expect.objectContaining({
+        onProgress: expect.any(Function),
+      }),
+    );
+    expect(card).toMatchObject({
+      card: {
+        type: "raw",
+        data: {
+          header: {
+            title: {
+              content: "计划选项已提交",
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("returns an error card when the selected pending interaction no longer exists", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => []),
+      handlePlanChoice: vi.fn(async () => []),
+      getPendingPlanInteraction: vi.fn(() => undefined),
+    };
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: createApiClientDouble() as any,
+    });
+
+    const card = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_plan_choice_1",
+      action: {
+        tag: "button",
+        value: {
+          bridgeAction: "answer_plan_choice",
+          interactionId: "plan-missing",
+          choiceId: "tests",
+          chatId: "oc_chat_current",
+          surfaceType: "thread",
+          surfaceRef: "omt_current",
+        },
+      },
+    });
+
+    expect(bridgeService.handlePlanChoice).not.toHaveBeenCalled();
+    expect(card).toMatchObject({
+      card: {
+        type: "raw",
+        data: {
+          header: {
+            title: {
+              content: "计划交互不可用",
+            },
+          },
+        },
+      },
+    });
+  });
 });
+
+function createApiClientDouble() {
+  return {
+    sendTextMessage: vi.fn(async () => "msg-text-1"),
+    sendTextMessageToChat: vi.fn(async () => ({ messageId: "msg-chat-1", threadId: "omt-1" })),
+    replyTextMessage: vi.fn(async () => "msg-reply-text-1"),
+    updateTextMessage: vi.fn(async () => undefined),
+    sendInteractiveCard: vi.fn(async () => "msg-card-1"),
+    replyInteractiveCard: vi.fn(async () => "msg-reply-card-1"),
+    updateInteractiveCard: vi.fn(async () => undefined),
+    createCardEntity: vi.fn(async () => "card-1"),
+    sendCardKitMessage: vi.fn(async () => "msg-cardkit-1"),
+    streamCardElement: vi.fn(async () => undefined),
+    setCardStreamingMode: vi.fn(async () => undefined),
+    updateCardKitCard: vi.fn(async () => undefined),
+  };
+}

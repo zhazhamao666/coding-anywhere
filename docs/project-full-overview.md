@@ -65,6 +65,9 @@
 36. `/ca stop` 对 native thread 明确返回不可用，而不是继续假装映射到 `acpx cancel`
 37. `thread list-current` 在已绑定项目群中会直接列出当前项目对应的 Codex native thread
 38. `/ca thread switch <threadId>` 现在不仅可用于 DM，也可用于已注册飞书线程重绑当前 surface，或在项目群中创建一个绑定到选中 native thread 的新飞书话题
+39. DM 与已注册飞书线程的导航卡现在提供一次性“计划模式”按钮，点击后会打开 JSON 2.0 表单卡，并把输入包装成 `/plan ...` 送入当前 native Codex thread
+40. 计划中的 `todo_list` 会被结构化渲染到飞书状态卡，而不再只作为一段 waiting 文本掠过
+41. bridge 现在会把计划中的单选问题持久化为待回答交互，并在飞书卡片上渲染可点击选项；用户点选后会继续续跑同一个 native Codex thread
 
 ### 2.3 当前仍未打通的部分
 
@@ -208,10 +211,12 @@ Windows 启动前清理模块。
 - 在项目群中把选中的 native thread 绑定成新的飞书话题线程
 - 生成 `/ca` 导航卡内容
 - 为导航卡按钮编码回放命令上下文
+- 为计划模式表单和计划选择按钮编码 bridge 动作上下文
 - root 上下文封装
 - run 生命周期组织
 - 线程状态更新
 - 观测数据写入
+- 计划交互的持久化与续跑编排
 
 ### 5.4 `src/feishu-card-action-service.ts`
 
@@ -226,6 +231,8 @@ Windows 启动前清理模块。
 - 对即时导航场景返回新版 `card.action.trigger` 规范要求的 `raw card` 响应体
 - 不在即时导航回调里同步调用 `updateInteractiveCard` / `updateCardKitCard`，避免与官方立即更新模型冲突
 - 当命令返回的是系统文本时，会构造带有明确标题的结果卡，而不是统一套用 `CA Hub` 头部
+- 对计划模式按钮返回 JSON 2.0 表单卡，并读取 `form_value` 中的多行输入
+- 对 bridge 持久化的计划选择返回即时确认卡，并在后台继续同一 native thread
 
 ### 5.5 `src/run-worker-manager.ts`
 
@@ -247,6 +254,7 @@ Codex 执行适配层。
 - 解析 `codex exec` / `codex exec resume` 的 JSONL 事件流
 - 将 native `todo_list` 计划事件归一化为 bridge `waiting`
 - 将 native `collab_tool_call` 子代理事件归一化为 bridge `tool_call`
+- 从 assistant 文本中提取 bridge 约定的计划选择指令块，并转成结构化计划交互草稿
 - 兼容解析旧的 `acpx` 事件格式，但正常 prompt 主链路不再依赖 `acpx prompt`
 
 ### 5.6.1 `src/codex-sqlite-catalog.ts`
@@ -302,6 +310,7 @@ SQLite 持久化层。
 - projects
 - project_chats
 - codex_threads
+- pending_plan_interactions
 - observability_runs
 - observability_run_events
 - `/ops/*` 查询
@@ -311,6 +320,7 @@ SQLite 持久化层。
 - 启动迁移时会把旧版遗留表 `workspaces`、`users`、`acp_sessions`、`runs`、`message_links`、`event_offsets` 清理掉
 - 如果数据库里仍只有旧版 `workspaces` 根配置而没有 `bridge_root`，会先把旧根信息迁入 `bridge_root` 再删除旧表
 - 如果数据库里的 `codex_threads` 仍以 `thread_id` 作为主键，启动迁移会自动重建为“按飞书 surface 建模”的新结构，允许多个话题绑定到同一个 native `thread_id`
+- `pending_plan_interactions` 会按飞书 surface 记录待回答的计划单选问题；同一 surface 上出现新的待回答问题时，旧记录会被标记为 `superseded`
 
 ## 6. 路由与消息流
 
@@ -427,6 +437,9 @@ Feishu group thread text
 - 已注册飞书线程中点选线程后，CA 会把当前 surface 重绑到选中的 native `thread_id`
 - 已绑定项目群中点选线程后，CA 会新建一个飞书话题，并把该话题绑定到选中的 native `thread_id`
 - 导航卡、列表卡和摘要卡上的按钮会通过飞书长连接回调重放无参 `/ca` 命令
+- DM 和已注册飞书线程的导航卡额外带有一次性“计划模式”按钮；当前项目群主时间线仍不会直接展示这个入口
+- 计划模式按钮会先返回一个 JSON 2.0 表单卡，提交后由 bridge 在后台发起 `/plan ...` 续跑
+- 如果计划中抛出单选问题，状态卡会渲染结构化 todo list 与可点击选项按钮；按钮点击后继续同一个 native `thread_id`
 - 长连接卡片回调会在本地先归一化成统一动作结构，再交给 `BridgeService` 生成新的卡片结果
 - 按钮回调对导航场景直接返回新版 `card.action.trigger` 的 `raw card` 响应体
 - 即时导航不再额外调用消息 patch 或 CardKit 更新接口
@@ -538,6 +551,7 @@ channel + peer_id -> codex_thread_id
 - `projects`
 - `project_chats`
 - `codex_threads`
+- `pending_plan_interactions`
 
 其中：
 
@@ -546,6 +560,7 @@ channel + peer_id -> codex_thread_id
 - `codex_threads` 表示“飞书 surface 到 native Codex thread”的绑定记录
 - `codex_threads` 以 `(chat_id, feishu_thread_id)` 唯一标识一个飞书话题 surface，而不是再把 `thread_id` 当作唯一主键
 - 因此同一个 native `thread_id` 可以被多个飞书话题引用；项目摘要中的线程数按去重后的 native `thread_id` 统计
+- `pending_plan_interactions` 表示某个飞书 surface 上最近一次待回答的 bridge 计划选择题，以及它对应的 native `thread_id`
 
 ## 10.4 Run 观测
 
@@ -632,6 +647,9 @@ channel + peer_id -> codex_thread_id
 - 输入未知子命令时也能自动回到导航卡
 - 可以在群主时间线里直接绑定当前群，而不用手工输入 `chatId`
 - 可以直接点击卡片按钮回到导航、当前项目和线程列表，而不用重新手输命令
+- 可以在 DM 和已注册飞书线程里直接点击“计划模式”，用表单方式发起一次 `/plan ...`
+- 计划中的待办项会作为结构化 checklist 出现在飞书状态卡上
+- 计划中的单选问题可以直接点卡片按钮继续，不需要把选项再手输回消息里
 - 按钮回调通过同一条飞书长连接返回，不需要额外暴露公网回调地址
 - 相同线程不会并发执行两个 run
 - 后台可以看项目、线程和线程对应 run
@@ -643,8 +661,9 @@ channel + peer_id -> codex_thread_id
 - 没有完整 DM Hub
 - 还不能自动创建飞书项目群，只能先绑定已有 `chatId`
 - CA 不提供精确跳转到指定飞书话题的能力
-- 卡片按钮目前只覆盖无参导航命令，不覆盖带自由文本参数的创建类命令
+- 卡片按钮目前除了导航命令外，只额外覆盖桥接式计划模式的表单提交与单选题续跑，不是通用的任意参数命令表单平台
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
+- 现在的“计划模式”是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，不等同于官方交互式 CLI `/plan` 原语
 - 只支持文本，不支持图片、文件、语音
 - 不支持多实例集群部署
 
@@ -674,6 +693,14 @@ channel + peer_id -> codex_thread_id
 3. 观察线程内状态更新与最终结果
 4. 检查 `/ops/projects`、`/ops/projects/:id/threads`、`/ops/threads/:id/runs`
 
+### 15.2.1 桥接式计划模式回归
+
+1. 在 DM 中点击导航卡里的“计划模式”
+2. 在表单里输入类似“帮我先梳理这个仓库的改造方案，不要直接改代码”
+3. 提交后观察同一张卡被即时更新，并进入计划中的 waiting / todo 展示
+4. 如果卡片出现计划单选题，直接点击某个选项，确认 run 会继续续跑同一个 native `thread_id`
+5. 在已注册飞书线程里重复以上流程，确认 thread surface 也能复用相同链路
+
 ### 15.3 TTL 回归
 
 1. 准备一个 `warm` 状态线程
@@ -696,6 +723,7 @@ channel + peer_id -> codex_thread_id
 10. 针对 Codex 原生计划行为和子代理行为的扩展测试，会优先使用一次性真实 JSONL 录制生成的 fixture，再回到默认的 transcript 驱动回归，不把这类高成本调用放进常规测试路径
 11. `tests/acpx-runner.test.ts` 现在会直接回放 `plan-mode.jsonl` 与 `sub-agent.jsonl`，校验 native 计划事件和子代理生命周期事件是否被归一化成正确的 runner 事件
 12. `tests/bridge-real-codex.test.ts` 现在也会用同一批 fixture 校验 bridge 层的等待态、工具调用观测和最终回复，不要求额外真实 Codex 调用
+13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式表单卡、todo list 展示、待回答计划选择题和续跑同一 native thread 的桥接链路
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 

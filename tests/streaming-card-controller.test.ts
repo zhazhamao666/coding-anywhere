@@ -103,6 +103,36 @@ describe("StreamingCardController", () => {
       expect.any(Number),
     );
   });
+
+  it("patches an existing callback card message in place when a target message id is provided", async () => {
+    const apiClient = createApiClientDouble();
+    const controller = new StreamingCardController({
+      peerId: "ou_demo",
+      apiClient,
+      existingMessageId: "om_card_existing",
+    });
+
+    await controller.push(createState({
+      status: "queued",
+      stage: "received",
+      preview: "[ca] received",
+    }));
+    await controller.push(createState({
+      status: "done",
+      stage: "done",
+      preview: "计划请求完成",
+      elapsedMs: 2_500,
+    }));
+
+    expect(apiClient.sendInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.replyInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith(
+      "om_card_existing",
+      expect.objectContaining({
+        schema: "2.0",
+      }),
+    );
+  });
 });
 
 function createState(overrides?: Partial<ProgressCardState>): ProgressCardState {

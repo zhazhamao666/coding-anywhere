@@ -114,6 +114,7 @@ describe("BridgeService", () => {
     expect(cardText).toContain("导航");
     expect(cardText).toContain("当前项目");
     expect(cardText).toContain("线程列表");
+    expect(cardText).not.toContain("计划模式");
   });
 
   it("returns a hub card with project summaries in DM", async () => {
@@ -161,6 +162,7 @@ describe("BridgeService", () => {
     expect(cardText).toContain("会话状态");
     expect(cardText).toContain("当前会话");
     expect(cardText).toContain("新会话");
+    expect(cardText).toContain("计划模式");
     expect(cardText).not.toContain("DM 快捷命令");
   });
 
@@ -339,6 +341,129 @@ describe("BridgeService", () => {
         text: "响应正常。",
       },
     ]);
+  });
+
+  it("persists bridge-managed plan interactions from runner events and exposes them on the final progress snapshot", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-created",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-created",
+      title: "plan-thread",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+
+    const runner = createRunnerDouble([
+      {
+        type: "waiting",
+        content: "梳理两种改造路径; 等待用户选择下一步",
+        planTodos: [
+          {
+            text: "梳理两种改造路径",
+            completed: true,
+          },
+          {
+            text: "等待用户选择下一步",
+            completed: false,
+          },
+        ],
+      },
+      {
+        type: "text",
+        content: "我先把两条改造路径收敛出来，方便你在飞书里直接选择。",
+        planInteraction: {
+          question: "你希望我下一步先做哪件事？",
+          choices: [
+            {
+              choiceId: "architecture",
+              label: "先梳理架构",
+              description: "只输出改造边界与影响面，不改代码。",
+              responseText: "先梳理架构与改造边界，不要直接改代码。",
+            },
+            {
+              choiceId: "tests",
+              label: "先补测试",
+              description: "优先补齐验证路径和风险防线。",
+              responseText: "先补测试和验证路径，不要直接改代码。",
+            },
+          ],
+        },
+      },
+      {
+        type: "done",
+        content: "我先把两条改造路径收敛出来，方便你在飞书里直接选择。",
+      },
+    ]);
+    const snapshots: ProgressCardState[] = [];
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    await service.handleMessage(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+        text: "/plan 帮我先梳理改造方案，不要直接改代码",
+      },
+      {
+        onProgress: snapshot => {
+          snapshots.push(snapshot);
+        },
+      },
+    );
+
+    expect(snapshots.at(-1)).toMatchObject({
+      status: "done",
+      planTodos: [
+        {
+          text: "梳理两种改造路径",
+          completed: true,
+        },
+        {
+          text: "等待用户选择下一步",
+          completed: false,
+        },
+      ],
+      planInteraction: {
+        interactionId: expect.any(String),
+        question: "你希望我下一步先做哪件事？",
+        choices: expect.arrayContaining([
+          expect.objectContaining({
+            choiceId: "architecture",
+            label: "先梳理架构",
+          }),
+        ]),
+      },
+    });
+
+    const planStore = store as any;
+    expect(
+      planStore.getLatestPendingPlanInteractionForSurface({
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+      }),
+    ).toMatchObject({
+      threadId: "thread-created",
+      question: "你希望我下一步先做哪件事？",
+      status: "pending",
+    });
   });
 
   it("coalesces streamed text chunks into a single backend observability text event", async () => {
@@ -883,6 +1008,110 @@ describe("BridgeService", () => {
         text: "[ca] thread switched to thread-native-current",
       },
     ]);
+  });
+
+  it("resumes the same native thread when a pending plan choice is selected", async () => {
+    const runner = createRunnerDouble([
+      {
+        type: "text",
+        content: "先补测试和验证路径，不要直接改代码。",
+      },
+      {
+        type: "done",
+        content: "先补测试和验证路径，不要直接改代码。",
+      },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    const planStore = store as any;
+    const interaction = planStore.savePendingPlanInteraction({
+      runId: "run-plan-1",
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      threadId: "thread-created",
+      sessionName: "thread-created",
+      question: "你希望我下一步先做哪件事？",
+      choices: [
+        {
+          choiceId: "architecture",
+          label: "先梳理架构",
+          responseText: "先梳理架构与改造边界，不要直接改代码。",
+        },
+        {
+          choiceId: "tests",
+          label: "先补测试",
+          responseText: "先补测试和验证路径，不要直接改代码。",
+        },
+      ],
+    });
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-created",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-created",
+      title: "plan-thread",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+
+    const replies = await service.handlePlanChoice(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+        interactionId: interaction.interactionId,
+        choiceId: "tests",
+      },
+      {
+        onProgress: () => undefined,
+      },
+    );
+
+    expect(runner.ensureSession).toHaveBeenCalledWith({
+      targetKind: "codex_thread",
+      threadId: "thread-created",
+      sessionName: "thread-created",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    expect(runner.submitVerbatim).toHaveBeenCalledWith(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-created",
+        sessionName: "thread-created",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      },
+      expect.stringContaining("先补测试和验证路径，不要直接改代码。"),
+      expect.any(Function),
+    );
+    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("[user-message]");
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "先补测试和验证路径，不要直接改代码。",
+      },
+    ]);
+    expect(planStore.getPendingPlanInteraction(interaction.interactionId)).toMatchObject({
+      interactionId: interaction.interactionId,
+      status: "resolved",
+      selectedChoiceId: "tests",
+    });
   });
 
   it("links a selected native thread from the project chat into a new feishu topic", async () => {

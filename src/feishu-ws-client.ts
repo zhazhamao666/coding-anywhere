@@ -14,7 +14,9 @@ interface NormalizedCardActionEvent {
   token?: string;
   action: {
     tag?: string;
+    name?: string;
     value?: Record<string, unknown>;
+    form_value?: Record<string, unknown>;
   };
 }
 
@@ -256,9 +258,19 @@ function normalizeAction(value: unknown): NormalizedCardActionEvent["action"] | 
     normalized.tag = tag;
   }
 
+  const name = readString(candidate.name);
+  if (name) {
+    normalized.name = name;
+  }
+
   const actionValue = candidate.value;
   if (actionValue && typeof actionValue === "object") {
     normalized.value = actionValue as Record<string, unknown>;
+  }
+
+  const formValue = candidate.form_value;
+  if (formValue && typeof formValue === "object") {
+    normalized.form_value = formValue as Record<string, unknown>;
   }
 
   return normalized;

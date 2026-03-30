@@ -234,6 +234,16 @@ describe("AcpxRunner", () => {
       {
         type: "waiting",
         content: "Ask whether to continue; Wait for user choice",
+        planTodos: [
+          {
+            text: "Ask whether to continue",
+            completed: false,
+          },
+          {
+            text: "Wait for user choice",
+            completed: false,
+          },
+        ],
       },
       expect.objectContaining({
         type: "text",
@@ -289,6 +299,70 @@ describe("AcpxRunner", () => {
         },
       ]),
     );
+    expect(outcome.events).toEqual(seenEvents);
+  });
+
+  it("extracts bridge-managed plan-choice directives from native assistant text", async () => {
+    const child = createChildFromFixture("plan-choice.jsonl", 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "/plan 梳理方案",
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(seenEvents).toEqual([
+      {
+        type: "waiting",
+        content: "梳理两种改造路径; 等待用户选择下一步",
+        planTodos: [
+          {
+            text: "梳理两种改造路径",
+            completed: true,
+          },
+          {
+            text: "等待用户选择下一步",
+            completed: false,
+          },
+        ],
+      },
+      {
+        type: "text",
+        content: "我先把两条改造路径收敛出来，方便你在飞书里直接选择。",
+        planInteraction: {
+          question: "你希望我下一步先做哪件事？",
+          choices: [
+            {
+              choiceId: "architecture",
+              label: "先梳理架构",
+              description: "只输出改造边界与影响面，不改代码。",
+              responseText: "先梳理架构与改造边界，不要直接改代码。",
+            },
+            {
+              choiceId: "tests",
+              label: "先补测试",
+              description: "优先补齐验证路径和风险防线。",
+              responseText: "先补测试和验证路径，不要直接改代码。",
+            },
+          ],
+        },
+      },
+      {
+        type: "done",
+        content: "我先把两条改造路径收敛出来，方便你在飞书里直接选择。",
+      },
+    ]);
     expect(outcome.events).toEqual(seenEvents);
   });
 });

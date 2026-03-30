@@ -1,5 +1,41 @@
 export type PermissionMode = "readonly" | "workspace-write" | "danger-full-access";
 
+export interface PlanTodoItem {
+  text: string;
+  completed: boolean;
+}
+
+export interface PlanChoiceOption {
+  choiceId: string;
+  label: string;
+  responseText: string;
+  description?: string;
+}
+
+export interface PlanInteractionDraft {
+  question: string;
+  choices: PlanChoiceOption[];
+}
+
+export type PendingPlanInteractionStatus = "pending" | "resolved" | "superseded";
+
+export interface PendingPlanInteractionRecord extends PlanInteractionDraft {
+  interactionId: string;
+  runId: string;
+  channel: string;
+  peerId: string;
+  chatId: string | null;
+  surfaceType: "thread" | null;
+  surfaceRef: string | null;
+  threadId: string;
+  sessionName: string;
+  status: PendingPlanInteractionStatus;
+  selectedChoiceId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+}
+
 export interface RootProfile {
   id: string;
   name: string;
@@ -165,11 +201,11 @@ export interface BridgeLifecycleEvent {
 }
 
 export type AcpxEvent =
-  | { type: "text"; content: string }
+  | { type: "text"; content: string; planInteraction?: PlanInteractionDraft }
   | { type: "tool_call"; toolName: string; content: string }
   | { type: "done"; content?: string }
   | { type: "error"; content: string }
-  | { type: "waiting"; content?: string };
+  | { type: "waiting"; content?: string; planTodos?: PlanTodoItem[] };
 
 export type BridgeObservableEvent = BridgeLifecycleEvent | AcpxEvent;
 
@@ -177,10 +213,15 @@ export interface ProgressCardState {
   runId: string;
   rootName: string;
   sessionName?: string;
+  deliveryChatId?: string | null;
+  deliverySurfaceType?: "thread" | null;
+  deliverySurfaceRef?: string | null;
   status: ProgressStatus;
   stage: ProgressStage;
   latestTool?: string;
   preview: string;
+  planTodos?: PlanTodoItem[];
+  planInteraction?: PendingPlanInteractionRecord;
   startedAt: number;
   elapsedMs: number;
 }
