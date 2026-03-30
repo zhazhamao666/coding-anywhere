@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   STREAMING_ELEMENT_ID,
   buildBridgeCard,
+  buildPlanModeFormCard,
   buildStreamingCardMarkdown,
   buildStreamingShellCard,
 } from "../src/feishu-card/card-builder.js";
@@ -84,6 +85,101 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("第二段：我调整了终态卡的展示策略。");
     expect(serialized).toContain("第三段：完整回复继续保留在下方消息中。");
     expect(serialized).not.toContain("第四段：这行不应该完整出现在终态卡中。");
+  });
+
+  it("renders structured todo items and plan-choice buttons on bridge cards", () => {
+    const card = buildBridgeCard(createState({
+      status: "done",
+      stage: "done",
+      preview: "我先把两条改造路径收敛出来，方便你在飞书里直接选择。",
+      planTodos: [
+        {
+          text: "梳理两种改造路径",
+          completed: true,
+        },
+        {
+          text: "等待用户选择下一步",
+          completed: false,
+        },
+      ],
+      planInteraction: {
+        interactionId: "plan-1",
+        runId: "run-1",
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+        threadId: "thread-plan-current",
+        sessionName: "thread-plan-current",
+        status: "pending",
+        selectedChoiceId: null,
+        createdAt: "2026-03-30T00:00:00.000Z",
+        updatedAt: "2026-03-30T00:00:00.000Z",
+        resolvedAt: null,
+        question: "你希望我下一步先做哪件事？",
+        choices: [
+          {
+            choiceId: "architecture",
+            label: "先梳理架构",
+            description: "只输出改造边界与影响面，不改代码。",
+            responseText: "先梳理架构与改造边界，不要直接改代码。",
+          },
+          {
+            choiceId: "tests",
+            label: "先补测试",
+            description: "优先补齐验证路径和风险防线。",
+            responseText: "先补测试和验证路径，不要直接改代码。",
+          },
+        ],
+      },
+      deliveryChatId: "oc_chat_current",
+      deliverySurfaceType: "thread",
+      deliverySurfaceRef: "omt_current",
+    }));
+
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain("计划清单");
+    expect(serialized).toContain("[x] 梳理两种改造路径");
+    expect(serialized).toContain("[ ] 等待用户选择下一步");
+    expect(serialized).toContain("计划选择");
+    expect(serialized).toContain("先梳理架构");
+    expect(serialized).toContain("先补测试");
+    expect(serialized).toContain("\"bridgeAction\":\"answer_plan_choice\"");
+    expect(serialized).toContain("\"interactionId\":\"plan-1\"");
+    expect(serialized).toContain("\"choiceId\":\"architecture\"");
+    expect(serialized).toContain("\"surfaceType\":\"thread\"");
+    expect(serialized).toContain("\"surfaceRef\":\"omt_current\"");
+  });
+
+  it("builds a JSON 2.0 plan-mode form card with a multiline form input", () => {
+    const card = buildPlanModeFormCard({
+      title: "计划模式",
+      context: {
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+      },
+    });
+
+    const serialized = JSON.stringify(card);
+    expect(card).toMatchObject({
+      schema: "2.0",
+      body: {
+        elements: expect.arrayContaining([
+          expect.objectContaining({
+            tag: "form",
+          }),
+        ]),
+      },
+    });
+    expect(serialized).toContain("\"tag\":\"input\"");
+    expect(serialized).toContain("\"input_type\":\"multiline_text\"");
+    expect(serialized).toContain("\"name\":\"plan_prompt\"");
+    expect(serialized).toContain("\"required\":true");
+    expect(serialized).toContain("\"form_action_type\":\"submit\"");
+    expect(serialized).toContain("\"bridgeAction\":\"submit_plan_form\"");
+    expect(serialized).toContain("\"command\":\"/ca\"");
   });
 
   it("builds the navigation hub card in schema 2.0 format", () => {

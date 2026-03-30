@@ -50,7 +50,7 @@ describe("thread idle reaping", () => {
     rmSync(rootDir, { recursive: true, force: true });
   });
 
-  it("closes warm threads after the configured ttl", async () => {
+  it("marks warm threads closed after the configured ttl without calling acpx close", async () => {
     const runner = {
       close: vi.fn(async () => undefined),
     };
@@ -62,10 +62,7 @@ describe("thread idle reaping", () => {
       ttlHours: 24,
     });
 
-    expect(runner.close).toHaveBeenCalledWith({
-      sessionName: "codex-proj-a-thread-a",
-      cwd: "D:/repo",
-    });
+    expect(runner.close).not.toHaveBeenCalled();
     expect(store.getCodexThreadBySurface("oc_chat_1", "omt_1")).toMatchObject({
       status: "closed",
     });

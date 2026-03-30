@@ -274,6 +274,97 @@ describe("FeishuWsClient", () => {
     expect(close).toHaveBeenCalledWith({ force: true });
   });
 
+  it("preserves form_value and action name for JSON 2.0 card callbacks", async () => {
+    const register = vi.fn().mockReturnThis();
+    const invoke = vi.fn(async () => "no card.action.trigger event handle");
+    const start = vi.fn();
+    const close = vi.fn();
+    const onCardAction = vi.fn(async () => ({
+      card: {
+        type: "raw",
+        data: {
+          schema: "2.0",
+        },
+      },
+    }));
+
+    class EventDispatcherStub {
+      public register = register;
+      public invoke = invoke;
+    }
+
+    class WSClientStub {
+      public start = start;
+      public close = close;
+    }
+
+    const client = new FeishuWsClient(
+      {
+        appId: "cli_demo",
+        appSecret: "secret_demo",
+        onEnvelope: vi.fn(async () => undefined),
+        onCardAction,
+      },
+      {
+        EventDispatcher: EventDispatcherStub,
+        WSClient: WSClientStub,
+        LoggerLevel: {
+          info: 3,
+        },
+      },
+    );
+
+    await client.start();
+
+    const actionDispatcher = start.mock.calls[0]?.[0]?.eventDispatcher;
+    await actionDispatcher.invoke({
+      schema: "2.0",
+      header: {
+        event_type: "card.action.trigger",
+      },
+      event: {
+        context: {
+          open_message_id: "om_form_1",
+        },
+        operator: {
+          open_id: "ou_demo",
+        },
+        token: "card-token",
+        tenant_key: "tenant-demo",
+        action: {
+          tag: "button",
+          name: "Button_submit",
+          value: {
+            bridgeAction: "submit_plan_form",
+          },
+          form_value: {
+            plan_prompt: "请先梳理方案",
+          },
+        },
+      },
+    });
+
+    expect(onCardAction).toHaveBeenCalledWith({
+      open_id: "ou_demo",
+      open_message_id: "om_form_1",
+      tenant_key: "tenant-demo",
+      token: "card-token",
+      action: {
+        tag: "button",
+        name: "Button_submit",
+        value: {
+          bridgeAction: "submit_plan_form",
+        },
+        form_value: {
+          plan_prompt: "请先梳理方案",
+        },
+      },
+    });
+
+    await client.stop();
+    expect(close).toHaveBeenCalledWith({ force: true });
+  });
+
   it("does not block the websocket ack on background envelope processing", async () => {
     const register = vi.fn().mockReturnThis();
     const invoke = vi.fn(async () => undefined);

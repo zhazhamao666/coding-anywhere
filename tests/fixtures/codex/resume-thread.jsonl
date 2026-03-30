@@ -1,0 +1,5 @@
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"powershell.exe -Command \"git status --short\""}}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"powershell.exe -Command \"git status --short\"","exit_code":0,"aggregated_output":"M src/acpx-runner.ts"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"RESUMED"}}
+{"type":"turn.completed"}

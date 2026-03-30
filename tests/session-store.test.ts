@@ -200,6 +200,101 @@ describe("SessionStore", () => {
     ]);
   });
 
+  it("persists and resolves pending bridge-managed plan interactions per surface", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    store.upsertRoot({
+      id: "main",
+      name: "Main Root",
+      cwd: path.join(rootDir, "repos"),
+      repoRoot: path.join(rootDir, "repos"),
+      branchPolicy: "reuse",
+      permissionMode: "workspace-write",
+      envAllowlist: ["PATH"],
+      idleTtlHours: 24,
+    });
+
+    const planStore = store as any;
+    const created = planStore.savePendingPlanInteraction({
+      runId: "run-plan-1",
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      threadId: "thread-plan-current",
+      sessionName: "thread-plan-current",
+      question: "你希望我下一步先做哪件事？",
+      choices: [
+        {
+          choiceId: "architecture",
+          label: "先梳理架构",
+          description: "只输出改造边界与影响面，不改代码。",
+          responseText: "先梳理架构与改造边界，不要直接改代码。",
+        },
+        {
+          choiceId: "tests",
+          label: "先补测试",
+          description: "优先补齐验证路径和风险防线。",
+          responseText: "先补测试和验证路径，不要直接改代码。",
+        },
+      ],
+    });
+
+    expect(created).toMatchObject({
+      interactionId: expect.any(String),
+      runId: "run-plan-1",
+      threadId: "thread-plan-current",
+      status: "pending",
+      choices: expect.arrayContaining([
+        expect.objectContaining({
+          choiceId: "architecture",
+          label: "先梳理架构",
+        }),
+      ]),
+    });
+
+    expect(planStore.getPendingPlanInteraction(created.interactionId)).toMatchObject({
+      interactionId: created.interactionId,
+      question: "你希望我下一步先做哪件事？",
+      status: "pending",
+    });
+    expect(
+      planStore.getLatestPendingPlanInteractionForSurface({
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+      }),
+    ).toMatchObject({
+      interactionId: created.interactionId,
+      threadId: "thread-plan-current",
+      status: "pending",
+    });
+
+    planStore.resolvePendingPlanInteraction({
+      interactionId: created.interactionId,
+      selectedChoiceId: "tests",
+    });
+
+    expect(planStore.getPendingPlanInteraction(created.interactionId)).toMatchObject({
+      interactionId: created.interactionId,
+      status: "resolved",
+      selectedChoiceId: "tests",
+      resolvedAt: expect.any(String),
+    });
+    expect(
+      planStore.getLatestPendingPlanInteractionForSurface({
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+      }),
+    ).toBeUndefined();
+  });
+
   it("migrates the legacy workspace root and drops obsolete tables", () => {
     const dbPath = path.join(rootDir, "bridge.db");
     const legacyDb = new Database(dbPath);

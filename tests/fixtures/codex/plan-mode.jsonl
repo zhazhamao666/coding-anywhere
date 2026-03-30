@@ -1,0 +1,6 @@
+﻿{"type":"thread.started","thread_id":"019d396a-9858-7d03-a17b-d19ed1d11ed9"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"todo_list","items":[{"text":"Ask whether to continue","completed":false},{"text":"Wait for user choice","completed":false}]}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"`request_user_input` is unavailable in the current `Default mode`, so I can’t enter plan mode from inside this session.\n\nOnce you switch the session to `Plan mode`, I’ll ask exactly one multiple-choice question about whether to continue and stop there."}}
+{"type":"item.completed","item":{"id":"item_0","type":"todo_list","items":[{"text":"Ask whether to continue","completed":false},{"text":"Wait for user choice","completed":false}]}}
+{"type":"turn.completed","usage":{"input_tokens":54931,"cached_input_tokens":42240,"output_tokens":1189}}

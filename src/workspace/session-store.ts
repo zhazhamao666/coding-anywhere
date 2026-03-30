@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -12,6 +13,7 @@ import type {
   ObservabilityRun,
   ObservabilityRunEvent,
   ObservabilityThreadSummary,
+  PendingPlanInteractionRecord,
   ProgressStage,
   ProgressStatus,
   ProjectChatRecord,
@@ -262,10 +264,9 @@ export class SessionStore {
         @updatedAt,
         @archivedAt
       )
-      ON CONFLICT(thread_id) DO UPDATE SET
+      ON CONFLICT(chat_id, feishu_thread_id) DO UPDATE SET
+        thread_id = excluded.thread_id,
         project_id = excluded.project_id,
-        feishu_thread_id = excluded.feishu_thread_id,
-        chat_id = excluded.chat_id,
         anchor_message_id = excluded.anchor_message_id,
         latest_message_id = excluded.latest_message_id,
         session_name = excluded.session_name,
@@ -368,21 +369,49 @@ export class SessionStore {
     });
   }
 
+  public rebindCodexThreadSurface(input: {
+    chatId: string;
+    feishuThreadId: string;
+    threadId: string;
+    sessionName: string;
+    title: string;
+    status?: CodexThreadRecord["status"];
+  }): void {
+    const updatedAt = new Date().toISOString();
+
+    this.db.prepare(`
+      UPDATE codex_threads
+      SET
+        thread_id = @threadId,
+        session_name = @sessionName,
+        title = @title,
+        status = COALESCE(@status, status),
+        updated_at = @updatedAt,
+        last_activity_at = @updatedAt
+      WHERE chat_id = @chatId AND feishu_thread_id = @feishuThreadId
+    `).run({
+      ...input,
+      status: input.status ?? null,
+      updatedAt,
+    });
+  }
+
   public listReapableThreads(cutoffIso: string): ReapableThread[] {
     const rows = this.db.prepare(`
       SELECT
         ct.thread_id,
         ct.project_id,
-        ct.session_name,
+        MIN(ct.session_name) AS session_name,
         p.cwd,
-        ct.last_activity_at
+        MIN(ct.last_activity_at) AS last_activity_at
       FROM codex_threads AS ct
       INNER JOIN projects AS p
         ON p.project_id = ct.project_id
       WHERE
         ct.status = 'warm'
         AND ct.last_activity_at < ?
-      ORDER BY ct.last_activity_at ASC
+      GROUP BY ct.thread_id, ct.project_id, p.cwd
+      ORDER BY MIN(ct.last_activity_at) ASC
     `).all(cutoffIso) as ReapableThreadRow[];
 
     return rows.map(rowToReapableThread);
@@ -395,12 +424,12 @@ export class SessionStore {
         p.name,
         pc.chat_id,
         (
-          SELECT COUNT(*)
+          SELECT COUNT(DISTINCT ct.thread_id)
           FROM codex_threads AS ct
           WHERE ct.project_id = p.project_id
         ) AS thread_count,
         (
-          SELECT COUNT(*)
+          SELECT COUNT(DISTINCT ct.thread_id)
           FROM codex_threads AS ct
           WHERE ct.project_id = p.project_id AND ct.status = 'running'
         ) AS running_thread_count,
@@ -459,6 +488,8 @@ export class SessionStore {
         archived_at
       FROM codex_threads
       WHERE thread_id = ?
+      ORDER BY updated_at DESC, chat_id ASC, feishu_thread_id ASC
+      LIMIT 1
     `).get(threadId) as ThreadSummaryRow | undefined;
 
     return row ? rowToThreadSummary(row) : undefined;
@@ -570,6 +601,37 @@ export class SessionStore {
       errorText: input.errorText ?? null,
       startedAt,
       updatedAt,
+    });
+  }
+
+  public updateRunContext(input: {
+    runId: string;
+    sessionName: string;
+    threadId?: string | null;
+    projectId?: string | null;
+    deliveryChatId?: string | null;
+    deliverySurfaceType?: "thread" | null;
+    deliverySurfaceRef?: string | null;
+  }): void {
+    this.db.prepare(`
+      UPDATE observability_runs
+      SET
+        session_name = @sessionName,
+        thread_id = @threadId,
+        project_id = @projectId,
+        delivery_chat_id = @deliveryChatId,
+        delivery_surface_type = @deliverySurfaceType,
+        delivery_surface_ref = @deliverySurfaceRef,
+        updated_at = @updatedAt
+      WHERE run_id = @runId
+    `).run({
+      ...input,
+      threadId: input.threadId ?? null,
+      projectId: input.projectId ?? null,
+      deliveryChatId: input.deliveryChatId ?? null,
+      deliverySurfaceType: input.deliverySurfaceType ?? null,
+      deliverySurfaceRef: input.deliverySurfaceRef ?? null,
+      updatedAt: new Date().toISOString(),
     });
   }
 
@@ -918,6 +980,190 @@ export class SessionStore {
     return rows.map(rowToSessionSnapshot);
   }
 
+  public savePendingPlanInteraction(input: {
+    runId: string;
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+    threadId: string;
+    sessionName: string;
+    question: string;
+    choices: PendingPlanInteractionRecord["choices"];
+  }): PendingPlanInteractionRecord {
+    const interactionId = `plan-${randomUUID()}`;
+    const createdAt = new Date().toISOString();
+    const updateExisting = this.db.prepare(`
+      UPDATE pending_plan_interactions
+      SET
+        status = 'superseded',
+        updated_at = @updatedAt,
+        resolved_at = COALESCE(resolved_at, @updatedAt)
+      WHERE
+        status = 'pending'
+        AND channel = @channel
+        AND peer_id = @peerId
+        AND COALESCE(chat_id, '') = COALESCE(@chatId, '')
+        AND COALESCE(surface_type, '') = COALESCE(@surfaceType, '')
+        AND COALESCE(surface_ref, '') = COALESCE(@surfaceRef, '')
+    `);
+    const insertInteraction = this.db.prepare(`
+      INSERT INTO pending_plan_interactions (
+        interaction_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        thread_id,
+        session_name,
+        question_text,
+        choices_json,
+        status,
+        selected_choice_id,
+        created_at,
+        updated_at,
+        resolved_at
+      ) VALUES (
+        @interactionId,
+        @runId,
+        @channel,
+        @peerId,
+        @chatId,
+        @surfaceType,
+        @surfaceRef,
+        @threadId,
+        @sessionName,
+        @question,
+        @choicesJson,
+        'pending',
+        NULL,
+        @createdAt,
+        @createdAt,
+        NULL
+      )
+    `);
+
+    this.db.transaction(() => {
+      updateExisting.run({
+        ...input,
+        updatedAt: createdAt,
+        chatId: input.chatId ?? null,
+        surfaceType: input.surfaceType ?? null,
+        surfaceRef: input.surfaceRef ?? null,
+      });
+      insertInteraction.run({
+        ...input,
+        interactionId,
+        chatId: input.chatId ?? null,
+        surfaceType: input.surfaceType ?? null,
+        surfaceRef: input.surfaceRef ?? null,
+        choicesJson: JSON.stringify(input.choices),
+        createdAt,
+      });
+    })();
+
+    const created = this.getPendingPlanInteraction(interactionId);
+    if (!created) {
+      throw new Error("PENDING_PLAN_INTERACTION_SAVE_FAILED");
+    }
+
+    return created;
+  }
+
+  public getPendingPlanInteraction(interactionId: string): PendingPlanInteractionRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT
+        interaction_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        thread_id,
+        session_name,
+        question_text,
+        choices_json,
+        status,
+        selected_choice_id,
+        created_at,
+        updated_at,
+        resolved_at
+      FROM pending_plan_interactions
+      WHERE interaction_id = ?
+    `).get(interactionId) as PendingPlanInteractionRow | undefined;
+
+    return row ? rowToPendingPlanInteraction(row) : undefined;
+  }
+
+  public getLatestPendingPlanInteractionForSurface(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+  }): PendingPlanInteractionRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT
+        interaction_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        thread_id,
+        session_name,
+        question_text,
+        choices_json,
+        status,
+        selected_choice_id,
+        created_at,
+        updated_at,
+        resolved_at
+      FROM pending_plan_interactions
+      WHERE
+        status = 'pending'
+        AND channel = @channel
+        AND peer_id = @peerId
+        AND COALESCE(chat_id, '') = COALESCE(@chatId, '')
+        AND COALESCE(surface_type, '') = COALESCE(@surfaceType, '')
+        AND COALESCE(surface_ref, '') = COALESCE(@surfaceRef, '')
+      ORDER BY updated_at DESC, interaction_id DESC
+      LIMIT 1
+    `).get({
+      ...input,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+    }) as PendingPlanInteractionRow | undefined;
+
+    return row ? rowToPendingPlanInteraction(row) : undefined;
+  }
+
+  public resolvePendingPlanInteraction(input: {
+    interactionId: string;
+    selectedChoiceId?: string | null;
+  }): void {
+    const resolvedAt = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE pending_plan_interactions
+      SET
+        status = 'resolved',
+        selected_choice_id = @selectedChoiceId,
+        updated_at = @resolvedAt,
+        resolved_at = @resolvedAt
+      WHERE interaction_id = @interactionId
+    `).run({
+      interactionId: input.interactionId,
+      selectedChoiceId: input.selectedChoiceId ?? null,
+      resolvedAt,
+    });
+  }
+
   public purgeOldObservabilityEvents(maxAgeDays = 7): void {
     const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
 
@@ -966,7 +1212,8 @@ export class SessionStore {
       );
 
       CREATE TABLE IF NOT EXISTS codex_threads (
-        thread_id TEXT PRIMARY KEY,
+        binding_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_id TEXT NOT NULL,
         project_id TEXT NOT NULL,
         feishu_thread_id TEXT NOT NULL,
         chat_id TEXT NOT NULL,
@@ -1019,6 +1266,25 @@ export class SessionStore {
         FOREIGN KEY (run_id) REFERENCES observability_runs(run_id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS pending_plan_interactions (
+        interaction_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        chat_id TEXT,
+        surface_type TEXT,
+        surface_ref TEXT,
+        thread_id TEXT NOT NULL,
+        session_name TEXT NOT NULL,
+        question_text TEXT NOT NULL,
+        choices_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        selected_choice_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        resolved_at TEXT
+      );
+
       CREATE INDEX IF NOT EXISTS idx_observability_runs_updated_at
       ON observability_runs(updated_at DESC);
 
@@ -1031,15 +1297,21 @@ export class SessionStore {
       CREATE INDEX IF NOT EXISTS idx_observability_run_events_run_seq
       ON observability_run_events(run_id, seq);
 
-      CREATE INDEX IF NOT EXISTS idx_codex_threads_surface
-      ON codex_threads(chat_id, feishu_thread_id);
+      CREATE INDEX IF NOT EXISTS idx_pending_plan_interactions_surface
+      ON pending_plan_interactions(channel, peer_id, chat_id, surface_type, surface_ref, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_pending_plan_interactions_status
+      ON pending_plan_interactions(status, updated_at DESC);
+
     `);
 
     this.migrateLegacyRootTable();
     this.migrateThreadBindingsTable();
+    this.migrateCodexThreadsTable();
     this.migrateCodexWindowBindingsTable();
     this.migrateObservabilityRunsTable();
     this.dropObsoleteTables();
+    this.ensureCodexThreadIndexes();
   }
 
   private migrateLegacyRootTable(): void {
@@ -1131,6 +1403,86 @@ export class SessionStore {
     `);
   }
 
+  private migrateCodexThreadsTable(): void {
+    const columns = this.db.prepare(`PRAGMA table_info(codex_threads)`).all() as Array<{
+      name: string;
+      pk: number;
+    }>;
+
+    if (columns.length === 0) {
+      return;
+    }
+
+    const hasBindingId = columns.some(column => column.name === "binding_id");
+    const threadIdColumn = columns.find(column => column.name === "thread_id");
+    if (hasBindingId || threadIdColumn?.pk !== 1) {
+      return;
+    }
+
+    this.db.exec(`
+      ALTER TABLE codex_threads RENAME TO codex_threads_legacy;
+
+      CREATE TABLE codex_threads (
+        binding_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        feishu_thread_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        anchor_message_id TEXT NOT NULL,
+        latest_message_id TEXT NOT NULL,
+        session_name TEXT NOT NULL,
+        title TEXT NOT NULL,
+        owner_open_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        last_run_id TEXT,
+        last_activity_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        archived_at TEXT,
+        UNIQUE(chat_id, feishu_thread_id),
+        FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
+      );
+
+      INSERT INTO codex_threads (
+        thread_id,
+        project_id,
+        feishu_thread_id,
+        chat_id,
+        anchor_message_id,
+        latest_message_id,
+        session_name,
+        title,
+        owner_open_id,
+        status,
+        last_run_id,
+        last_activity_at,
+        created_at,
+        updated_at,
+        archived_at
+      )
+      SELECT
+        thread_id,
+        project_id,
+        feishu_thread_id,
+        chat_id,
+        anchor_message_id,
+        latest_message_id,
+        session_name,
+        title,
+        owner_open_id,
+        status,
+        last_run_id,
+        last_activity_at,
+        created_at,
+        updated_at,
+        archived_at
+      FROM codex_threads_legacy
+      ORDER BY updated_at ASC, chat_id ASC, feishu_thread_id ASC;
+
+      DROP TABLE codex_threads_legacy;
+    `);
+  }
+
   private migrateObservabilityRunsTable(): void {
     const columns = this.db.prepare(`PRAGMA table_info(observability_runs)`).all() as Array<{
       name: string;
@@ -1172,6 +1524,16 @@ export class SessionStore {
         updated_at TEXT NOT NULL,
         PRIMARY KEY (channel, peer_id)
       );
+    `);
+  }
+
+  private ensureCodexThreadIndexes(): void {
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_codex_threads_surface
+      ON codex_threads(chat_id, feishu_thread_id);
+
+      CREATE INDEX IF NOT EXISTS idx_codex_threads_thread_id
+      ON codex_threads(thread_id, updated_at DESC);
     `);
   }
 
@@ -1260,6 +1622,25 @@ interface SessionSnapshotRow {
   latest_run_status: ProgressStatus | null;
   latest_run_stage: ProgressStage | null;
   updated_at: string;
+}
+
+interface PendingPlanInteractionRow {
+  interaction_id: string;
+  run_id: string;
+  channel: string;
+  peer_id: string;
+  chat_id: string | null;
+  surface_type: "thread" | null;
+  surface_ref: string | null;
+  thread_id: string;
+  session_name: string;
+  question_text: string;
+  choices_json: string;
+  status: PendingPlanInteractionRecord["status"];
+  selected_choice_id: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
 }
 
 interface CodexThreadRow {
@@ -1402,6 +1783,27 @@ function rowToSessionSnapshot(row: SessionSnapshotRow): SessionSnapshot {
     latestRunStatus: row.latest_run_status,
     latestRunStage: row.latest_run_stage,
     updatedAt: row.updated_at,
+  };
+}
+
+function rowToPendingPlanInteraction(row: PendingPlanInteractionRow): PendingPlanInteractionRecord {
+  return {
+    interactionId: row.interaction_id,
+    runId: row.run_id,
+    channel: row.channel,
+    peerId: row.peer_id,
+    chatId: row.chat_id,
+    surfaceType: row.surface_type,
+    surfaceRef: row.surface_ref,
+    threadId: row.thread_id,
+    sessionName: row.session_name,
+    question: row.question_text,
+    choices: JSON.parse(row.choices_json) as PendingPlanInteractionRecord["choices"],
+    status: row.status,
+    selectedChoiceId: row.selected_choice_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    resolvedAt: row.resolved_at,
   };
 }
 

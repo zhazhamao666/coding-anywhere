@@ -54,6 +54,7 @@ describe("run delivery target persistence", () => {
     const service = new BridgeService({
       store,
       runner: {
+        createThread: vi.fn(),
         ensureSession: vi.fn(async () => undefined),
         cancel: vi.fn(async () => undefined),
         close: vi.fn(async () => undefined),
@@ -80,7 +81,7 @@ describe("run delivery target persistence", () => {
       deliveryChatId: "oc_chat_1",
       deliverySurfaceType: "thread",
       deliverySurfaceRef: "omt_1",
-      sessionName: "codex-proj-a-thread-a",
+      sessionName: "thread-a",
     });
   });
 });

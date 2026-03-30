@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"019d34e0-254e-70f1-9dd5-097fb862d391"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"powershell.exe -Command \"Get-Content 'C:\\Users\\eijud\\.agents\\skills\\using-superpowers\\SKILL.md' -Encoding utf8\""}}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"powershell.exe -Command \"Get-Content 'C:\\Users\\eijud\\.agents\\skills\\using-superpowers\\SKILL.md' -Encoding utf8\"","exit_code":0,"aggregated_output":"---\\nname: using-superpowers\\ndescription: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions\\n---"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"OK"}}
+{"type":"turn.completed"}

@@ -64,6 +64,7 @@ export async function createRuntime(
     overrides?.createApiClient?.(config) ?? createDefaultApiClient(config);
   const projectThreadService = new ProjectThreadService({
     apiClient,
+    runner,
     store,
   });
   const bridgeService = new BridgeService({
@@ -147,10 +148,9 @@ export async function reapIdleThreads(input: {
   const reapableThreads = input.store.listReapableThreads(cutoffIso);
 
   for (const thread of reapableThreads) {
-    await input.runner.close({
-      sessionName: thread.sessionName,
-      cwd: thread.cwd,
-    });
+    void input.runner;
+    void thread.cwd;
+    void thread.sessionName;
     input.store.updateCodexThreadState({
       threadId: thread.threadId,
       status: "closed",

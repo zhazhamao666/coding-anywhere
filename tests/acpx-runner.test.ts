@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -52,97 +55,75 @@ describe("AcpxRunner", () => {
     execaMock.mockReset();
   });
 
-  it("uses --name when ensuring a named session", async () => {
-    execaMock.mockResolvedValue({
-      exitCode: 0,
-    });
-
+  it("does not shell out when ensuring native execution context", async () => {
     const runner = new AcpxRunner("acpx", "codex");
 
     await runner.ensureSession({
-      sessionName: "codex-demo",
+      targetKind: "codex_thread",
+      threadId: "thread-demo",
+      sessionName: "thread-demo",
       cwd: "D:/repo",
     });
 
-    expect(execaMock).toHaveBeenCalledWith(
-      "acpx",
-      ["codex", "sessions", "ensure", "--name", "codex-demo"],
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("creates a native thread through codex exec and returns the thread id", async () => {
+    const child = createChildFromFixture("create-thread.jsonl", 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.createThread(
       {
         cwd: "D:/repo",
+        prompt: "Initialize a bridge thread.",
+      },
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(execaMock).toHaveBeenCalledWith(
+      "codex",
+      ["exec", "--json", "-"],
+      {
+        cwd: "D:/repo",
+        input: "Initialize a bridge thread.",
         reject: false,
       },
     );
+    expect(outcome.threadId).toBe("019d34e0-254e-70f1-9dd5-097fb862d391");
+    expect(seenEvents).toEqual([
+      expect.objectContaining({
+        type: "tool_call",
+        toolName: expect.stringContaining("Get-Content"),
+        content: expect.stringContaining("Get-Content"),
+      }),
+      { type: "text", content: "OK" },
+      { type: "done", content: "OK" },
+    ]);
   });
 
-  it("passes the session name positionally when closing a session", async () => {
-    execaMock.mockResolvedValue({
-      exitCode: 0,
-    });
-
+  it("treats close as a no-op for native-only execution", async () => {
     const runner = new AcpxRunner("acpx", "codex");
 
     await runner.close({
-      sessionName: "codex-demo",
+      targetKind: "codex_thread",
+      threadId: "thread-demo",
+      sessionName: "thread-demo",
       cwd: "D:/repo",
     });
 
-    expect(execaMock).toHaveBeenCalledWith(
-      "acpx",
-      ["codex", "sessions", "close", "codex-demo"],
-      {
-        cwd: "D:/repo",
-        reject: false,
-      },
-    );
+    expect(execaMock).not.toHaveBeenCalled();
   });
 
-  it("requests strict json output and preserves streamed text chunks", async () => {
-    const lines = [
-      JSON.stringify({
-        jsonrpc: "2.0",
-        method: "session/update",
-        params: {
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "你",
-            },
-          },
-        },
-      }),
-      JSON.stringify({
-        jsonrpc: "2.0",
-        method: "session/update",
-        params: {
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: "好",
-            },
-          },
-        },
-      }),
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: 3,
-        result: {
-          stopReason: "end_turn",
-        },
-      }),
-    ];
-
-    const child = Object.assign(
-      Promise.resolve({
-        exitCode: 0,
-      }),
-      {
-        stdout: Readable.from([
-          `${lines[0]}\n${lines[1].slice(0, 24)}`,
-          `${lines[1].slice(24)}\n${lines[2]}\n`,
-        ]),
-      },
+  it("resumes an existing native thread and preserves streamed text chunks", async () => {
+    const child = createChunkedChildFromFixture(
+      "resume-thread.jsonl",
+      0,
+      [2, 3],
     );
     execaMock.mockReturnValue(child);
 
@@ -151,7 +132,9 @@ describe("AcpxRunner", () => {
 
     const outcome = await runner.submitVerbatim(
       {
-        sessionName: "codex-demo",
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
         cwd: "D:/repo",
       },
       "test",
@@ -161,16 +144,12 @@ describe("AcpxRunner", () => {
     );
 
     expect(execaMock).toHaveBeenCalledWith(
-      "acpx",
+      "codex",
       [
-        "--format",
-        "json",
-        "--json-strict",
-        "codex",
-        "prompt",
-        "--session",
-        "codex-demo",
-        "--file",
+        "exec",
+        "resume",
+        "--json",
+        "thread-demo",
         "-",
       ],
       {
@@ -180,14 +159,269 @@ describe("AcpxRunner", () => {
       },
     );
     expect(seenEvents).toEqual([
-      { type: "text", content: "你" },
-      { type: "text", content: "你好" },
-      { type: "done", content: "你好" },
+      expect.objectContaining({
+        type: "tool_call",
+        toolName: expect.stringContaining("git status --short"),
+        content: expect.stringContaining("git status --short"),
+      }),
+      { type: "text", content: "RESUMED" },
+      { type: "done", content: "RESUMED" },
     ]);
     expect(outcome.events).toEqual([
-      { type: "text", content: "你" },
-      { type: "text", content: "你好" },
-      { type: "done", content: "你好" },
+      expect.objectContaining({
+        type: "tool_call",
+        toolName: expect.stringContaining("git status --short"),
+        content: expect.stringContaining("git status --short"),
+      }),
+      { type: "text", content: "RESUMED" },
+      { type: "done", content: "RESUMED" },
     ]);
   });
+
+  it("reports a failed command execution as an error and still completes the turn", async () => {
+    const child = createChildFromFixture("command-failure.jsonl", 1);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "test",
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(seenEvents).toEqual([
+      { type: "tool_call", toolName: "npm test", content: "npm test" },
+      { type: "error", content: "npm ERR! Test failed" },
+      { type: "done", content: undefined },
+    ]);
+    expect(outcome.events).toEqual([
+      { type: "tool_call", toolName: "npm test", content: "npm test" },
+      { type: "error", content: "npm ERR! Test failed" },
+      { type: "done", content: undefined },
+    ]);
+  });
+
+  it("surfaces native plan-mode todo items as waiting progress and still completes", async () => {
+    const child = createChildFromFixture("plan-mode.jsonl", 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "enter plan mode",
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(seenEvents).toEqual([
+      {
+        type: "waiting",
+        content: "Ask whether to continue; Wait for user choice",
+        planTodos: [
+          {
+            text: "Ask whether to continue",
+            completed: false,
+          },
+          {
+            text: "Wait for user choice",
+            completed: false,
+          },
+        ],
+      },
+      expect.objectContaining({
+        type: "text",
+        content: expect.stringContaining("`request_user_input` is unavailable"),
+      }),
+      expect.objectContaining({
+        type: "done",
+        content: expect.stringContaining("`request_user_input` is unavailable"),
+      }),
+    ]);
+    expect(outcome.events).toEqual(seenEvents);
+  });
+
+  it("surfaces native sub-agent lifecycle calls without losing the final delegated answer", async () => {
+    const child = createChildFromFixture("sub-agent.jsonl", 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "delegate a sub-agent",
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(seenEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "tool_call",
+          toolName: expect.stringContaining("spawn_agent"),
+          content: expect.stringContaining("spawn_agent"),
+        }),
+        expect.objectContaining({
+          type: "tool_call",
+          toolName: expect.stringContaining("wait"),
+          content: expect.stringContaining("wait"),
+        }),
+        {
+          type: "text",
+          content: "subagent-fixture",
+        },
+        {
+          type: "done",
+          content: "subagent-fixture",
+        },
+      ]),
+    );
+    expect(outcome.events).toEqual(seenEvents);
+  });
+
+  it("extracts bridge-managed plan-choice directives from native assistant text", async () => {
+    const child = createChildFromFixture("plan-choice.jsonl", 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "/plan 梳理方案",
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(seenEvents).toEqual([
+      {
+        type: "waiting",
+        content: "梳理两种改造路径; 等待用户选择下一步",
+        planTodos: [
+          {
+            text: "梳理两种改造路径",
+            completed: true,
+          },
+          {
+            text: "等待用户选择下一步",
+            completed: false,
+          },
+        ],
+      },
+      {
+        type: "text",
+        content: "我先把两条改造路径收敛出来，方便你在飞书里直接选择。",
+        planInteraction: {
+          question: "你希望我下一步先做哪件事？",
+          choices: [
+            {
+              choiceId: "architecture",
+              label: "先梳理架构",
+              description: "只输出改造边界与影响面，不改代码。",
+              responseText: "先梳理架构与改造边界，不要直接改代码。",
+            },
+            {
+              choiceId: "tests",
+              label: "先补测试",
+              description: "优先补齐验证路径和风险防线。",
+              responseText: "先补测试和验证路径，不要直接改代码。",
+            },
+          ],
+        },
+      },
+      {
+        type: "done",
+        content: "我先把两条改造路径收敛出来，方便你在飞书里直接选择。",
+      },
+    ]);
+    expect(outcome.events).toEqual(seenEvents);
+  });
 });
+
+function createChildFromFixture(fileName: string, exitCode: number) {
+  const fixturePath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "fixtures",
+    "codex",
+    fileName,
+  );
+  const lines = readFileSync(fixturePath, "utf8")
+    .trim()
+    .split(/\r?\n/)
+    .map(line => `${line}\n`);
+
+  return Object.assign(
+    Promise.resolve({
+      exitCode,
+    }),
+    {
+      stdout: Readable.from(lines),
+    },
+  );
+}
+
+function createChunkedChildFromFixture(
+  fileName: string,
+  exitCode: number,
+  chunkSplits: number[],
+) {
+  const fixturePath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "fixtures",
+    "codex",
+    fileName,
+  );
+  const content = readFileSync(fixturePath, "utf8").trim();
+  const lines = content.split(/\r?\n/).map(line => `${line}\n`);
+  const chunks: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (chunkSplits.includes(index)) {
+      const splitPoint = Math.max(1, Math.floor(line.length / 2));
+      chunks.push(line.slice(0, splitPoint));
+      chunks.push(line.slice(splitPoint));
+      continue;
+    }
+
+    chunks.push(line);
+  }
+
+  return Object.assign(
+    Promise.resolve({
+      exitCode,
+    }),
+    {
+      stdout: Readable.from(chunks),
+    },
+  );
+}

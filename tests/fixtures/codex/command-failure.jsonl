@@ -1,0 +1,4 @@
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"npm test"}}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"npm test","exit_code":1,"aggregated_output":"npm ERR! Test failed"}}
+{"type":"turn.completed"}
