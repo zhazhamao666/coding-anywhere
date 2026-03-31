@@ -1422,7 +1422,6 @@ export class SessionStore {
     surfaceType?: "thread" | null;
     surfaceRef?: string | null;
   }): BridgeAssetRecord[] {
-    const consumedAt = new Date().toISOString();
     const rows = this.db.prepare(`
       SELECT
         asset_id,
@@ -1466,8 +1465,58 @@ export class SessionStore {
       return [];
     }
 
-    const assetIds = rows.map(row => row.asset_id);
-    const placeholders = assetIds.map(() => "?").join(", ");
+    return this.consumePendingBridgeAssets({
+      runId: input.runId,
+      assetIds: rows.map(row => row.asset_id),
+    });
+  }
+
+  public consumePendingBridgeAssets(input: {
+    runId: string;
+    assetIds: string[];
+  }): BridgeAssetRecord[] {
+    if (input.assetIds.length === 0) {
+      return [];
+    }
+
+    const consumedAt = new Date().toISOString();
+    const placeholders = input.assetIds.map(() => "?").join(", ");
+    const rows = this.db.prepare(`
+      SELECT
+        asset_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        message_id,
+        resource_type,
+        resource_key,
+        local_path,
+        file_name,
+        mime_type,
+        file_size,
+        status,
+        error_text,
+        created_at,
+        updated_at,
+        consumed_at,
+        failed_at,
+        expired_at
+      FROM pending_bridge_assets
+      WHERE
+        status = 'pending'
+        AND asset_id IN (${placeholders})
+      ORDER BY created_at ASC, asset_id ASC
+    `).all(...input.assetIds) as BridgeAssetRow[];
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    const selectedAssetIds = rows.map(row => row.asset_id);
+    const updatePlaceholders = selectedAssetIds.map(() => "?").join(", ");
 
     this.db.prepare(`
       UPDATE pending_bridge_assets
@@ -1476,8 +1525,8 @@ export class SessionStore {
         status = 'consumed',
         updated_at = ?,
         consumed_at = ?
-      WHERE asset_id IN (${placeholders})
-    `).run(input.runId, consumedAt, consumedAt, ...assetIds);
+      WHERE asset_id IN (${updatePlaceholders})
+    `).run(input.runId, consumedAt, consumedAt, ...selectedAssetIds);
 
     return rows.map(row => rowToBridgeAsset({
       ...row,

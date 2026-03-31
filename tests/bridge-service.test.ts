@@ -321,6 +321,7 @@ describe("BridgeService", () => {
         cwd: bridgeRootCwd,
       },
       expect.stringContaining("[bridge-context]"),
+      undefined,
       expect.any(Function),
     );
 
@@ -455,6 +456,107 @@ describe("BridgeService", () => {
         text: "响应正常。",
       },
     ]);
+  });
+
+  it("consumes staged surface images and forwards them to the next prompt only once", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-created",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-created",
+      title: "image-thread",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+    store.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      messageId: "om_image_1",
+      resourceKey: "img_dm_1",
+      localPath: "D:/assets/one.png",
+      fileName: "one.png",
+      mimeType: "image/png",
+      fileSize: 1024,
+    });
+    store.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      messageId: "om_image_2",
+      resourceKey: "img_dm_2",
+      localPath: "D:/assets/two.png",
+      fileName: "two.png",
+      mimeType: "image/png",
+      fileSize: 2048,
+    });
+
+    const runner = createRunnerDouble([
+      { type: "text", content: "结合图片分析完成。" },
+      { type: "done", content: "结合图片分析完成。" },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "请结合刚才的图片继续分析",
+    });
+
+    expect(runner.submitVerbatim).toHaveBeenCalledWith(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-created",
+        sessionName: "thread-created",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      },
+      expect.stringContaining("[bridge-attachments]"),
+      {
+        images: ["D:/assets/one.png", "D:/assets/two.png"],
+      },
+      expect.any(Function),
+    );
+    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("image_count: 2");
+    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("file_name=one.png");
+    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("source_message_id=om_image_1");
+    expect(store.listPendingBridgeAssetsForSurface({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    })).toEqual([]);
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "再继续一次",
+    });
+
+    expect(runner.submitVerbatim.mock.calls[1]?.[2]).toBeUndefined();
+    expect((runner.submitVerbatim.mock.calls[1]?.[1] as string)).not.toContain("[bridge-attachments]");
   });
 
   it("persists bridge-managed plan interactions from runner events and exposes them on the final progress snapshot", async () => {
@@ -1214,6 +1316,7 @@ describe("BridgeService", () => {
         cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       },
       expect.stringContaining("先补测试和验证路径，不要直接改代码。"),
+      undefined,
       expect.any(Function),
     );
     expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("[user-message]");
@@ -1335,7 +1438,16 @@ function createRunnerDouble(
     ensureSession: vi.fn(async () => undefined),
     cancel: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
-    submitVerbatim: vi.fn(async (_context, _prompt, onEvent?: (event: AcpxEvent) => void) => {
+    submitVerbatim: vi.fn(async (
+      _context,
+      _prompt,
+      optionsOrOnEvent?: { images?: string[] } | ((event: AcpxEvent) => void),
+      maybeOnEvent?: (event: AcpxEvent) => void,
+    ) => {
+      const onEvent = typeof optionsOrOnEvent === "function"
+        ? optionsOrOnEvent
+        : maybeOnEvent;
+
       for (const event of events) {
         onEvent?.(event);
       }

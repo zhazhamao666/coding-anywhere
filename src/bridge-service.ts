@@ -7,6 +7,7 @@ import type { ProjectThreadService } from "./project-thread-service.js";
 import { createProgressCardState, reduceProgressEvent } from "./progress-relay.js";
 import type {
   AcpxEvent,
+  BridgeAssetRecord,
   BridgeMessageInput,
   BridgeLifecycleStage,
   BridgeReply,
@@ -26,6 +27,7 @@ interface BridgeRunner {
     input: {
       cwd: string;
       prompt: string;
+      images?: string[];
     },
     onEvent?: (event: AcpxEvent) => void,
   ): Promise<RunOutcome & { threadId: string }>;
@@ -33,6 +35,9 @@ interface BridgeRunner {
   submitVerbatim(
     context: RunContext,
     prompt: string,
+    options?: {
+      images?: string[];
+    },
     onEvent?: (event: AcpxEvent) => void,
   ): Promise<RunOutcome>;
   cancel(context: RunContext): Promise<void>;
@@ -83,6 +88,14 @@ export class BridgeService {
     if (routed.kind === "command") {
       return this.handleCommand(input, routed.command.name, routed.command.args);
     }
+
+    const stagedAssets = this.dependencies.store.listPendingBridgeAssetsForSurface({
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+    });
 
     const resolved = this.resolveContext(input);
     let currentProgress = createProgressCardState({
@@ -180,6 +193,18 @@ export class BridgeService {
         `[ca] session ready: ${activeResolved.sessionName}`,
         activeResolved.sessionName,
       );
+      const consumedAssets = stagedAssets.length > 0
+        ? this.dependencies.store.consumePendingBridgeAssets({
+            runId: currentProgress.runId,
+            assetIds: stagedAssets.map(asset => asset.assetId),
+          })
+        : [];
+      const promptText = buildPromptForCodexRun({
+        root: activeResolved.root,
+        prompt: routed.prompt,
+        wrapPrompt: activeResolved.wrapPrompt,
+        assets: consumedAssets,
+      });
       await emitLifecycle("submitting_prompt", "[ca] submitting prompt", activeResolved.sessionName);
       await emitLifecycle(
         "waiting_first_event",
@@ -189,9 +214,14 @@ export class BridgeService {
 
       const outcome = await this.dependencies.runner.submitVerbatim(
         activeResolved.context,
-        activeResolved.wrapPrompt
-          ? buildCodexPromptEnvelope(activeResolved.root, routed.prompt)
-          : routed.prompt,
+        promptText,
+        consumedAssets.length > 0
+          ? {
+              images: consumedAssets
+                .filter(asset => asset.resourceType === "image")
+                .map(asset => asset.localPath),
+            }
+          : undefined,
         async event => {
           let snapshot = reduceProgressEvent(currentProgress, event);
           if (event.type === "text" && event.planInteraction && activeResolved.threadId) {
@@ -1759,20 +1789,50 @@ function extractErrorText(preview: string): string {
   return preview.startsWith(prefix) ? preview.slice(prefix.length) : preview;
 }
 
-function buildCodexPromptEnvelope(root: RootProfile, prompt: string): string {
-  return [
-    "[bridge-context]",
-    `root_name: ${root.id}`,
-    `root_path: ${root.cwd}`,
-    "instructions:",
-    "- You are operating inside the configured bridge root.",
-    "- Discover projects and repositories under this root yourself.",
-    "- If the user asks about available projects, inspect the filesystem and answer directly.",
-    `- Do not tell the user to use ${BRIDGE_COMMAND_PREFIX} repo commands because bridge does not manage projects.`,
-    "[/bridge-context]",
-    "",
+function buildPromptForCodexRun(input: {
+  root: RootProfile;
+  prompt: string;
+  wrapPrompt: boolean;
+  assets: BridgeAssetRecord[];
+}): string {
+  if (!input.wrapPrompt && input.assets.length === 0) {
+    return input.prompt;
+  }
+
+  const sections: string[] = [];
+
+  if (input.wrapPrompt) {
+    sections.push(
+      "[bridge-context]",
+      `root_name: ${input.root.id}`,
+      `root_path: ${input.root.cwd}`,
+      "instructions:",
+      "- You are operating inside the configured bridge root.",
+      "- Discover projects and repositories under this root yourself.",
+      "- If the user asks about available projects, inspect the filesystem and answer directly.",
+      `- Do not tell the user to use ${BRIDGE_COMMAND_PREFIX} repo commands because bridge does not manage projects.`,
+      "[/bridge-context]",
+      "",
+    );
+  }
+
+  if (input.assets.length > 0) {
+    sections.push(
+      "[bridge-attachments]",
+      `image_count: ${input.assets.length}`,
+      ...input.assets.map((asset, index) =>
+        `image_${index + 1}: file_name=${asset.fileName}; source_message_id=${asset.messageId}; mime_type=${asset.mimeType ?? "unknown"}`,
+      ),
+      "[/bridge-attachments]",
+      "",
+    );
+  }
+
+  sections.push(
     "[user-message]",
-    prompt,
+    input.prompt,
     "[/user-message]",
-  ].join("\n");
+  );
+
+  return sections.join("\n");
 }
