@@ -269,6 +269,139 @@ describe("FeishuCardActionService", () => {
     });
   });
 
+  it("acks /ca new immediately and patches the original card after the new thread is created", async () => {
+    const deferred = createDeferred<BridgeReply[]>();
+    const bridgeService = {
+      handleMessage: vi.fn(() => deferred.promise),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const actionPromise = service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_new_card_1",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca new",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    const firstResult = await Promise.race([
+      actionPromise.then(value => ({ type: "resolved" as const, value })),
+      new Promise<{ type: "timeout" }>(resolve => setTimeout(() => resolve({ type: "timeout" }), 0)),
+    ]);
+
+    expect(firstResult.type).toBe("resolved");
+    if (firstResult.type !== "resolved") {
+      return;
+    }
+
+    expect(firstResult.value).toMatchObject({
+      card: {
+        type: "raw",
+        data: {
+          header: {
+            title: {
+              content: "命令已提交",
+            },
+          },
+        },
+      },
+    });
+
+    deferred.resolve([
+      { kind: "system", text: "[ca] thread switched to thread-created" } as BridgeReply,
+    ]);
+
+    await vi.waitFor(() => {
+      expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith(
+        "om_new_card_1",
+        expect.objectContaining({
+          header: expect.objectContaining({
+            title: expect.objectContaining({
+              content: "命令结果",
+            }),
+          }),
+        }),
+      );
+    });
+  });
+
+  it("acks risky thread commands immediately and patches the original card with the final card reply", async () => {
+    const deferred = createDeferred<BridgeReply[]>();
+    const replyCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "线程已切换",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
+    const bridgeService = {
+      handleMessage: vi.fn(() => deferred.promise),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const actionPromise = service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_thread_switch_1",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca thread switch thread-native-123",
+          chatId: "oc_project_chat_1",
+        },
+      },
+    });
+
+    const firstResult = await Promise.race([
+      actionPromise.then(value => ({ type: "resolved" as const, value })),
+      new Promise<{ type: "timeout" }>(resolve => setTimeout(() => resolve({ type: "timeout" }), 0)),
+    ]);
+
+    expect(firstResult.type).toBe("resolved");
+    if (firstResult.type !== "resolved") {
+      return;
+    }
+
+    expect(firstResult.value).toMatchObject({
+      card: {
+        type: "raw",
+        data: {
+          header: {
+            title: {
+              content: "命令已提交",
+            },
+          },
+        },
+      },
+    });
+
+    deferred.resolve([
+      { kind: "card", card: replyCard } as unknown as BridgeReply,
+    ]);
+
+    await vi.waitFor(() => {
+      expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith("om_thread_switch_1", replyCard);
+    });
+  });
+
   it("launches a stored plan choice asynchronously and returns an immediate ack card", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => []),
@@ -394,5 +527,19 @@ function createApiClientDouble() {
     streamCardElement: vi.fn(async () => undefined),
     setCardStreamingMode: vi.fn(async () => undefined),
     updateCardKitCard: vi.fn(async () => undefined),
+  };
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return {
+    promise,
+    resolve,
+    reject,
   };
 }

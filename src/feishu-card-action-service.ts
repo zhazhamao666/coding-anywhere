@@ -3,7 +3,7 @@ import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import { buildPlanModeFormCard } from "./feishu-card/card-builder.js";
 import { StreamingCardController } from "./feishu-card/streaming-card-controller.js";
 import type { FeishuApiClientLike, StreamingCardControllerLike } from "./feishu-adapter.js";
-import type { BridgeReply } from "./types.js";
+import type { BridgeCommand, BridgeReply } from "./types.js";
 
 interface CardActionValue {
   cardId?: string;
@@ -75,6 +75,7 @@ export class FeishuCardActionService {
   }): Promise<Record<string, unknown>> {
     const actionValue = event.action?.value;
     const command = actionValue?.command?.trim();
+    const routedCommand = command ? routeBridgeInput(command) : undefined;
     const bridgeAction = actionValue?.bridgeAction;
     const patchTargetCardId = actionValue?.cardId;
     const patchTargetMessageId = actionValue?.messageId ?? event.open_message_id;
@@ -152,7 +153,7 @@ export class FeishuCardActionService {
       ], actionValue));
     }
 
-    if (!command || routeBridgeInput(command).kind !== "command") {
+    if (!command || !routedCommand || routedCommand.kind !== "command") {
       const invalidCard = this.buildInfoCard("无效按钮动作", [
         `仅支持 ${BRIDGE_COMMAND_PREFIX} 命令按钮回调。`,
       ]);
@@ -167,6 +168,39 @@ export class FeishuCardActionService {
         "feishu card action rejected",
       );
       return this.buildRawCardResponse(invalidCard);
+    }
+
+    if (this.shouldHandleCommandAsynchronously(routedCommand.command)) {
+      this.dependencies.logger?.info?.(
+        {
+          openId: event.open_id,
+          openMessageId: event.open_message_id,
+          command,
+          patchTargetCardId,
+          patchTargetMessageId,
+        },
+        "feishu card action queued async command",
+      );
+
+      this.launchCommandAction({
+        peerId: event.open_id,
+        command,
+        actionValue,
+        existingMessageId: patchTargetMessageId,
+        execute: () => this.dependencies.bridgeService.handleMessage({
+          channel: "feishu",
+          peerId: event.open_id,
+          chatId: actionValue?.chatId,
+          surfaceType: actionValue?.surfaceType,
+          surfaceRef: actionValue?.surfaceRef,
+          text: command,
+        }),
+      });
+
+      return this.buildRawCardResponse(this.buildInfoCard("命令已提交", [
+        `已提交：${command}`,
+        "正在后台执行，请稍候。",
+      ], actionValue));
     }
 
     const replies = await this.dependencies.bridgeService.handleMessage({
@@ -186,51 +220,16 @@ export class FeishuCardActionService {
       },
       "feishu card action bridge replies",
     );
-
-    const reply = replies.find(item => item.kind !== "progress");
-    if (!reply) {
-      const emptyCard = this.buildInfoCard("命令已执行", ["没有收到可展示的结果。"]);
-      this.dependencies.logger?.warn?.(
-        {
-          openId: event.open_id,
-          openMessageId: event.open_message_id,
-          command,
-          cardPreview: summarizeCard(emptyCard),
-        },
-        "feishu card action produced no non-progress reply",
-      );
-      return this.buildRawCardResponse(emptyCard);
-    }
-
-    if (reply.kind === "card") {
-      this.dependencies.logger?.info?.(
-        {
-          openId: event.open_id,
-          openMessageId: event.open_message_id,
-          command,
-          patchTargetCardId,
-          patchTargetMessageId,
-          cardPreview: summarizeCard(reply.card),
-        },
-        "feishu card action returning card reply",
-      );
-      return this.buildRawCardResponse(reply.card);
-    }
-
-    const infoCard = this.buildInfoCard("命令结果", [reply.text], actionValue);
-    this.dependencies.logger?.info?.(
-      {
-        openId: event.open_id,
-        openMessageId: event.open_message_id,
-        command,
-        replyKind: reply.kind,
-        patchTargetCardId,
-        patchTargetMessageId,
-        cardPreview: summarizeCard(infoCard),
-      },
-      "feishu card action wrapped non-card reply",
-    );
-    return this.buildRawCardResponse(infoCard);
+    const card = this.buildCommandResultCard({
+      replies,
+      command,
+      actionValue,
+      openId: event.open_id,
+      openMessageId: event.open_message_id,
+      patchTargetCardId,
+      patchTargetMessageId,
+    });
+    return this.buildRawCardResponse(card);
   }
 
   private buildInfoCard(
@@ -272,6 +271,134 @@ export class FeishuCardActionService {
         data: card,
       },
     };
+  }
+
+  private shouldHandleCommandAsynchronously(command: BridgeCommand): boolean {
+    if (command.name === "new") {
+      return true;
+    }
+
+    if (command.name === "thread") {
+      const [action = "help"] = command.args;
+      return action === "switch" || action === "create" || action === "create-current";
+    }
+
+    if (command.name === "project") {
+      const [action = "help"] = command.args;
+      return action === "bind" || action === "bind-current";
+    }
+
+    return false;
+  }
+
+  private buildCommandResultCard(input: {
+    replies: BridgeReply[];
+    command: string;
+    actionValue?: CardActionValue;
+    openId: string;
+    openMessageId?: string;
+    patchTargetCardId?: string;
+    patchTargetMessageId?: string;
+  }): Record<string, unknown> {
+    const reply = input.replies.find(item => item.kind !== "progress");
+    if (!reply) {
+      const emptyCard = this.buildInfoCard("命令已执行", ["没有收到可展示的结果。"], input.actionValue);
+      this.dependencies.logger?.warn?.(
+        {
+          openId: input.openId,
+          openMessageId: input.openMessageId,
+          command: input.command,
+          cardPreview: summarizeCard(emptyCard),
+        },
+        "feishu card action produced no non-progress reply",
+      );
+      return emptyCard;
+    }
+
+    if (reply.kind === "card") {
+      this.dependencies.logger?.info?.(
+        {
+          openId: input.openId,
+          openMessageId: input.openMessageId,
+          command: input.command,
+          patchTargetCardId: input.patchTargetCardId,
+          patchTargetMessageId: input.patchTargetMessageId,
+          cardPreview: summarizeCard(reply.card),
+        },
+        "feishu card action returning card reply",
+      );
+      return reply.card;
+    }
+
+    const infoCard = this.buildInfoCard("命令结果", [reply.text], input.actionValue);
+    this.dependencies.logger?.info?.(
+      {
+        openId: input.openId,
+        openMessageId: input.openMessageId,
+        command: input.command,
+        replyKind: reply.kind,
+        patchTargetCardId: input.patchTargetCardId,
+        patchTargetMessageId: input.patchTargetMessageId,
+        cardPreview: summarizeCard(infoCard),
+      },
+      "feishu card action wrapped non-card reply",
+    );
+    return infoCard;
+  }
+
+  private launchCommandAction(input: {
+    peerId: string;
+    command: string;
+    actionValue?: CardActionValue;
+    existingMessageId?: string;
+    execute: () => Promise<BridgeReply[]>;
+  }): void {
+    void (async () => {
+      try {
+        const replies = await input.execute();
+        const card = this.buildCommandResultCard({
+          replies,
+          command: input.command,
+          actionValue: input.actionValue,
+          openId: input.peerId,
+          openMessageId: input.existingMessageId,
+          patchTargetCardId: input.actionValue?.cardId,
+          patchTargetMessageId: input.existingMessageId,
+        });
+        await this.updateCommandCard(input.command, input.existingMessageId, card);
+      } catch (error) {
+        const errorCard = this.buildInfoCard("命令执行失败", [normalizeActionError(error)], input.actionValue);
+        await this.updateCommandCard(input.command, input.existingMessageId, errorCard);
+      }
+    })();
+  }
+
+  private async updateCommandCard(
+    command: string,
+    messageId: string | undefined,
+    card: Record<string, unknown>,
+  ): Promise<void> {
+    if (!messageId || !this.dependencies.apiClient) {
+      this.dependencies.logger?.warn?.(
+        {
+          command,
+          messageId,
+          hasApiClient: !!this.dependencies.apiClient,
+        },
+        "feishu async command completed without interactive card patch target",
+      );
+      return;
+    }
+
+    await this.dependencies.apiClient.updateInteractiveCard(messageId, card);
+    this.dependencies.logger?.info?.(
+      {
+        command,
+        messageId,
+        cardPreview: summarizeCard(card),
+      },
+      "feishu async command patched interactive card",
+    );
   }
 
   private launchInteractiveRun(input: {

@@ -70,6 +70,7 @@
 41. DM 与已注册飞书线程的导航卡现在提供一次性“计划模式”按钮，点击后会打开 JSON 2.0 表单卡，并把输入包装成 `/plan ...` 送入当前 native Codex thread
 42. 计划中的 `todo_list` 会被结构化渲染到飞书状态卡，而不再只作为一段 waiting 文本掠过
 43. bridge 现在会把计划中的单选问题持久化为待回答交互，并在飞书卡片上渲染可点击选项；用户点选后会继续续跑同一个 native Codex thread
+44. 飞书卡片中的高风险变更型命令按钮（如 `/ca new`、部分 `thread` / `project` 变更命令）现在会先在 `card.action.trigger` 中即时返回确认卡，再在后台完成实际操作并通过 `updateInteractiveCard` 回填最终结果，降低“目标回调服务超时未响应”的概率
 
 ### 2.3 当前仍未打通的部分
 
@@ -236,6 +237,7 @@ Windows 启动前清理模块。
 - 当命令返回的是系统文本时，会构造带有明确标题的结果卡，而不是统一套用 `CA Hub` 头部
 - 对计划模式按钮返回 JSON 2.0 表单卡，并读取 `form_value` 中的多行输入
 - 对 bridge 持久化的计划选择返回即时确认卡，并在后台继续同一 native thread
+- 对会触发线程创建、线程绑定或项目绑定的高风险命令按钮先返回即时确认卡，再在后台完成命令并用 `updateInteractiveCard` 回填终态卡，避免卡片回调超时
 
 ### 5.5 `src/run-worker-manager.ts`
 
