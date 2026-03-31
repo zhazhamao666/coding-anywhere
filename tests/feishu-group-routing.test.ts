@@ -177,6 +177,42 @@ describe("FeishuAdapter group thread routing", () => {
       rmSync(rootDir, { recursive: true, force: true });
     }
   });
+
+  it("replies with native image messages inside the current group thread", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [
+        { kind: "image", localPath: "D:/tmp/thread-result.png" } satisfies BridgeReply,
+      ]),
+    };
+
+    const apiClient = createApiClientDouble();
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_user"],
+      bridgeService,
+      apiClient,
+    });
+
+    await adapter.handleEnvelope({
+      header: { event_id: "evt-thread-image-reply-1" },
+      event: {
+        sender: { sender_id: { open_id: "ou_user" } },
+        message: {
+          message_id: "om_thread_text_1",
+          chat_id: "oc_chat_1",
+          chat_type: "group",
+          message_type: "text",
+          thread_id: "omt_thread_1",
+          content: JSON.stringify({ text: "@bot 请返回结果图" }),
+        },
+      },
+    } as any);
+
+    expect(apiClient.uploadImage).toHaveBeenCalledWith({
+      imagePath: "D:/tmp/thread-result.png",
+    });
+    expect(apiClient.replyImageMessage).toHaveBeenCalledWith("om_thread_text_1", "img-uploaded-1");
+    expect(apiClient.sendImageMessage).not.toHaveBeenCalled();
+  });
 });
 
 function createApiClientDouble(overrides?: Record<string, unknown>) {

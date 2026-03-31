@@ -1319,7 +1319,7 @@ export class SessionStore {
         AND COALESCE(surface_ref, '') = COALESCE(?, '')
         AND message_id = ?
         AND resource_key = ?
-      ORDER BY created_at ASC, asset_id ASC
+      ORDER BY rowid ASC
       LIMIT 1
     `).get(
       input.channel,
@@ -1403,7 +1403,7 @@ export class SessionStore {
         AND COALESCE(chat_id, '') = COALESCE(@chatId, '')
         AND COALESCE(surface_type, '') = COALESCE(@surfaceType, '')
         AND COALESCE(surface_ref, '') = COALESCE(@surfaceRef, '')
-      ORDER BY created_at ASC, asset_id ASC
+      ORDER BY rowid ASC
     `).all({
       ...input,
       chatId: input.chatId ?? null,
@@ -1453,7 +1453,7 @@ export class SessionStore {
         AND COALESCE(chat_id, '') = COALESCE(@chatId, '')
         AND COALESCE(surface_type, '') = COALESCE(@surfaceType, '')
         AND COALESCE(surface_ref, '') = COALESCE(@surfaceRef, '')
-      ORDER BY created_at ASC, asset_id ASC
+      ORDER BY rowid ASC
     `).all({
       ...input,
       chatId: input.chatId ?? null,
@@ -1508,7 +1508,7 @@ export class SessionStore {
       WHERE
         status = 'pending'
         AND asset_id IN (${placeholders})
-      ORDER BY created_at ASC, asset_id ASC
+      ORDER BY rowid ASC
     `).all(...input.assetIds) as BridgeAssetRow[];
 
     if (rows.length === 0) {

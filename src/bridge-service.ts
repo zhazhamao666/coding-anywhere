@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
+import {
+  DEFAULT_BRIDGE_ASSET_ROOT_DIR,
+  parseBridgeImageDirective,
+  validateBridgeImagePath,
+} from "./bridge-image-directive.js";
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import type { ProjectThreadService } from "./project-thread-service.js";
@@ -74,6 +79,7 @@ export class BridgeService {
     private readonly dependencies: {
       store: SessionStore;
       runner: BridgeRunner;
+      managedAssetRootDir?: string;
       workerManager?: RunWorkerManagerLike;
       projectThreadService?: Pick<ProjectThreadService, "createThread" | "linkThread">;
       codexCatalog?: CodexCatalogLike;
@@ -266,6 +272,11 @@ export class BridgeService {
       }
 
       const finalText = findFinalAssistantText(outcome.events);
+      const finalOutput = buildFinalBridgeReplies({
+        finalText,
+        cwd: activeResolved.context.cwd,
+        managedAssetRootDir: this.dependencies.managedAssetRootDir ?? DEFAULT_BRIDGE_ASSET_ROOT_DIR,
+      });
 
       if (currentProgress.status === "error" || outcome.exitCode !== 0) {
         const errorText = currentProgress.status === "error"
@@ -285,7 +296,7 @@ export class BridgeService {
       if (!isTerminalProgress(currentProgress)) {
         const snapshot = reduceProgressEvent(currentProgress, {
           type: "done",
-          content: finalText,
+          content: finalOutput.previewText,
         });
         await emitSnapshot(snapshot, "system");
       }
@@ -306,12 +317,7 @@ export class BridgeService {
         });
       }
 
-      return [
-        {
-          kind: "assistant",
-          text: finalText,
-        },
-      ];
+      return finalOutput.replies;
     };
 
     const executeWithErrorHandling = async (): Promise<BridgeReply[]> => {
@@ -1849,4 +1855,66 @@ function buildPromptForCodexRun(input: {
   );
 
   return sections.join("\n");
+}
+
+function buildFinalBridgeReplies(input: {
+  finalText: string;
+  cwd: string;
+  managedAssetRootDir: string;
+}): {
+  previewText: string;
+  replies: BridgeReply[];
+} {
+  const parsed = parseBridgeImageDirective(input.finalText);
+  const replies: BridgeReply[] = [];
+  const fallbackTexts = [...parsed.errors];
+  const captionTexts: string[] = [];
+
+  for (const image of parsed.images) {
+    const validation = validateBridgeImagePath({
+      candidatePath: image.localPath,
+      cwd: input.cwd,
+      managedAssetRootDir: input.managedAssetRootDir,
+    });
+    if (!validation.ok) {
+      fallbackTexts.push(validation.errorText);
+      continue;
+    }
+
+    replies.push({
+      kind: "image",
+      localPath: validation.image.localPath,
+      caption: image.caption,
+    });
+    if (image.caption) {
+      captionTexts.push(image.caption);
+    }
+  }
+
+  const assistantText = parsed.cleanedText || captionTexts.join("\n\n");
+  if (assistantText) {
+    replies.unshift({
+      kind: "assistant",
+      text: assistantText,
+    });
+  }
+
+  for (const text of fallbackTexts) {
+    replies.push({
+      kind: "system",
+      text,
+    });
+  }
+
+  if (replies.length === 0) {
+    replies.push({
+      kind: "assistant",
+      text: input.finalText,
+    });
+  }
+
+  return {
+    previewText: assistantText || fallbackTexts[0] || "[ca] image reply generated",
+    replies,
+  };
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -631,6 +631,138 @@ describe("BridgeService", () => {
         runId: null,
         localPath: "D:/assets/one.png",
       }),
+    ]);
+  });
+
+  it("strips bridge-image directives from assistant text and returns image replies", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    const imagePath = path.join(projectCwd, "artifacts", "result.png");
+    mkdirSync(path.dirname(imagePath), { recursive: true });
+    writeFileSync(imagePath, "png");
+
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    store.createCodexThread({
+      threadId: "thread-created",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-created",
+      title: "image-thread",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+
+    const directiveText = [
+      "已生成结果图。",
+      "[bridge-image]",
+      JSON.stringify({
+        images: [{
+          path: imagePath,
+          caption: "处理结果图",
+        }],
+      }),
+      "[/bridge-image]",
+    ].join("\n");
+    const runner = createRunnerDouble([
+      { type: "text", content: directiveText },
+      { type: "done", content: directiveText },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "请返回结果图",
+    });
+
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "已生成结果图。",
+      },
+      {
+        kind: "image",
+        localPath: imagePath,
+        caption: "处理结果图",
+      },
+    ]);
+  });
+
+  it("degrades disallowed bridge-image paths into readable system text", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    const outsideImagePath = path.join(rootDir, "outside.png");
+    writeFileSync(outsideImagePath, "png");
+
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    store.createCodexThread({
+      threadId: "thread-created",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-created",
+      title: "image-thread",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+
+    const directiveText = [
+      "图片已生成。",
+      "[bridge-image]",
+      JSON.stringify({
+        images: [{
+          path: outsideImagePath,
+          caption: "不允许的路径",
+        }],
+      }),
+      "[/bridge-image]",
+    ].join("\n");
+    const runner = createRunnerDouble([
+      { type: "text", content: directiveText },
+      { type: "done", content: directiveText },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "请返回结果图",
+    });
+
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "图片已生成。",
+      },
+      {
+        kind: "system",
+        text: `[ca] image unavailable: disallowed path ${outsideImagePath}`,
+      },
     ]);
   });
 

@@ -282,6 +282,26 @@ export class FeishuCardActionService {
       return reply.card;
     }
 
+    if (reply.kind === "image") {
+      const imageLines = reply.caption
+        ? [reply.caption, "图片结果已生成。"]
+        : ["图片结果已生成。"];
+      const infoCard = this.buildInfoCard("图片结果", imageLines, input.actionValue);
+      this.dependencies.logger?.info?.(
+        {
+          openId: input.openId,
+          openMessageId: input.openMessageId,
+          command: input.command,
+          replyKind: reply.kind,
+          patchTargetCardId: input.patchTargetCardId,
+          patchTargetMessageId: input.patchTargetMessageId,
+          cardPreview: summarizeCard(infoCard),
+        },
+        "feishu card action wrapped image reply",
+      );
+      return infoCard;
+    }
+
     const infoCard = this.buildInfoCard("命令结果", [reply.text], input.actionValue);
     this.dependencies.logger?.info?.(
       {
@@ -308,6 +328,7 @@ export class FeishuCardActionService {
     void (async () => {
       try {
         const replies = await input.execute();
+        await this.deliverImageReplies(replies, input.peerId, input.existingMessageId);
         const card = this.buildCommandResultCard({
           replies,
           command: input.command,
@@ -323,6 +344,36 @@ export class FeishuCardActionService {
         await this.updateCommandCard(input.command, input.existingMessageId, errorCard);
       }
     })();
+  }
+
+  private async deliverImageReplies(
+    replies: BridgeReply[],
+    peerId: string,
+    existingMessageId?: string,
+  ): Promise<void> {
+    for (const reply of replies) {
+      if (reply.kind !== "image") {
+        continue;
+      }
+
+      try {
+        await this.replyImage({
+          peerId,
+          anchorMessageId: existingMessageId,
+          localPath: reply.localPath,
+        });
+      } catch (error) {
+        this.dependencies.logger?.warn?.(
+          {
+            peerId,
+            existingMessageId,
+            localPath: reply.localPath,
+            error: normalizeActionError(error),
+          },
+          "feishu card action image delivery failed",
+        );
+      }
+    }
   }
 
   private async updateCommandCard(
@@ -353,6 +404,24 @@ export class FeishuCardActionService {
     );
   }
 
+  private async replyImage(input: {
+    peerId: string;
+    anchorMessageId?: string;
+    localPath: string;
+  }): Promise<void> {
+    const imageClient = this.requireImageClient();
+    const imageKey = await imageClient.uploadImage({
+      imagePath: input.localPath,
+    });
+
+    if (input.anchorMessageId) {
+      await imageClient.replyImageMessage(input.anchorMessageId, imageKey);
+      return;
+    }
+
+    await imageClient.sendImageMessage(input.peerId, imageKey);
+  }
+
   private launchInteractiveRun(input: {
     peerId: string;
     existingMessageId?: string;
@@ -374,6 +443,26 @@ export class FeishuCardActionService {
     }).catch(async error => {
       await controller?.finalizeError(normalizeActionError(error));
     });
+  }
+
+  private requireImageClient(): Required<Pick<
+    FeishuApiClientLike,
+    "uploadImage" | "sendImageMessage" | "replyImageMessage"
+  >> {
+    if (
+      !this.dependencies.apiClient ||
+      !this.dependencies.apiClient.uploadImage ||
+      !this.dependencies.apiClient.sendImageMessage ||
+      !this.dependencies.apiClient.replyImageMessage
+    ) {
+      throw new Error("FEISHU_IMAGE_REPLY_UNAVAILABLE");
+    }
+
+    return {
+      uploadImage: this.dependencies.apiClient.uploadImage,
+      sendImageMessage: this.dependencies.apiClient.sendImageMessage,
+      replyImageMessage: this.dependencies.apiClient.replyImageMessage,
+    };
   }
 
   private createStreamingCardController(input: {

@@ -1,6 +1,6 @@
-import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { DEFAULT_BRIDGE_ASSET_ROOT_DIR } from "./bridge-image-directive.js";
 import { StreamingCardController } from "./feishu-card/streaming-card-controller.js";
 import { isBridgeCommandMessage } from "./command-router.js";
 import { buildFeishuInboundLog } from "./feishu-message-log.js";
@@ -268,6 +268,15 @@ export class FeishuAdapter {
         continue;
       }
 
+      if (reply.kind === "image") {
+        await this.replyImage({
+          peerId,
+          anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
+          localPath: reply.localPath,
+        });
+        continue;
+      }
+
       await this.replyText({
         peerId,
         anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
@@ -383,6 +392,24 @@ export class FeishuAdapter {
     await this.dependencies.apiClient.sendInteractiveCard(input.peerId, input.card);
   }
 
+  private async replyImage(input: {
+    peerId: string;
+    anchorMessageId?: string;
+    localPath: string;
+  }): Promise<void> {
+    const imageClient = this.requireImageClient();
+    const imageKey = await imageClient.uploadImage({
+      imagePath: input.localPath,
+    });
+
+    if (input.anchorMessageId) {
+      await imageClient.replyImageMessage(input.anchorMessageId, imageKey);
+      return;
+    }
+
+    await imageClient.sendImageMessage(input.peerId, imageKey);
+  }
+
   private requirePendingAssetStore(): PendingBridgeAssetStoreLike {
     if (!this.dependencies.pendingAssetStore) {
       throw new Error("PENDING_BRIDGE_ASSET_STORE_UNAVAILABLE");
@@ -398,6 +425,25 @@ export class FeishuAdapter {
 
     return {
       downloadMessageResource: this.dependencies.apiClient.downloadMessageResource,
+    };
+  }
+
+  private requireImageClient(): Required<Pick<
+    FeishuApiClientLike,
+    "uploadImage" | "sendImageMessage" | "replyImageMessage"
+  >> {
+    if (
+      !this.dependencies.apiClient.uploadImage ||
+      !this.dependencies.apiClient.sendImageMessage ||
+      !this.dependencies.apiClient.replyImageMessage
+    ) {
+      throw new Error("FEISHU_IMAGE_REPLY_UNAVAILABLE");
+    }
+
+    return {
+      uploadImage: this.dependencies.apiClient.uploadImage,
+      sendImageMessage: this.dependencies.apiClient.sendImageMessage,
+      replyImageMessage: this.dependencies.apiClient.replyImageMessage,
     };
   }
 }
@@ -485,4 +531,4 @@ function sanitizePathSegment(value: string): string {
 }
 
 const INBOUND_IMAGE_ACK_TEXT = "[ca] 已收到图片，请继续发送文字说明。";
-const DEFAULT_INBOUND_ASSET_ROOT_DIR = path.join(tmpdir(), "coding-anywhere");
+const DEFAULT_INBOUND_ASSET_ROOT_DIR = DEFAULT_BRIDGE_ASSET_ROOT_DIR;

@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { FeishuCardActionService } from "../src/feishu-card-action-service.js";
 import { FeishuAdapter } from "../src/feishu-adapter.js";
 import type { BridgeAssetRecord, BridgeReply, ProgressCardState } from "../src/types.js";
 
@@ -295,6 +296,47 @@ describe("FeishuAdapter", () => {
     );
   });
 
+  it("uploads outbound image replies for DM messages", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [
+        { kind: "assistant", text: "结果如下" } satisfies BridgeReply,
+        { kind: "image", localPath: "D:/tmp/result.png" } satisfies BridgeReply,
+      ]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-image-reply-dm-1",
+      },
+      event: {
+        message: {
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "请返回结果图" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", "结果如下");
+    expect(apiClient.uploadImage).toHaveBeenCalledWith({
+      imagePath: "D:/tmp/result.png",
+    });
+    expect(apiClient.sendImageMessage).toHaveBeenCalledWith("ou_demo", "img-uploaded-1");
+    expect(apiClient.replyImageMessage).not.toHaveBeenCalled();
+  });
+
   it("sends action cards as standard interactive messages", async () => {
     const hubCard = {
       schema: "2.0",
@@ -423,6 +465,42 @@ describe("FeishuAdapter", () => {
 
     expect(controller.finalizeError).toHaveBeenCalledWith("[ca] error: RUN_STREAM_FAILED");
     expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", "[ca] error: RUN_STREAM_FAILED");
+  });
+
+  it("delivers image replies from card actions as native image messages when possible", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [
+        { kind: "image", localPath: "D:/tmp/result.png", caption: "结果图" } satisfies BridgeReply,
+      ]),
+    };
+    const apiClient = createApiClientDouble({
+      uploadImage: vi.fn(async () => "img-uploaded-1"),
+      replyImageMessage: vi.fn(async () => "msg-reply-image-1"),
+      updateInteractiveCard: vi.fn(async () => undefined),
+    });
+    const service = new FeishuCardActionService({
+      bridgeService,
+      apiClient,
+    });
+
+    await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_anchor_1",
+      action: {
+        value: {
+          command: "/ca render",
+        },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(apiClient.uploadImage).toHaveBeenCalledWith({
+        imagePath: "D:/tmp/result.png",
+      });
+      expect(apiClient.replyImageMessage).toHaveBeenCalledWith("om_anchor_1", "img-uploaded-1");
+    });
+    expect(apiClient.sendImageMessage).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).toHaveBeenCalled();
   });
 });
 
