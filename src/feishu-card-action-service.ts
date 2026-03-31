@@ -3,7 +3,7 @@ import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import { buildPlanModeFormCard } from "./feishu-card/card-builder.js";
 import { StreamingCardController } from "./feishu-card/streaming-card-controller.js";
 import type { FeishuApiClientLike, StreamingCardControllerLike } from "./feishu-adapter.js";
-import type { BridgeCommand, BridgeReply } from "./types.js";
+import type { BridgeReply } from "./types.js";
 
 interface CardActionValue {
   cardId?: string;
@@ -170,66 +170,36 @@ export class FeishuCardActionService {
       return this.buildRawCardResponse(invalidCard);
     }
 
-    if (this.shouldHandleCommandAsynchronously(routedCommand.command)) {
-      this.dependencies.logger?.info?.(
-        {
-          openId: event.open_id,
-          openMessageId: event.open_message_id,
-          command,
-          patchTargetCardId,
-          patchTargetMessageId,
-        },
-        "feishu card action queued async command",
-      );
-
-      this.launchCommandAction({
-        peerId: event.open_id,
-        command,
-        actionValue,
-        existingMessageId: patchTargetMessageId,
-        execute: () => this.dependencies.bridgeService.handleMessage({
-          channel: "feishu",
-          peerId: event.open_id,
-          chatId: actionValue?.chatId,
-          surfaceType: actionValue?.surfaceType,
-          surfaceRef: actionValue?.surfaceRef,
-          text: command,
-        }),
-      });
-
-      return this.buildRawCardResponse(this.buildInfoCard("命令已提交", [
-        `已提交：${command}`,
-        "正在后台执行，请稍候。",
-      ], actionValue));
-    }
-
-    const replies = await this.dependencies.bridgeService.handleMessage({
-      channel: "feishu",
-      peerId: event.open_id,
-      chatId: actionValue?.chatId,
-      surfaceType: actionValue?.surfaceType,
-      surfaceRef: actionValue?.surfaceRef,
-      text: command,
-    });
     this.dependencies.logger?.info?.(
       {
         openId: event.open_id,
         openMessageId: event.open_message_id,
         command,
-        replyKinds: replies.map(item => item.kind),
+        patchTargetCardId,
+        patchTargetMessageId,
       },
-      "feishu card action bridge replies",
+      "feishu card action queued async command",
     );
-    const card = this.buildCommandResultCard({
-      replies,
+
+    this.launchCommandAction({
+      peerId: event.open_id,
       command,
       actionValue,
-      openId: event.open_id,
-      openMessageId: event.open_message_id,
-      patchTargetCardId,
-      patchTargetMessageId,
+      existingMessageId: patchTargetMessageId,
+      execute: () => this.dependencies.bridgeService.handleMessage({
+        channel: "feishu",
+        peerId: event.open_id,
+        chatId: actionValue?.chatId,
+        surfaceType: actionValue?.surfaceType,
+        surfaceRef: actionValue?.surfaceRef,
+        text: command,
+      }),
     });
-    return this.buildRawCardResponse(card);
+
+    return this.buildRawCardResponse(this.buildInfoCard("命令已提交", [
+      `已提交：${command}`,
+      "正在后台执行，请稍候。",
+    ], actionValue));
   }
 
   private buildInfoCard(
@@ -271,24 +241,6 @@ export class FeishuCardActionService {
         data: card,
       },
     };
-  }
-
-  private shouldHandleCommandAsynchronously(command: BridgeCommand): boolean {
-    if (command.name === "new") {
-      return true;
-    }
-
-    if (command.name === "thread") {
-      const [action = "help"] = command.args;
-      return action === "switch" || action === "create" || action === "create-current";
-    }
-
-    if (command.name === "project") {
-      const [action = "help"] = command.args;
-      return action === "bind" || action === "bind-current";
-    }
-
-    return false;
   }
 
   private buildCommandResultCard(input: {

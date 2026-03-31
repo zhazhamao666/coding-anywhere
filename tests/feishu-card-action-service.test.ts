@@ -4,7 +4,8 @@ import { FeishuCardActionService } from "../src/feishu-card-action-service.js";
 import type { BridgeReply } from "../src/types.js";
 
 describe("FeishuCardActionService", () => {
-  it("routes button callback commands through bridge service and returns the official raw-card callback payload", async () => {
+  it("acks command button callbacks immediately and patches the final card reply asynchronously", async () => {
+    const deferred = createDeferred<BridgeReply[]>();
     const replyCard = {
       schema: "2.0",
       header: {
@@ -39,17 +40,13 @@ describe("FeishuCardActionService", () => {
       },
     };
     const bridgeService = {
-      handleMessage: vi.fn(async () => [
-        { kind: "card", card: replyCard } as unknown as BridgeReply,
-      ]),
+      handleMessage: vi.fn(() => deferred.promise),
     };
-    const apiClient = {
-      updateInteractiveCard: vi.fn(async () => undefined),
-      updateCardKitCard: vi.fn(async () => undefined),
-    };
+    const apiClient = createApiClientDouble();
 
     const service = new FeishuCardActionService({
       bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
     });
 
     const card = await service.handleAction({
@@ -74,24 +71,30 @@ describe("FeishuCardActionService", () => {
       text: "/ca project current",
     });
     expect(apiClient.updateCardKitCard).not.toHaveBeenCalled();
-    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
-    expect(card).toEqual(
-      expect.objectContaining({
-        card: {
-          type: "raw",
-          data: expect.objectContaining({
-            header: expect.objectContaining({
-              title: expect.objectContaining({
-                content: "Current Project",
-              }),
-            }),
-          }),
+    expect(card).toMatchObject({
+      card: {
+        type: "raw",
+        data: {
+          header: {
+            title: {
+              content: "命令已提交",
+            },
+          },
         },
-      }),
-    );
+      },
+    });
+
+    deferred.resolve([
+      { kind: "card", card: replyCard } as unknown as BridgeReply,
+    ]);
+
+    await vi.waitFor(() => {
+      expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith("om_card_1", replyCard);
+    });
   });
 
-  it("falls back to callback open_message_id when action.value.messageId is missing", async () => {
+  it("falls back to callback open_message_id when patching an async command result", async () => {
+    const deferred = createDeferred<BridgeReply[]>();
     const replyCard = {
       config: {
         update_multi: true,
@@ -105,20 +108,16 @@ describe("FeishuCardActionService", () => {
       elements: [],
     };
     const bridgeService = {
-      handleMessage: vi.fn(async () => [
-        { kind: "card", card: replyCard } as unknown as BridgeReply,
-      ]),
+      handleMessage: vi.fn(() => deferred.promise),
     };
-    const apiClient = {
-      updateInteractiveCard: vi.fn(async () => undefined),
-      updateCardKitCard: vi.fn(async () => undefined),
-    };
+    const apiClient = createApiClientDouble();
 
     const service = new FeishuCardActionService({
       bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
     });
 
-    await service.handleAction({
+    const card = await service.handleAction({
       open_id: "ou_demo",
       open_message_id: "om_callback_1",
       action: {
@@ -130,20 +129,41 @@ describe("FeishuCardActionService", () => {
       },
     });
 
-    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
+    expect(card).toMatchObject({
+      card: {
+        type: "raw",
+        data: {
+          header: {
+            title: {
+              content: "命令已提交",
+            },
+          },
+        },
+      },
+    });
+
+    deferred.resolve([
+      { kind: "card", card: replyCard } as unknown as BridgeReply,
+    ]);
+
+    await vi.waitFor(() => {
+      expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith("om_callback_1", replyCard);
+    });
   });
 
-  it("wraps system replies in an info card with a specific title", async () => {
+  it("wraps system replies in an async result card with a specific title", async () => {
+    const deferred = createDeferred<BridgeReply[]>();
     const bridgeService = {
-      handleMessage: vi.fn(async () => [
-        { kind: "system", text: "[ca] current project: none" } as BridgeReply,
-      ]),
+      handleMessage: vi.fn(() => deferred.promise),
     };
+    const apiClient = createApiClientDouble();
     const service = new FeishuCardActionService({
       bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
     });
 
     const card = await service.handleAction({
+      open_message_id: "om_system_1",
       open_id: "ou_demo",
       action: {
         tag: "button",
@@ -159,14 +179,34 @@ describe("FeishuCardActionService", () => {
         data: {
           header: {
             title: {
-              content: "命令结果",
+              content: "命令已提交",
             },
           },
         },
       },
     });
-    expect(JSON.stringify(card)).toContain("[ca] current project: none");
-    expect(JSON.stringify(card)).toContain("\"command\":\"/ca\"");
+
+    deferred.resolve([
+      { kind: "system", text: "[ca] current project: none" } as BridgeReply,
+    ]);
+
+    await vi.waitFor(() => {
+      expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith(
+        "om_system_1",
+        expect.objectContaining({
+          header: expect.objectContaining({
+            title: expect.objectContaining({
+              content: "命令结果",
+            }),
+          }),
+        }),
+      );
+    });
+
+    const patchedCall = apiClient.updateInteractiveCard.mock.calls.at(-1) as [string, Record<string, unknown>] | undefined;
+    const patchedCard = patchedCall?.[1];
+    expect(JSON.stringify(patchedCard)).toContain("[ca] current project: none");
+    expect(JSON.stringify(patchedCard)).toContain("\"command\":\"/ca\"");
   });
 
   it("returns a raw JSON 2.0 plan form card when the plan-mode button is clicked", async () => {
