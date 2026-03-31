@@ -208,4 +208,91 @@ describe("SessionStore project thread persistence", () => {
       title: "new-surface",
     });
   });
+
+  it("keeps pending image assets scoped to the exact registered thread surface", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    const assetStore = store as any;
+    const threadAsset = assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_user",
+      chatId: "oc_chat_1",
+      surfaceType: "thread",
+      surfaceRef: "omt_1",
+      runId: null,
+      messageId: "om_thread_image_1",
+      resourceType: "image",
+      resourceKey: "img_thread_1",
+      localPath: path.join(rootDir, "assets", "thread-1.png"),
+      fileName: "thread-1.png",
+      mimeType: "image/png",
+      fileSize: 1280,
+      createdAt: "2026-03-28T00:00:00.000Z",
+    });
+
+    assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_user",
+      chatId: "oc_chat_1",
+      surfaceType: "thread",
+      surfaceRef: "omt_2",
+      runId: null,
+      messageId: "om_thread_image_2",
+      resourceType: "image",
+      resourceKey: "img_thread_2",
+      localPath: path.join(rootDir, "assets", "thread-2.png"),
+      fileName: "thread-2.png",
+      mimeType: "image/png",
+      fileSize: 1290,
+      createdAt: "2026-03-28T00:01:00.000Z",
+    });
+
+    assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_user",
+      chatId: null,
+      surfaceType: null,
+      surfaceRef: null,
+      runId: null,
+      messageId: "om_dm_image",
+      resourceType: "image",
+      resourceKey: "img_dm",
+      localPath: path.join(rootDir, "assets", "dm.png"),
+      fileName: "dm.png",
+      mimeType: "image/png",
+      fileSize: 1300,
+      createdAt: "2026-03-28T00:02:00.000Z",
+    });
+
+    expect(
+      assetStore.listPendingBridgeAssetsForSurface({
+        channel: "feishu",
+        peerId: "ou_user",
+        chatId: "oc_chat_1",
+        surfaceType: "thread",
+        surfaceRef: "omt_1",
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        assetId: threadAsset.assetId,
+        resourceKey: "img_thread_1",
+        status: "pending",
+      }),
+    ]);
+
+    expect(
+      assetStore.listPendingBridgeAssetsForSurface({
+        channel: "feishu",
+        peerId: "ou_user",
+        chatId: "oc_chat_1",
+        surfaceType: "thread",
+        surfaceRef: "omt_2",
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        resourceKey: "img_thread_2",
+        status: "pending",
+      }),
+    ]);
+  });
 });

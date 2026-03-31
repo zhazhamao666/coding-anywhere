@@ -5,6 +5,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 
 import type {
+  BridgeAssetRecord,
   CodexWindowBinding,
   CodexThreadRecord,
   ListRunsFilters,
@@ -1164,6 +1165,291 @@ export class SessionStore {
     });
   }
 
+  public savePendingBridgeAsset(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+    runId?: string | null;
+    messageId: string;
+    resourceType?: BridgeAssetRecord["resourceType"];
+    resourceKey: string;
+    localPath: string;
+    fileName: string;
+    mimeType?: string | null;
+    fileSize?: number | null;
+    createdAt?: string;
+  }): BridgeAssetRecord {
+    const assetId = `asset-${randomUUID()}`;
+    const createdAt = input.createdAt ?? new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO pending_bridge_assets (
+        asset_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        message_id,
+        resource_type,
+        resource_key,
+        local_path,
+        file_name,
+        mime_type,
+        file_size,
+        status,
+        error_text,
+        created_at,
+        updated_at,
+        consumed_at,
+        failed_at,
+        expired_at
+      ) VALUES (
+        @assetId,
+        @runId,
+        @channel,
+        @peerId,
+        @chatId,
+        @surfaceType,
+        @surfaceRef,
+        @messageId,
+        @resourceType,
+        @resourceKey,
+        @localPath,
+        @fileName,
+        @mimeType,
+        @fileSize,
+        'pending',
+        NULL,
+        @createdAt,
+        @createdAt,
+        NULL,
+        NULL,
+        NULL
+      )
+    `).run({
+      assetId,
+      runId: input.runId ?? null,
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+      messageId: input.messageId,
+      resourceType: input.resourceType ?? "image",
+      resourceKey: input.resourceKey,
+      localPath: input.localPath,
+      fileName: input.fileName,
+      mimeType: input.mimeType ?? null,
+      fileSize: input.fileSize ?? null,
+      createdAt,
+    });
+
+    const created = this.getBridgeAsset(assetId);
+    if (!created) {
+      throw new Error("PENDING_BRIDGE_ASSET_SAVE_FAILED");
+    }
+
+    return created;
+  }
+
+  public getBridgeAsset(assetId: string): BridgeAssetRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT
+        asset_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        message_id,
+        resource_type,
+        resource_key,
+        local_path,
+        file_name,
+        mime_type,
+        file_size,
+        status,
+        error_text,
+        created_at,
+        updated_at,
+        consumed_at,
+        failed_at,
+        expired_at
+      FROM pending_bridge_assets
+      WHERE asset_id = ?
+    `).get(assetId) as BridgeAssetRow | undefined;
+
+    return row ? rowToBridgeAsset(row) : undefined;
+  }
+
+  public listPendingBridgeAssetsForSurface(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+  }): BridgeAssetRecord[] {
+    const rows = this.db.prepare(`
+      SELECT
+        asset_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        message_id,
+        resource_type,
+        resource_key,
+        local_path,
+        file_name,
+        mime_type,
+        file_size,
+        status,
+        error_text,
+        created_at,
+        updated_at,
+        consumed_at,
+        failed_at,
+        expired_at
+      FROM pending_bridge_assets
+      WHERE
+        status = 'pending'
+        AND channel = @channel
+        AND peer_id = @peerId
+        AND COALESCE(chat_id, '') = COALESCE(@chatId, '')
+        AND COALESCE(surface_type, '') = COALESCE(@surfaceType, '')
+        AND COALESCE(surface_ref, '') = COALESCE(@surfaceRef, '')
+      ORDER BY created_at ASC, asset_id ASC
+    `).all({
+      ...input,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+    }) as BridgeAssetRow[];
+
+    return rows.map(rowToBridgeAsset);
+  }
+
+  public consumePendingBridgeAssetsForSurface(input: {
+    runId: string;
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+  }): BridgeAssetRecord[] {
+    const consumedAt = new Date().toISOString();
+    const rows = this.db.prepare(`
+      SELECT
+        asset_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        message_id,
+        resource_type,
+        resource_key,
+        local_path,
+        file_name,
+        mime_type,
+        file_size,
+        status,
+        error_text,
+        created_at,
+        updated_at,
+        consumed_at,
+        failed_at,
+        expired_at
+      FROM pending_bridge_assets
+      WHERE
+        status = 'pending'
+        AND channel = @channel
+        AND peer_id = @peerId
+        AND COALESCE(chat_id, '') = COALESCE(@chatId, '')
+        AND COALESCE(surface_type, '') = COALESCE(@surfaceType, '')
+        AND COALESCE(surface_ref, '') = COALESCE(@surfaceRef, '')
+      ORDER BY created_at ASC, asset_id ASC
+    `).all({
+      ...input,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+    }) as BridgeAssetRow[];
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    const assetIds = rows.map(row => row.asset_id);
+    const placeholders = assetIds.map(() => "?").join(", ");
+
+    this.db.prepare(`
+      UPDATE pending_bridge_assets
+      SET
+        run_id = ?,
+        status = 'consumed',
+        updated_at = ?,
+        consumed_at = ?
+      WHERE asset_id IN (${placeholders})
+    `).run(input.runId, consumedAt, consumedAt, ...assetIds);
+
+    return rows.map(row => rowToBridgeAsset({
+      ...row,
+      run_id: input.runId,
+      status: "consumed",
+      updated_at: consumedAt,
+      consumed_at: consumedAt,
+    }));
+  }
+
+  public failPendingBridgeAsset(input: {
+    assetId: string;
+    errorText?: string | null;
+  }): BridgeAssetRecord | undefined {
+    const failedAt = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE pending_bridge_assets
+      SET
+        status = 'failed',
+        error_text = @errorText,
+        updated_at = @failedAt,
+        failed_at = @failedAt
+      WHERE asset_id = @assetId
+        AND status = 'pending'
+    `).run({
+      assetId: input.assetId,
+      errorText: input.errorText ?? null,
+      failedAt,
+    });
+
+    return this.getBridgeAsset(input.assetId);
+  }
+
+  public expirePendingBridgeAssets(cutoff: string): number {
+    const expiredAt = new Date().toISOString();
+    const result = this.db.prepare(`
+      UPDATE pending_bridge_assets
+      SET
+        status = 'expired',
+        updated_at = @expiredAt,
+        expired_at = @expiredAt
+      WHERE status = 'pending'
+        AND created_at < @cutoff
+    `).run({
+      cutoff,
+      expiredAt,
+    });
+
+    return result.changes;
+  }
+
   public purgeOldObservabilityEvents(maxAgeDays = 7): void {
     const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
 
@@ -1285,6 +1571,30 @@ export class SessionStore {
         resolved_at TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS pending_bridge_assets (
+        asset_id TEXT PRIMARY KEY,
+        run_id TEXT,
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        chat_id TEXT,
+        surface_type TEXT,
+        surface_ref TEXT,
+        message_id TEXT NOT NULL,
+        resource_type TEXT NOT NULL,
+        resource_key TEXT NOT NULL,
+        local_path TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        mime_type TEXT,
+        file_size INTEGER,
+        status TEXT NOT NULL,
+        error_text TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        consumed_at TEXT,
+        failed_at TEXT,
+        expired_at TEXT
+      );
+
       CREATE INDEX IF NOT EXISTS idx_observability_runs_updated_at
       ON observability_runs(updated_at DESC);
 
@@ -1302,6 +1612,12 @@ export class SessionStore {
 
       CREATE INDEX IF NOT EXISTS idx_pending_plan_interactions_status
       ON pending_plan_interactions(status, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_pending_bridge_assets_surface
+      ON pending_bridge_assets(channel, peer_id, chat_id, surface_type, surface_ref, status, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_pending_bridge_assets_status_created_at
+      ON pending_bridge_assets(status, created_at DESC);
 
     `);
 
@@ -1643,6 +1959,30 @@ interface PendingPlanInteractionRow {
   resolved_at: string | null;
 }
 
+interface BridgeAssetRow {
+  asset_id: string;
+  run_id: string | null;
+  channel: string;
+  peer_id: string;
+  chat_id: string | null;
+  surface_type: "thread" | null;
+  surface_ref: string | null;
+  message_id: string;
+  resource_type: BridgeAssetRecord["resourceType"];
+  resource_key: string;
+  local_path: string;
+  file_name: string;
+  mime_type: string | null;
+  file_size: number | null;
+  status: BridgeAssetRecord["status"];
+  error_text: string | null;
+  created_at: string;
+  updated_at: string;
+  consumed_at: string | null;
+  failed_at: string | null;
+  expired_at: string | null;
+}
+
 interface CodexThreadRow {
   thread_id: string;
   project_id: string;
@@ -1804,6 +2144,32 @@ function rowToPendingPlanInteraction(row: PendingPlanInteractionRow): PendingPla
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     resolvedAt: row.resolved_at,
+  };
+}
+
+function rowToBridgeAsset(row: BridgeAssetRow): BridgeAssetRecord {
+  return {
+    assetId: row.asset_id,
+    runId: row.run_id,
+    channel: row.channel,
+    peerId: row.peer_id,
+    chatId: row.chat_id,
+    surfaceType: row.surface_type,
+    surfaceRef: row.surface_ref,
+    messageId: row.message_id,
+    resourceType: row.resource_type,
+    resourceKey: row.resource_key,
+    localPath: row.local_path,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    fileSize: row.file_size,
+    status: row.status,
+    errorText: row.error_text,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    consumedAt: row.consumed_at,
+    failedAt: row.failed_at,
+    expiredAt: row.expired_at,
   };
 }
 
