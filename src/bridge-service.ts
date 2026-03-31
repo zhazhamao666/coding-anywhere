@@ -738,7 +738,7 @@ export class BridgeService {
   ): Promise<BridgeReply[]> {
     const [action = "help", rawProjectId, rawChatIdOrCwd, rawCwdOrName, ...rest] = args;
     const projectCommandHelp =
-      `[ca] project commands: ${BRIDGE_COMMAND_PREFIX} project bind <projectId> <chatId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project bind-current <projectId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project current, ${BRIDGE_COMMAND_PREFIX} project list`;
+      `[ca] project commands: ${BRIDGE_COMMAND_PREFIX} project bind <projectId> <chatId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project bind-current <projectId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project current, ${BRIDGE_COMMAND_PREFIX} project list, ${BRIDGE_COMMAND_PREFIX} project switch <projectKey>`;
 
     if (action === "list") {
       if (this.isDmContext(input) && this.dependencies.codexCatalog) {
@@ -763,14 +763,40 @@ export class BridgeService {
       return [this.buildCodexThreadListCardReply(input, project, threads)];
     }
 
+    if (action === "switch" && this.isDmContext(input) && this.dependencies.codexCatalog) {
+      if (!rawProjectId) {
+        return [{ kind: "system", text: projectCommandHelp }];
+      }
+
+      const project = this.dependencies.codexCatalog.getProject(rawProjectId, {
+        includeArchived: true,
+      });
+      if (!project) {
+        return [this.buildCodexProjectUnavailableCardReply(input)];
+      }
+
+      this.dependencies.store.setCodexProjectSelection({
+        channel: input.channel,
+        peerId: input.peerId,
+        projectKey: project.projectKey,
+      });
+
+      return [this.buildCodexProjectSwitchedCardReply(input, project, this.lookupDmCodexSelection(input)?.thread)];
+    }
+
     if (action === "current") {
       if (this.isDmContext(input) && this.dependencies.codexCatalog) {
         const codexSelection = this.lookupDmCodexSelection(input);
-        if (!codexSelection) {
+        if (codexSelection) {
+          return [this.buildCurrentCodexProjectCardReply(input, codexSelection.project, codexSelection.thread)];
+        }
+
+        const selectedProject = this.lookupDmSelectedProject(input);
+        if (!selectedProject) {
           return [{ kind: "system", text: "[ca] current project: none" }];
         }
 
-        return [this.buildCurrentCodexProjectCardReply(input, codexSelection.project, codexSelection.thread)];
+        return [this.buildSelectedCodexProjectCardReply(input, selectedProject)];
       }
 
       if (!input.chatId) {
@@ -921,12 +947,18 @@ export class BridgeService {
       if (action === "list-current" && this.dependencies.codexCatalog) {
         if (this.isDmContext(input)) {
           const codexSelection = this.lookupDmCodexSelection(input);
-          if (!codexSelection) {
+          if (codexSelection) {
+            const threads = this.dependencies.codexCatalog.listThreads(codexSelection.project.projectKey);
+            return [this.buildCodexThreadListCardReply(input, codexSelection.project, threads)];
+          }
+
+          const selectedProject = this.lookupDmSelectedProject(input);
+          if (!selectedProject) {
             return [{ kind: "system", text: threadCommandHelp }];
           }
 
-          const threads = this.dependencies.codexCatalog.listThreads(codexSelection.project.projectKey);
-          return [this.buildCodexThreadListCardReply(input, codexSelection.project, threads)];
+          const threads = this.dependencies.codexCatalog.listThreads(selectedProject.projectKey);
+          return [this.buildCodexThreadListCardReply(input, selectedProject, threads)];
         }
 
         const project = this.lookupCatalogProjectForSurface(input);
@@ -1062,6 +1094,26 @@ export class BridgeService {
           threadId: codexSelection.thread.threadId,
           sessionName: codexSelection.thread.threadId,
           cwd: codexSelection.thread.cwd,
+        },
+      };
+    }
+
+    const selectedProject = this.lookupDmSelectedProject(input);
+    if (selectedProject) {
+      return {
+        root,
+        wrapPrompt: true,
+        sessionName: buildSessionName(root.id),
+        projectId: selectedProject.projectKey,
+        threadId: null,
+        deliveryChatId: null,
+        deliverySurfaceType: null,
+        deliverySurfaceRef: null,
+        concurrencyKey: `pending-codex-thread:${input.channel}:${input.peerId}`,
+        context: {
+          targetKind: "new_codex_thread",
+          sessionName: buildSessionName(root.id),
+          cwd: selectedProject.cwd,
         },
       };
     }
@@ -1309,11 +1361,23 @@ export class BridgeService {
             `线程：${project.activeThreadCount}/${project.threadCount}`,
             `最近更新：${project.lastUpdatedAt}`,
           ],
-          buttonLabel: "查看线程",
-          value: this.buildCardActionValue(
-            this.buildCardActionContext(input),
-            `${BRIDGE_COMMAND_PREFIX} project threads ${project.projectKey}`,
-          ),
+          buttons: [
+            {
+              label: "查看线程",
+              value: this.buildCardActionValue(
+                this.buildCardActionContext(input),
+                `${BRIDGE_COMMAND_PREFIX} project threads ${project.projectKey}`,
+              ),
+            },
+            {
+              label: "切换项目",
+              type: "primary",
+              value: this.buildCardActionValue(
+                this.buildCardActionContext(input),
+                `${BRIDGE_COMMAND_PREFIX} project switch ${project.projectKey}`,
+              ),
+            },
+          ],
         })),
         actions: [
           {
@@ -1410,6 +1474,102 @@ export class BridgeService {
           {
             label: "线程列表",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+        ],
+      }),
+    };
+  }
+
+  private buildSelectedCodexProjectCardReply(
+    input: BridgeMessageInput,
+    project: CodexCatalogProject,
+  ): BridgeReply {
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: "当前项目",
+        summaryLines: [
+          "**视图**：当前项目",
+          `**项目**：${project.displayName}`,
+          `**路径**：${project.cwd}`,
+          "**当前线程**：未选择",
+        ],
+        sections: [
+          {
+            title: "下一步",
+            items: [
+              "可以先查看这个项目的线程列表。",
+              "也可以直接发送普通消息，在该项目下创建新的 native Codex thread。",
+            ],
+          },
+        ],
+        actions: [
+          {
+            label: "导航",
+            type: "primary",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
+          },
+          {
+            label: "项目列表",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project list`),
+          },
+          {
+            label: "线程列表",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+          {
+            label: "新会话",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
+          },
+        ],
+      }),
+    };
+  }
+
+  private buildCodexProjectSwitchedCardReply(
+    input: BridgeMessageInput,
+    project: CodexCatalogProject,
+    currentThread?: CodexCatalogThread,
+  ): BridgeReply {
+    const nextStepItems = currentThread
+      ? [
+          `已记录项目切换：${project.displayName}`,
+          `当前仍绑定线程：${formatCurrentThreadLabel(currentThread.title, currentThread.threadId)}`,
+          "下一条普通消息仍会进入当前线程；如需在新项目下开始，请点击“新会话”或先切换线程。",
+        ]
+      : [
+          `已记录项目切换：${project.displayName}`,
+          "下一条普通消息会在该项目下创建新会话。",
+        ];
+
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: "当前项目已切换",
+        summaryLines: [
+          "**视图**：当前项目已切换",
+          `**项目**：${project.displayName}`,
+          `**路径**：${project.cwd}`,
+        ],
+        sections: [
+          {
+            title: "下一步",
+            items: nextStepItems,
+          },
+        ],
+        actions: [
+          {
+            label: "当前项目",
+            type: "primary",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
+          },
+          {
+            label: "线程列表",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+          {
+            label: "新会话",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
           },
         ],
       }),
@@ -1611,6 +1771,27 @@ export class BridgeService {
       project,
       thread,
     };
+  }
+
+  private lookupDmSelectedProject(input: BridgeMessageInput): CodexCatalogProject | undefined {
+    if (!this.isDmContext(input) || !this.dependencies.codexCatalog) {
+      return undefined;
+    }
+
+    const selection = this.dependencies.store.getCodexProjectSelection(input.channel, input.peerId);
+    if (!selection) {
+      return undefined;
+    }
+
+    const project = this.dependencies.codexCatalog.getProject(selection.projectKey, {
+      includeArchived: true,
+    });
+    if (!project) {
+      this.dependencies.store.clearCodexProjectSelection(input.channel, input.peerId);
+      return undefined;
+    }
+
+    return project;
   }
 
   private isNativeCatalogThread(threadId: string): boolean {

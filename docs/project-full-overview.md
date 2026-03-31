@@ -46,39 +46,40 @@
 17. 在群主时间线通过 `/ca project current` 查询当前群绑定到哪个项目
 18. 通过 `/ca` 返回导航卡，集中展示当前上下文、项目概览、线程摘要和按钮化操作入口；`/ca hub` 继续兼容到同一张卡
 19. DM 中的 `project list` 现在会直接读取 Codex `state_*.sqlite`，返回 Codex 派生项目列表卡片，而不是依赖 CA 本地项目清单
-20. DM 中可以从 Codex 项目列表进入线程列表，再把“当前这个飞书聊天窗口”切换到某个 Codex 原生线程
-21. DM 中未绑定窗口首次收到普通 prompt 时，会先创建一个新的 native Codex thread，再把当前窗口绑定到该 `thread_id`
-22. 通过 `project current` 和线程创建成功回执返回结构化摘要卡片
-23. 通过 `/ca help` 和未知子命令回退到导航卡
-24. 通过飞书卡片按钮回调复用 `/ca` 导航命令，并原地刷新卡片
-25. DM 中带按钮的导航型卡片通过普通 `interactive` 消息发送，不再依赖 CardKit/cardId 回写
-26. 按钮点击后会在飞书长连接回调里直接返回新版 `card.action.trigger` 标准响应体，而不是同步调用消息 patch 或 CardKit 更新接口
-27. 结构化导航卡和列表卡会维持 JSON 2.0 结构，并通过官方 `raw card` 回调响应即时刷新
-28. `project list` 与 `thread list*` 在空结果时也会返回结构化卡片，而不是退回纯文本系统提示
-29. 导航卡、项目列表卡、线程列表卡、当前项目卡等会使用各自的卡片标题，不再统一显示为 `CA Hub`
-30. Windows CLI 入口会在启动时主动把控制台代码页切到 UTF-8，降低 PowerShell 中中文日志乱码的概率
-31. `npm run dev` 与 `npm run start` 会在 Windows 启动前主动清理当前项目残留的 `node`/`npm`/`cmd` 进程，以及配置端口上的旧监听，降低 `EADDRINUSE` 启动失败概率
-32. `npm run dev` 与 `npm run start` 维持前台子进程模型，并显式转发 `SIGINT` / `SIGTERM`，便于在当前终端 `Ctrl+C` 或关闭窗口时一起退出
-33. 飞书 SDK 传入的数组形态日志会先归一化成单条字符串，再交给项目日志器输出，减少控制台中出现 JSON 数组样式的日志
-34. 普通消息不再走 `acpx sessions ensure + prompt`；所有执行面统一改为 `codex exec --json` 创建线程或 `codex exec resume --json <thread_id>` 续跑线程
-35. DM 中切换到某个 Codex 原生线程后，切换成功卡片会附带“最后 1 条 user 消息 + 最后 4 条 assistant 消息”的原文预览，便于快速恢复上下文
-36. 长任务在飞书中的终态展示调整为“摘要卡 + 完整正文消息”：状态卡收口时只保留终态摘要与“查看下方消息”的提示，完整 assistant 正文仍单独作为普通消息 / 线程回复发送，避免同一份结果在卡片和消息中重复完整展示
-37. `/ca new` 不再重置 CA session，而是创建并切换到新的 native Codex thread
-38. `/ca stop` 对 native thread 明确返回不可用，而不是继续假装映射到 `acpx cancel`
-39. `thread list-current` 在已绑定项目群中会直接列出当前项目对应的 Codex native thread
-40. `/ca thread switch <threadId>` 现在不仅可用于 DM，也可用于已注册飞书线程重绑当前 surface，或在项目群中创建一个绑定到选中 native thread 的新飞书话题
-41. DM 与已注册飞书线程的导航卡现在提供一次性“计划模式”按钮，点击后会打开 JSON 2.0 表单卡，并把输入包装成 `/plan ...` 送入当前 native Codex thread
-42. 计划中的 `todo_list` 会被结构化渲染到飞书状态卡，而不再只作为一段 waiting 文本掠过
-43. bridge 现在会把计划中的单选问题持久化为待回答交互，并在飞书卡片上渲染可点击选项；用户点选后会继续续跑同一个 native Codex thread
-44. 飞书卡片中的所有 `/ca` 命令按钮现在都会先在 `card.action.trigger` 中即时返回确认卡，再在后台完成实际操作并通过 `updateInteractiveCard` 回填最终结果；只有纯表单切换类动作仍保留即时返回目标卡片的模型
-45. runtime 输出到控制台的日志现在会统一在每一行开头追加本地时间戳，格式精确到毫秒，便于直接比对消息和回调时序
-46. 真正进入 bridge 处理链路的飞书入站消息，以及发往飞书的出站消息，现在都会打印一条简略日志；同一条消息或卡片的连续推送更新会做去重收敛，避免控制台刷屏
-47. 飞书 DM 和已注册群线程现在都可以先发送图片；bridge 会把图片下载为本地受管资产，并按当前飞书 surface 暂存，而不是立刻触发 Codex
-48. 同一个 DM / 线程 surface 上，下一条普通文本消息会自动消费这些待处理图片，并通过 `codex exec -i ...` 或 `codex exec resume -i ...` 一起送入 Codex
-49. bridge 现在会把图片附件清单包装进 prompt，明确告诉 Codex 当前带了几张图、文件名和来源消息 ID
-50. assistant 可以通过 `[bridge-image] ... [/bridge-image]` 私有指令声明本地图片路径；bridge 会校验路径后，把图片作为原生飞书图片消息回发
-51. 卡片按钮触发的异步 `/ca` 命令与计划模式链路也不会再静默吞掉图片结果；能发图时会真发图片，不能发图时会退回明确的文本卡说明
-52. runtime 维护任务除了线程空闲回收外，还会按 TTL 清理过期的待处理图片资产，避免 pending 图片长期滞留
+20. DM 中可以从 Codex 项目列表进入线程列表，也可以先把“当前这个飞书聊天窗口”切到某个 Codex 项目，再决定是否查看线程或创建新会话
+21. DM 中也可以把“当前这个飞书聊天窗口”切换到某个 Codex 原生线程
+22. DM 中未绑定窗口首次收到普通 prompt 时，会优先在当前所选项目路径下创建新的 native Codex thread；如果还没选项目，则回退到 root 路径，再把当前窗口绑定到该 `thread_id`
+23. 通过 `project current` 和线程创建成功回执返回结构化摘要卡片
+24. 通过 `/ca help` 和未知子命令回退到导航卡
+25. 通过飞书卡片按钮回调复用 `/ca` 导航命令，并原地刷新卡片
+26. DM 中带按钮的导航型卡片通过普通 `interactive` 消息发送，不再依赖 CardKit/cardId 回写
+27. 按钮点击后会在飞书长连接回调里直接返回新版 `card.action.trigger` 标准响应体，而不是同步调用消息 patch 或 CardKit 更新接口
+28. 结构化导航卡和列表卡会维持 JSON 2.0 结构，并通过官方 `raw card` 回调响应即时刷新
+29. `project list` 与 `thread list*` 在空结果时也会返回结构化卡片，而不是退回纯文本系统提示
+30. 导航卡、项目列表卡、线程列表卡、当前项目卡等会使用各自的卡片标题，不再统一显示为 `CA Hub`
+31. Windows CLI 入口会在启动时主动把控制台代码页切到 UTF-8，降低 PowerShell 中中文日志乱码的概率
+32. `npm run dev` 与 `npm run start` 会在 Windows 启动前主动清理当前项目残留的 `node`/`npm`/`cmd` 进程，以及配置端口上的旧监听，降低 `EADDRINUSE` 启动失败概率
+33. `npm run dev` 与 `npm run start` 维持前台子进程模型，并显式转发 `SIGINT` / `SIGTERM`，便于在当前终端 `Ctrl+C` 或关闭窗口时一起退出
+34. 飞书 SDK 传入的数组形态日志会先归一化成单条字符串，再交给项目日志器输出，减少控制台中出现 JSON 数组样式的日志
+35. 普通消息不再走 `acpx sessions ensure + prompt`；所有执行面统一改为 `codex exec --json` 创建线程或 `codex exec resume --json <thread_id>` 续跑线程
+36. DM 中切换到某个 Codex 原生线程后，切换成功卡片会附带“最后 1 条 user 消息 + 最后 4 条 assistant 消息”的原文预览，便于快速恢复上下文
+37. 长任务在飞书中的终态展示调整为“摘要卡 + 完整正文消息”：状态卡收口时只保留终态摘要与“查看下方消息”的提示，完整 assistant 正文仍单独作为普通消息 / 线程回复发送，避免同一份结果在卡片和消息中重复完整展示
+38. `/ca new` 不再重置 CA session，而是创建并切换到新的 native Codex thread
+39. `/ca stop` 对 native thread 明确返回不可用，而不是继续假装映射到 `acpx cancel`
+40. `thread list-current` 在已绑定项目群中会直接列出当前项目对应的 Codex native thread
+41. `/ca thread switch <threadId>` 现在不仅可用于 DM，也可用于已注册飞书线程重绑当前 surface，或在项目群中创建一个绑定到选中 native thread 的新飞书话题
+42. DM 与已注册飞书线程的导航卡现在提供一次性“计划模式”按钮，点击后会打开 JSON 2.0 表单卡，并把输入包装成 `/plan ...` 送入当前 native Codex thread
+43. 计划中的 `todo_list` 会被结构化渲染到飞书状态卡，而不再只作为一段 waiting 文本掠过
+44. bridge 现在会把计划中的单选问题持久化为待回答交互，并在飞书卡片上渲染可点击选项；用户点选后会继续续跑同一个 native Codex thread
+45. 飞书卡片中的所有 `/ca` 命令按钮现在都会先在 `card.action.trigger` 中即时返回确认卡，再在后台完成实际操作并通过 `updateInteractiveCard` 回填最终结果；只有纯表单切换类动作仍保留即时返回目标卡片的模型
+46. runtime 输出到控制台的日志现在会统一在每一行开头追加本地时间戳，格式精确到毫秒，便于直接比对消息和回调时序
+47. 真正进入 bridge 处理链路的飞书入站消息，以及发往飞书的出站消息，现在都会打印一条简略日志；同一条消息或卡片的连续推送更新会做去重收敛，避免控制台刷屏
+48. 飞书 DM 和已注册群线程现在都可以先发送图片；bridge 会把图片下载为本地受管资产，并按当前飞书 surface 暂存，而不是立刻触发 Codex
+49. 同一个 DM / 线程 surface 上，下一条普通文本消息会自动消费这些待处理图片，并通过 `codex exec -i ...` 或 `codex exec resume -i ...` 一起送入 Codex
+50. bridge 现在会把图片附件清单包装进 prompt，明确告诉 Codex 当前带了几张图、文件名和来源消息 ID
+51. assistant 可以通过 `[bridge-image] ... [/bridge-image]` 私有指令声明本地图片路径；bridge 会校验路径后，把图片作为原生飞书图片消息回发
+52. 卡片按钮触发的异步 `/ca` 命令与计划模式链路也不会再静默吞掉图片结果；能发图时会真发图片，不能发图时会退回明确的文本卡说明
+53. runtime 维护任务除了线程空闲回收外，还会按 TTL 清理过期的待处理图片资产，避免 pending 图片长期滞留
 
 ### 2.3 当前仍未打通的部分
 
@@ -453,6 +454,7 @@ Feishu DM / Group Thread image
 - `/ca project bind-current <projectId> <cwd> [name]`
 - `/ca project current`
 - `/ca project list`
+- `/ca project switch <projectKey>`
 - `/ca thread create <projectId> <title...>`
 - `/ca thread create-current <title...>`
 - `/ca thread list <projectId>`
@@ -464,6 +466,7 @@ Feishu DM / Group Thread image
 - DM 中 `/ca project list`
   - 读取 Codex `state_*.sqlite`
   - 展示 Codex 派生项目列表
+  - 每个项目行都可直接“查看线程”或“切换项目”
 - 群聊 / 已注册线程中的 `/ca project list`
 - 仍然展示 CA 本地注册的项目列表
 - 已绑定项目群 / 已注册线程中的 `/ca thread list-current`
@@ -475,6 +478,7 @@ Feishu DM / Group Thread image
 其中：
 
 - DM 中 `/ca new` 会创建新的 native thread 并切换当前窗口
+- 如果 DM 当前没有 native thread 绑定但已经选中了项目，`/ca new` 与下一条普通 prompt 都会优先使用该项目的 `cwd`
 - 已注册线程中的 `/ca new` 会创建新的 native thread 并重绑当前 Feishu thread surface
 - `/ca stop` 对 native thread 统一返回不可用
 - `/ca` 会按上下文返回不同内容，`/ca hub` 复用同一条路径：
@@ -489,12 +493,12 @@ Feishu DM / Group Thread image
   - 已注册线程：`导航`、`当前项目`、`线程列表`、`当前会话`、`新会话`、`停止`
 - `/ca help` 与未知 `/ca` 子命令会复用同一张导航卡
 - `/ca project list` 会返回项目列表卡片
-- `/ca project current` 会返回当前项目摘要卡片
-- `/ca thread list <projectId>` 与 `/ca thread list-current` 会返回线程列表卡片
+- `/ca project current` 会返回当前项目摘要卡片；在 DM 中若当前没有 native thread 绑定，则会回退到当前所选项目
+- `/ca thread list <projectId>` 与 `/ca thread list-current` 会返回线程列表卡片；在 DM 中若当前没有 native thread 绑定，则 `thread list-current` 会回退到当前所选项目
 - DM 中 `/ca thread switch <threadId>` 成功后会返回线程切换确认卡，并附带“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
 - DM 中已切到 Codex 原生线程后，`/ca session` 会返回当前会话卡片，并附带同一套“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
 - `/ca thread create*` 成功后会返回线程摘要卡片
-- DM 中的项目列表卡和线程列表卡现在带“查看线程”“切换到此线程”行级按钮
+- DM 中的项目列表卡和线程列表卡现在带行级按钮：项目列表可“查看线程”“切换项目”，线程列表可“切换到此线程”
 - DM 中点选线程后，CA 只记录当前窗口绑定到哪个 `codex_thread_id`
 - 已注册飞书线程中点选线程后，CA 会把当前 surface 重绑到选中的 native `thread_id`
 - 已绑定项目群中点选线程后，CA 会新建一个飞书话题，并把该话题绑定到选中的 native `thread_id`
@@ -516,7 +520,8 @@ Feishu DM / Group Thread image
 - 一个已注册飞书线程，对应一个 native Codex thread 绑定
 - 同一个线程后续消息继续复用该 `thread_id`
 - 同一个 native Codex thread 可以被多个已注册飞书话题引用；SQLite 以飞书 surface 作为绑定记录主语义
-- DM 可以显式切到已有的 Codex 原生线程，也可以在首次普通 prompt 时自动创建新的 native thread
+- DM 可以显式切到已有的 Codex 原生线程，也可以单独记录“当前项目”选择；当前项目主要用于在没有 native thread 绑定时决定 `project current`、`thread list-current` 以及首次普通 prompt / `/ca new` 的默认 `cwd`
+- DM 可以在首次普通 prompt 时自动创建新的 native thread
 - `sessionName` 仍作为观测字段保留，但执行真相源已经统一为 native `thread_id`
 
 ## 7.2 run 策略

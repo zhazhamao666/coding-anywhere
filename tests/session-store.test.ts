@@ -50,6 +50,26 @@ describe("SessionStore", () => {
     });
   });
 
+  it("persists a DM project selection independently from the current thread binding", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    store.setCodexProjectSelection({
+      channel: "feishu",
+      peerId: "ou_demo",
+      projectKey: "project-alpha",
+    });
+
+    expect(store.getCodexProjectSelection("feishu", "ou_demo")).toMatchObject({
+      channel: "feishu",
+      peerId: "ou_demo",
+      projectKey: "project-alpha",
+    });
+
+    store.clearCodexProjectSelection("feishu", "ou_demo");
+
+    expect(store.getCodexProjectSelection("feishu", "ou_demo")).toBeUndefined();
+  });
+
   it("persists run summaries and event timelines for backend observability", () => {
     store = new SessionStore(path.join(rootDir, "bridge.db"));
 
@@ -572,6 +592,9 @@ describe("SessionStore", () => {
       "runs",
       "message_links",
       "event_offsets",
+    ]));
+    expect(tables.map(table => table.name)).toEqual(expect.arrayContaining([
+      "codex_project_selections",
     ]));
   });
 });

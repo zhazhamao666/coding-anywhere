@@ -53,6 +53,107 @@ describe("DM Codex browser", () => {
     expect(cardText).toContain("项目列表");
     expect(cardText).toContain("Alpha");
     expect(cardText).toContain("/ca project threads project-alpha");
+    expect(cardText).toContain("/ca project switch project-alpha");
+    expect(cardText).toContain("切换项目");
+  });
+
+  it("switches the current DM project without immediately binding a thread", async () => {
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: createCatalogDouble(),
+    } as any);
+
+    const switchReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project switch project-alpha",
+    });
+
+    expect(switchReplies).toHaveLength(1);
+    expect(switchReplies[0]).toMatchObject({ kind: "card" });
+    expect((store as any).getCodexWindowBinding("feishu", "ou_demo")).toBeUndefined();
+    expect((store as any).getCodexProjectSelection("feishu", "ou_demo")).toMatchObject({
+      projectKey: "project-alpha",
+    });
+
+    const switchCardText = JSON.stringify((switchReplies[0] as { card: Record<string, unknown> }).card);
+    expect(switchCardText).toContain("当前项目已切换");
+    expect(switchCardText).toContain("Alpha");
+    expect(switchCardText).toContain("下一条普通消息会在该项目下创建新会话");
+  });
+
+  it("uses the selected DM project for current project and current thread list when no thread is bound", async () => {
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: createCatalogDouble(),
+    } as any);
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project switch project-alpha",
+    });
+
+    const projectReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project current",
+    });
+    const projectCardText = JSON.stringify((projectReplies[0] as { card: Record<string, unknown> }).card);
+    expect(projectCardText).toContain("当前项目");
+    expect(projectCardText).toContain("Alpha");
+    expect(projectCardText).toContain("当前线程");
+    expect(projectCardText).toContain("未选择");
+
+    const threadReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca thread list-current",
+    });
+    const threadCardText = JSON.stringify((threadReplies[0] as { card: Record<string, unknown> }).card);
+    expect(threadCardText).toContain("线程列表");
+    expect(threadCardText).toContain("Alpha follow-up");
+    expect(threadCardText).toContain("thread-alpha-1");
+  });
+
+  it("creates the next fresh DM thread under the selected project path", async () => {
+    const runner = createRunnerDouble([
+      { type: "text", content: "已经在选中的项目下开始处理" },
+      { type: "done", content: "已经在选中的项目下开始处理" },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+      codexCatalog: createCatalogDouble(),
+    } as any);
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project switch project-alpha",
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "在这个项目里开始一个新任务",
+    });
+
+    expect(runner.createThread).toHaveBeenCalledWith({
+      cwd: "D:\\Repos\\Alpha",
+      prompt: expect.stringContaining("在这个项目里开始一个新任务"),
+    });
+    expect((store as any).getCodexWindowBinding("feishu", "ou_demo")).toMatchObject({
+      codexThreadId: "thread-created-1",
+    });
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "已经在选中的项目下开始处理",
+      },
+    ]);
   });
 
   it("switches the current DM window to a Codex thread and routes prompts there", async () => {
@@ -291,6 +392,11 @@ function createRunnerDouble(
   ],
 ) {
   return {
+    createThread: vi.fn(async () => ({
+      threadId: "thread-created-1",
+      exitCode: 0,
+      events: [],
+    })),
     ensureSession: vi.fn(async () => undefined),
     cancel: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),

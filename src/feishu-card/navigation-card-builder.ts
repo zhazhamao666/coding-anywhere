@@ -9,9 +9,14 @@ export function buildBridgeHubCard(input: {
   rows?: Array<{
     title: string;
     lines?: string[];
-    buttonLabel: string;
-    value: Record<string, unknown>;
+    buttonLabel?: string;
+    value?: Record<string, unknown>;
     type?: "default" | "primary" | "danger";
+    buttons?: Array<{
+      label: string;
+      value: Record<string, unknown>;
+      type?: "default" | "primary" | "danger";
+    }>;
   }>;
   actions?: Array<{
     label: string;
@@ -45,6 +50,16 @@ export function buildBridgeHubCard(input: {
     });
 
     for (const row of input.rows) {
+      const buttons = row.buttons && row.buttons.length > 0
+        ? row.buttons
+        : row.buttonLabel && row.value
+          ? [{
+              label: row.buttonLabel,
+              value: row.value,
+              type: row.type,
+            }]
+          : [];
+
       elements.push({
         tag: "column_set",
         flex_mode: "none",
@@ -68,15 +83,15 @@ export function buildBridgeHubCard(input: {
             width: "auto",
             weight: 1,
             vertical_align: "center",
-            elements: [{
+            elements: buttons.map(button => ({
               tag: "button",
               text: {
                 tag: "plain_text",
-                content: row.buttonLabel,
+                content: button.label,
               },
-              type: row.type ?? "default",
-              value: row.value,
-            }],
+              type: button.type ?? "default",
+              value: button.value,
+            })),
           },
         ],
       });

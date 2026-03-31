@@ -182,6 +182,13 @@ export interface CodexWindowBinding {
   updatedAt: string;
 }
 
+export interface CodexProjectSelection {
+  channel: string;
+  peerId: string;
+  projectKey: string;
+  updatedAt: string;
+}
+
 export type BridgeCommandName =
   | "help"
   | "hub"

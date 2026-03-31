@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 
 import type {
   BridgeAssetRecord,
+  CodexProjectSelection,
   CodexWindowBinding,
   CodexThreadRecord,
   ListRunsFilters,
@@ -146,6 +147,45 @@ export class SessionStore {
   public clearCodexWindowBinding(channel: string, peerId: string): void {
     this.db.prepare(`
       DELETE FROM codex_window_bindings
+      WHERE channel = ? AND peer_id = ?
+    `).run(channel, peerId);
+  }
+
+  public setCodexProjectSelection(input: {
+    channel: string;
+    peerId: string;
+    projectKey: string;
+  }): void {
+    const updatedAt = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT INTO codex_project_selections (
+        channel, peer_id, project_key, updated_at
+      ) VALUES (
+        @channel, @peerId, @projectKey, @updatedAt
+      )
+      ON CONFLICT(channel, peer_id) DO UPDATE SET
+        project_key = excluded.project_key,
+        updated_at = excluded.updated_at
+    `).run({
+      ...input,
+      updatedAt,
+    });
+  }
+
+  public getCodexProjectSelection(channel: string, peerId: string): CodexProjectSelection | undefined {
+    const row = this.db.prepare(`
+      SELECT channel, peer_id, project_key, updated_at
+      FROM codex_project_selections
+      WHERE channel = ? AND peer_id = ?
+    `).get(channel, peerId) as CodexProjectSelectionRow | undefined;
+
+    return row ? rowToCodexProjectSelection(row) : undefined;
+  }
+
+  public clearCodexProjectSelection(channel: string, peerId: string): void {
+    this.db.prepare(`
+      DELETE FROM codex_project_selections
       WHERE channel = ? AND peer_id = ?
     `).run(channel, peerId);
   }
@@ -1795,6 +1835,14 @@ export class SessionStore {
         expired_at TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS codex_project_selections (
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        project_key TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (channel, peer_id)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_observability_runs_updated_at
       ON observability_runs(updated_at DESC);
 
@@ -2087,6 +2135,13 @@ interface CodexWindowBindingRow {
   channel: string;
   peer_id: string;
   codex_thread_id: string;
+  updated_at: string;
+}
+
+interface CodexProjectSelectionRow {
+  channel: string;
+  peer_id: string;
+  project_key: string;
   updated_at: string;
 }
 
@@ -2400,6 +2455,15 @@ function rowToCodexWindowBinding(row: CodexWindowBindingRow): CodexWindowBinding
     channel: row.channel,
     peerId: row.peer_id,
     codexThreadId: row.codex_thread_id,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToCodexProjectSelection(row: CodexProjectSelectionRow): CodexProjectSelection {
+  return {
+    channel: row.channel,
+    peerId: row.peer_id,
+    projectKey: row.project_key,
     updatedAt: row.updated_at,
   };
 }
