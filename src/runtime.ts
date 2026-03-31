@@ -78,6 +78,7 @@ export async function createRuntime(
     allowlist: config.feishu.allowlist,
     bridgeService,
     apiClient,
+    pendingAssetStore: store,
     requireGroupMention: config.feishu.requireGroupMention,
     logger: overrides?.logger,
   });

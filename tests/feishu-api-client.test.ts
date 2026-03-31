@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { FeishuApiClient } from "../src/feishu-api-client.js";
@@ -204,28 +208,161 @@ describe("FeishuApiClient", () => {
       },
     });
   });
+
+  it("downloads image resources from message.resource into a managed directory", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-resource-download-"));
+    const sdk = createSdkDouble();
+    sdk.im.v1.messageResource.get = vi.fn(async () => ({
+      headers: {
+        "content-type": "image/png",
+        "content-disposition": 'attachment; filename="from-feishu.png"',
+      },
+      writeFile: vi.fn(async (filePath: string) => {
+        writeFileSync(filePath, "png");
+        return filePath;
+      }),
+      getReadableStream: vi.fn(),
+    }));
+    const client = new FeishuApiClient(
+      {
+        appId: "cli_xxx",
+        appSecret: "secret",
+        apiBaseUrl: "https://open.feishu.cn/open-apis",
+      },
+      sdk as any,
+    );
+
+    try {
+      const result = await client.downloadMessageResource({
+        messageId: "om_image_1",
+        fileKey: "img_dm_1",
+        type: "image",
+        downloadDir: rootDir,
+      });
+
+      expect(sdk.im.v1.messageResource.get).toHaveBeenCalledWith({
+        params: {
+          type: "image",
+        },
+        path: {
+          message_id: "om_image_1",
+          file_key: "img_dm_1",
+        },
+      });
+      expect(result).toMatchObject({
+        resourceKey: "img_dm_1",
+        localPath: path.join(rootDir, "from-feishu.png"),
+        fileName: "from-feishu.png",
+        mimeType: "image/png",
+        fileSize: 3,
+      });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uploads local images and sends native image messages", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-image-upload-"));
+    const imagePath = path.join(rootDir, "reply.png");
+    writeFileSync(imagePath, "png");
+
+    try {
+      const sdk = createSdkDouble();
+      (sdk.im.v1.image.create as any) = vi.fn(async () => ({
+        image_key: "img_uploaded_1",
+      }));
+      const client = new FeishuApiClient(
+        {
+          appId: "cli_xxx",
+          appSecret: "secret",
+          apiBaseUrl: "https://open.feishu.cn/open-apis",
+        },
+        sdk as any,
+      );
+
+      const imageKey = await client.uploadImage({
+        imagePath,
+      });
+      const createMessageId = await client.sendImageMessage("ou_demo", imageKey);
+      const replyMessageId = await client.replyImageMessage("om_anchor_1", imageKey);
+
+      expect(imageKey).toBe("img_uploaded_1");
+      expect(sdk.im.v1.image.create).toHaveBeenCalledWith({
+        data: {
+          image_type: "message",
+          image: expect.anything(),
+        },
+      });
+      expect(createMessageId).toBe("msg-image-1");
+      expect(sdk.im.message.create).toHaveBeenCalledWith({
+        params: {
+          receive_id_type: "open_id",
+        },
+        data: {
+          receive_id: "ou_demo",
+          msg_type: "image",
+          content: JSON.stringify({
+            image_key: "img_uploaded_1",
+          }),
+        },
+      });
+      expect(replyMessageId).toBe("msg-reply-image-1");
+      expect(sdk.im.message.reply).toHaveBeenCalledWith({
+        path: {
+          message_id: "om_anchor_1",
+        },
+        data: {
+          msg_type: "image",
+          content: JSON.stringify({
+            image_key: "img_uploaded_1",
+          }),
+        },
+      });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
 });
 
-function createSdkDouble() {
+function createSdkDouble(): any {
   return {
     im: {
       message: {
-        create: vi.fn(async ({ data }: { data: { content: string } }) => {
+        create: vi.fn(async ({ data }: { data: { content: string; msg_type?: string } }) => {
           const content = JSON.parse(data.content);
           return {
             data: {
-              message_id: content.type === "card" ? "msg-cardkit-1" : "msg-card-1",
+              message_id:
+                data.msg_type === "image"
+                  ? "msg-image-1"
+                  : content.type === "card"
+                    ? "msg-cardkit-1"
+                    : "msg-card-1",
             },
           };
         }),
-        reply: vi.fn(async () => ({
+        reply: vi.fn(async ({ data }: { data?: { msg_type?: string } }) => ({
           data: {
-            message_id: "msg-reply-1",
+            message_id: data?.msg_type === "image" ? "msg-reply-image-1" : "msg-reply-1",
             thread_id: "omt-1",
           },
         })),
         patch: vi.fn(async () => ({})),
         update: vi.fn(async () => ({})),
+      },
+      v1: {
+        image: {
+          create: vi.fn(async () => ({
+            image_key: "img-upload-default",
+          })),
+        },
+        messageResource: {
+          get: vi.fn(async () => ({
+            headers: {},
+            writeFile: vi.fn(async (_filePath: string) => undefined),
+            getReadableStream: vi.fn(),
+          })),
+        },
       },
     },
     cardkit: {

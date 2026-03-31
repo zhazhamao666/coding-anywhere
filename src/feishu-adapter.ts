@@ -1,7 +1,15 @@
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { StreamingCardController } from "./feishu-card/streaming-card-controller.js";
 import { isBridgeCommandMessage } from "./command-router.js";
 import { buildFeishuInboundLog } from "./feishu-message-log.js";
-import type { BridgeReply, ProgressCardState } from "./types.js";
+import type {
+  BridgeAssetDownloadResult,
+  BridgeAssetRecord,
+  BridgeReply,
+  ProgressCardState,
+} from "./types.js";
 
 export interface BridgeServiceLike {
   handleMessage(
@@ -24,6 +32,19 @@ export interface FeishuApiClientLike {
   sendTextMessageToChat(chatId: string, text: string): Promise<{ messageId: string; threadId: string }>;
   replyTextMessage(messageId: string, text: string): Promise<string>;
   updateTextMessage(messageId: string, text: string): Promise<void>;
+  downloadMessageResource?(input: {
+    messageId: string;
+    fileKey: string;
+    type: "image";
+    downloadDir: string;
+    preferredFileName?: string;
+  }): Promise<BridgeAssetDownloadResult>;
+  uploadImage?(input: {
+    imagePath: string;
+    imageType?: "message" | "avatar";
+  }): Promise<string>;
+  sendImageMessage?(peerId: string, imageKey: string): Promise<string>;
+  replyImageMessage?(messageId: string, imageKey: string): Promise<string>;
   sendInteractiveCard(peerId: string, card: Record<string, unknown>): Promise<string>;
   replyInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<string>;
   updateInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<void>;
@@ -42,6 +63,25 @@ export interface FeishuApiClientLike {
 export interface StreamingCardControllerLike {
   push(snapshot: ProgressCardState): Promise<void>;
   finalizeError(errorText: string): Promise<void>;
+}
+
+export interface PendingBridgeAssetStoreLike {
+  savePendingBridgeAsset(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+    runId?: string | null;
+    messageId: string;
+    resourceType?: BridgeAssetRecord["resourceType"];
+    resourceKey: string;
+    localPath: string;
+    fileName: string;
+    mimeType?: string | null;
+    fileSize?: number | null;
+    createdAt?: string;
+  }): BridgeAssetRecord;
 }
 
 export interface FeishuEnvelope {
@@ -65,6 +105,8 @@ export interface FeishuEnvelope {
   };
 }
 
+type FeishuEnvelopeMessage = NonNullable<NonNullable<FeishuEnvelope["event"]>["message"]>;
+
 export class FeishuAdapter {
   private readonly seenMessageKeys = new Set<string>();
 
@@ -73,11 +115,13 @@ export class FeishuAdapter {
       allowlist: string[];
       bridgeService: BridgeServiceLike;
       apiClient: FeishuApiClientLike;
+      pendingAssetStore?: PendingBridgeAssetStoreLike;
       createStreamingCardController?: (input: {
         peerId: string;
         apiClient: FeishuApiClientLike;
         anchorMessageId?: string;
       }) => StreamingCardControllerLike;
+      inboundAssetRootDir?: string;
       requireGroupMention?: boolean;
       logger?: {
         info?: (message: string) => void;
@@ -102,7 +146,19 @@ export class FeishuAdapter {
       return;
     }
 
-    if (!message || message.message_type !== "text") {
+    if (!message) {
+      return;
+    }
+
+    if (message.message_type === "image") {
+      await this.handleInboundImage({
+        peerId,
+        message,
+      });
+      return;
+    }
+
+    if (message.message_type !== "text") {
       return;
     }
 
@@ -212,6 +268,68 @@ export class FeishuAdapter {
     }
   }
 
+  private async handleInboundImage(input: {
+    peerId: string;
+    message: FeishuEnvelopeMessage;
+  }): Promise<void> {
+    const message = input.message;
+    const imageKey = parseFeishuImageContent(message.content);
+    if (!imageKey || !message.message_id) {
+      return;
+    }
+
+    const isDm = message.chat_type === "p2p";
+    const isGroupSurface = message.chat_type === "group" && !!message.chat_id;
+    if (!isDm && !isGroupSurface) {
+      return;
+    }
+
+    this.dependencies.logger?.info?.(
+      buildFeishuInboundLog({
+        peerId: input.peerId,
+        chatType: message.chat_type,
+        messageId: message.message_id,
+        chatId: message.chat_id,
+        threadId: message.thread_id,
+        text: `[image:${imageKey}]`,
+      }),
+    );
+
+    const download = await this.requireDownloadClient().downloadMessageResource({
+      messageId: message.message_id,
+      fileKey: imageKey,
+      type: "image",
+      downloadDir: buildInboundImageDownloadDir(
+        this.dependencies.inboundAssetRootDir,
+        input.peerId,
+        message,
+      ),
+      preferredFileName: `${sanitizePathSegment(message.message_id)}-${sanitizePathSegment(imageKey)}.bin`,
+    });
+
+    this.requirePendingAssetStore().savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: input.peerId,
+      chatId: message.chat_id ?? null,
+      surfaceType: message.thread_id ? "thread" : null,
+      surfaceRef: message.thread_id ?? null,
+      runId: null,
+      messageId: message.message_id,
+      resourceType: "image",
+      resourceKey: imageKey,
+      localPath: download.localPath,
+      fileName: download.fileName,
+      mimeType: download.mimeType,
+      fileSize: download.fileSize,
+    });
+
+    await this.replyText({
+      peerId: input.peerId,
+      anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
+      text: INBOUND_IMAGE_ACK_TEXT,
+    });
+  }
+
   private createStreamingCardController(
     peerId: string,
     anchorMessageId?: string,
@@ -255,6 +373,24 @@ export class FeishuAdapter {
     }
 
     await this.dependencies.apiClient.sendInteractiveCard(input.peerId, input.card);
+  }
+
+  private requirePendingAssetStore(): PendingBridgeAssetStoreLike {
+    if (!this.dependencies.pendingAssetStore) {
+      throw new Error("PENDING_BRIDGE_ASSET_STORE_UNAVAILABLE");
+    }
+
+    return this.dependencies.pendingAssetStore;
+  }
+
+  private requireDownloadClient(): Required<Pick<FeishuApiClientLike, "downloadMessageResource">> {
+    if (!this.dependencies.apiClient.downloadMessageResource) {
+      throw new Error("FEISHU_MESSAGE_RESOURCE_UNAVAILABLE");
+    }
+
+    return {
+      downloadMessageResource: this.dependencies.apiClient.downloadMessageResource,
+    };
   }
 }
 
@@ -301,3 +437,44 @@ function parseFeishuTextContent(content?: string): { text?: string; hasMention: 
     };
   }
 }
+
+function parseFeishuImageContent(content?: string): string | undefined {
+  if (!content) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(content) as { image_key?: string };
+    return parsed.image_key?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildInboundImageDownloadDir(
+  rootDir: string | undefined,
+  peerId: string,
+  message: FeishuEnvelopeMessage,
+): string {
+  return path.join(
+    rootDir ?? DEFAULT_INBOUND_ASSET_ROOT_DIR,
+    "feishu-inbound",
+    sanitizePathSegment(message.chat_type ?? "unknown"),
+    sanitizePathSegment(peerId),
+    sanitizePathSegment(message.chat_id ?? "direct"),
+    sanitizePathSegment(message.thread_id ?? "main"),
+    sanitizePathSegment(message.message_id ?? "message"),
+  );
+}
+
+function sanitizePathSegment(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "unknown";
+  }
+
+  return trimmed.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+const INBOUND_IMAGE_ACK_TEXT = "[ca] 已收到图片，请继续发送文字说明。";
+const DEFAULT_INBOUND_ASSET_ROOT_DIR = path.join(tmpdir(), "coding-anywhere");

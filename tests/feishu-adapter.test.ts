@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { FeishuAdapter } from "../src/feishu-adapter.js";
-import type { BridgeReply, ProgressCardState } from "../src/types.js";
+import type { BridgeAssetRecord, BridgeReply, ProgressCardState } from "../src/types.js";
 
 describe("FeishuAdapter", () => {
   it("ignores duplicate event ids and only forwards the first DM payload", async () => {
@@ -167,6 +171,85 @@ describe("FeishuAdapter", () => {
     expect(apiClient.sendTextMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("downloads inbound DM images, stages them, and replies with an acknowledgment", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-image-"));
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+      };
+      const apiClient = createApiClientDouble({
+        downloadMessageResource: vi.fn(async () => ({
+          resourceKey: "img_dm_1",
+          localPath: path.join(rootDir, "img_dm_1.png"),
+          fileName: "img_dm_1.png",
+          mimeType: "image/png",
+          fileSize: 2048,
+        })),
+      });
+      const pendingAssetStore = createPendingAssetStoreDouble();
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+        pendingAssetStore,
+        inboundAssetRootDir: rootDir,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-image-1",
+        },
+        event: {
+          message: {
+            message_id: "om_image_1",
+            chat_type: "p2p",
+            message_type: "image",
+            content: JSON.stringify({ image_key: "img_dm_1" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+      expect(apiClient.downloadMessageResource).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: "om_image_1",
+          fileKey: "img_dm_1",
+          type: "image",
+          downloadDir: expect.stringContaining(rootDir),
+        }),
+      );
+      expect(pendingAssetStore.savePendingBridgeAsset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: "feishu",
+          peerId: "ou_demo",
+          chatId: null,
+          surfaceType: null,
+          surfaceRef: null,
+          messageId: "om_image_1",
+          resourceType: "image",
+          resourceKey: "img_dm_1",
+          localPath: path.join(rootDir, "img_dm_1.png"),
+          fileName: "img_dm_1.png",
+          mimeType: "image/png",
+          fileSize: 2048,
+        }),
+      );
+      expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+        "ou_demo",
+        "[ca] 已收到图片，请继续发送文字说明。",
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("sends action cards as standard interactive messages", async () => {
     const hubCard = {
       schema: "2.0",
@@ -312,12 +395,22 @@ function createSnapshot(overrides?: Partial<ProgressCardState>): ProgressCardSta
   };
 }
 
-function createApiClientDouble() {
+function createApiClientDouble(overrides?: Record<string, unknown>) {
   return {
     sendTextMessage: vi.fn(async () => "msg-1"),
     sendTextMessageToChat: vi.fn(async () => ({ messageId: "msg-chat-1", threadId: "omt-1" })),
     replyTextMessage: vi.fn(async () => "msg-reply-1"),
     updateTextMessage: vi.fn(async () => undefined),
+    downloadMessageResource: vi.fn(async () => ({
+      resourceKey: "img-default",
+      localPath: "D:/tmp/img-default.png",
+      fileName: "img-default.png",
+      mimeType: "image/png",
+      fileSize: 1024,
+    })),
+    uploadImage: vi.fn(async () => "img-uploaded-1"),
+    sendImageMessage: vi.fn(async () => "msg-image-1"),
+    replyImageMessage: vi.fn(async () => "msg-reply-image-1"),
     sendInteractiveCard: vi.fn(async () => "msg-card-1"),
     replyInteractiveCard: vi.fn(async () => "msg-reply-card-1"),
     updateInteractiveCard: vi.fn(async () => undefined),
@@ -326,5 +419,37 @@ function createApiClientDouble() {
     streamCardElement: vi.fn(async () => undefined),
     setCardStreamingMode: vi.fn(async () => undefined),
     updateCardKitCard: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
+
+function createPendingAssetStoreDouble() {
+  return {
+    savePendingBridgeAsset: vi.fn((input: Record<string, unknown>) =>
+      ({
+        assetId: "asset-1",
+        runId: null,
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: null,
+        surfaceType: null,
+        surfaceRef: null,
+        messageId: "om_1",
+        resourceType: "image",
+        resourceKey: "img_1",
+        localPath: "D:/tmp/img_1.png",
+        fileName: "img_1.png",
+        mimeType: "image/png",
+        fileSize: 1024,
+        status: "pending",
+        errorText: null,
+        createdAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+        consumedAt: null,
+        failedAt: null,
+        expiredAt: null,
+        ...input,
+      }) as BridgeAssetRecord,
+    ),
   };
 }

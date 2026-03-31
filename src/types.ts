@@ -64,6 +64,14 @@ export interface BridgeAssetRecord {
   expiredAt: string | null;
 }
 
+export interface BridgeAssetDownloadResult {
+  resourceKey: string;
+  localPath: string;
+  fileName: string;
+  mimeType: string | null;
+  fileSize: number | null;
+}
+
 export interface RootProfile {
   id: string;
   name: string;
