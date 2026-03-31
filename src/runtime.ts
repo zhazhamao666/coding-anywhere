@@ -84,6 +84,7 @@ export async function createRuntime(
   });
   const cardActionService = new FeishuCardActionService({
     bridgeService,
+    apiClient,
     logger: overrides?.logger,
   });
   const wsClient =

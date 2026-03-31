@@ -175,6 +175,75 @@ describe("createRuntime", () => {
     }
   });
 
+  it("injects the api client into the card action service so async card commands can patch results", async () => {
+    const config: BridgeConfig = {
+      server: { port: 3000, host: "127.0.0.1" },
+      storage: {
+        sqlitePath: path.join(rootDir, "runtime-card-action.db"),
+        logDir: path.join(rootDir, "logs"),
+      },
+      acpx: {
+        command: "acpx",
+        agent: "codex",
+      },
+      scheduler: {
+        maxConcurrentRuns: 2,
+      },
+      feishu: {
+        appId: "cli_xxx",
+        appSecret: "secret",
+        websocketUrl: "wss://example.invalid/ws",
+        apiBaseUrl: "https://open.feishu.cn/open-apis",
+        allowlist: ["ou_demo"],
+        requireGroupMention: false,
+        encryptKey: "",
+      },
+      root: {
+        id: "main",
+        name: "Main Root",
+        cwd: "D:/repos",
+        repoRoot: "D:/repos",
+        branchPolicy: "reuse",
+        permissionMode: "workspace-write",
+        envAllowlist: ["PATH"],
+        idleTtlHours: 24,
+      },
+    };
+
+    const apiClient = {
+      sendTextMessage: vi.fn(async () => "msg-1"),
+      sendTextMessageToChat: vi.fn(async () => ({ messageId: "msg-chat-1", threadId: "omt-1" })),
+      replyTextMessage: vi.fn(async () => "msg-reply-1"),
+      updateTextMessage: vi.fn(async () => undefined),
+      sendInteractiveCard: vi.fn(async () => "msg-card-1"),
+      replyInteractiveCard: vi.fn(async () => "msg-reply-card-1"),
+      updateInteractiveCard: vi.fn(async () => undefined),
+      createCardEntity: vi.fn(async () => "card-1"),
+      sendCardKitMessage: vi.fn(async () => "msg-cardkit-1"),
+      streamCardElement: vi.fn(async () => undefined),
+      setCardStreamingMode: vi.fn(async () => undefined),
+      updateCardKitCard: vi.fn(async () => undefined),
+    } satisfies FeishuApiClientLike;
+
+    let capturedCardActionService: unknown;
+    const runtime = await createRuntime(config, {
+      createApiClient: () => apiClient,
+      createWsClient: (_config, _adapter, cardActionService) => {
+        capturedCardActionService = cardActionService;
+        return {
+          start: vi.fn(async () => undefined),
+          stop: vi.fn(async () => undefined),
+        };
+      },
+    });
+
+    try {
+      expect((capturedCardActionService as any).dependencies.apiClient).toBe(apiClient);
+    } finally {
+      runtime.store.close();
+    }
+  });
+
   it("expires stale pending image assets during runtime maintenance", async () => {
     const config: BridgeConfig = {
       server: { port: 3000, host: "127.0.0.1" },
