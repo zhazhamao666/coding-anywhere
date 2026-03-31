@@ -493,7 +493,7 @@ export class BridgeService {
       }
 
       summaryLines.push(`**当前项目**：${project.projectId}`);
-      summaryLines.push(`**当前线程**：${thread.threadId} · ${thread.title}`);
+      summaryLines.push(`**当前线程**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`);
       summaryLines.push(`**Session**：${thread.sessionName}`);
       summaryLines.push(`**线程状态**：${thread.status ?? "provisioned"}`);
       const siblingThreads = this.dependencies.store.listProjectThreads(project.projectId).slice(0, 5);
@@ -585,7 +585,12 @@ export class BridgeService {
       if (codexSelection) {
         summaryLines.push(`**当前项目**：${codexSelection.project.displayName}`);
         summaryLines.push(`**项目路径**：${codexSelection.project.cwd}`);
-        summaryLines.push(`**当前线程**：${codexSelection.thread.threadId} · ${codexSelection.thread.title}`);
+        summaryLines.push(
+          `**当前线程**：${formatCurrentThreadLabel(
+            codexSelection.thread.title,
+            codexSelection.thread.threadId,
+          )}`,
+        );
         summaryLines.push(`**Session**：${codexSelection.thread.threadId}`);
           actions.push(
             {
@@ -1332,7 +1337,7 @@ export class BridgeService {
           "**视图**：当前项目",
           `**项目**：${project.displayName}`,
           `**路径**：${project.cwd}`,
-          `**当前线程**：${thread.threadId} · ${thread.title}`,
+          `**当前线程**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`,
         ],
         sections: [],
         actions: [
@@ -1674,6 +1679,11 @@ function buildSessionName(rootId: string): string {
 
 function buildRunId(): string {
   return `run-${randomUUID()}`;
+}
+
+function formatCurrentThreadLabel(title: string, fallbackThreadId: string): string {
+  const normalizedTitle = title.trim();
+  return normalizedTitle.length > 0 ? normalizedTitle : fallbackThreadId;
 }
 
 function selectSwitchCardConversation(

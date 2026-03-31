@@ -166,6 +166,120 @@ describe("BridgeService", () => {
     expect(cardText).not.toContain("DM 快捷命令");
   });
 
+  it("shows only the thread title in the DM hub when the session id already points at the same native thread", async () => {
+    store.createProject({
+      projectId: "proj-native",
+      name: "coding-anywhere",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-native-current",
+    });
+
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: {
+        listProjects: vi.fn(() => [{
+          projectKey: "proj-native",
+          cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+          displayName: "coding-anywhere",
+          threadCount: 1,
+          activeThreadCount: 1,
+          lastUpdatedAt: "2026-03-30T00:00:00.000Z",
+          gitBranch: "main",
+        }]),
+        getProject: vi.fn(() => ({
+          projectKey: "proj-native",
+          cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+          displayName: "coding-anywhere",
+          threadCount: 1,
+          activeThreadCount: 1,
+          lastUpdatedAt: "2026-03-30T00:00:00.000Z",
+          gitBranch: "main",
+        })),
+        listThreads: vi.fn(() => []),
+        getThread: vi.fn(() => ({
+          threadId: "thread-native-current",
+          projectKey: "proj-native",
+          cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+          displayName: "coding-anywhere",
+          title: "native follow-up",
+          source: "vscode",
+          archived: false,
+          updatedAt: "2026-03-30T00:00:00.000Z",
+          createdAt: "2026-03-29T00:00:00.000Z",
+          gitBranch: "main",
+          cliVersion: "0.116.0",
+          rolloutPath: "D:/rollout",
+        })),
+        listRecentConversation: vi.fn(() => []),
+      },
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca",
+    });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      kind: "card",
+    });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("**当前线程**：native follow-up");
+    expect(cardText).toContain("**Session**：thread-native-current");
+    expect(cardText).not.toContain("**当前线程**：thread-native-current · native follow-up");
+  });
+
+  it("shows only the thread title in the registered thread hub when the session id already points at the same native thread", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-current",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "codex-proj-current-thread-current",
+      title: "follow-up",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "/ca",
+    });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      kind: "card",
+    });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("**当前线程**：follow-up");
+    expect(cardText).toContain("**Session**：codex-proj-current-thread-current");
+    expect(cardText).not.toContain("**当前线程**：thread-current · follow-up");
+  });
+
   it("creates and binds a native thread for the first DM prompt, wraps prompts and emits lifecycle snapshots", async () => {
     const runner = createRunnerDouble();
     const snapshots: ProgressCardState[] = [];
