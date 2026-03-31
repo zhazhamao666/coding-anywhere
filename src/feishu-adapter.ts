@@ -151,10 +151,18 @@ export class FeishuAdapter {
     }
 
     if (message.message_type === "image") {
-      await this.handleInboundImage({
-        peerId,
-        message,
-      });
+      try {
+        await this.handleInboundImage({
+          peerId,
+          message,
+        });
+      } catch (error) {
+        await this.replyText({
+          peerId,
+          anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
+          text: `[ca] error: ${normalizeBridgeError(error)}`,
+        });
+      }
       return;
     }
 

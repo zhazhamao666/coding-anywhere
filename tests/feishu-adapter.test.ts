@@ -250,6 +250,51 @@ describe("FeishuAdapter", () => {
     }
   });
 
+  it("replies with an explicit CA error when inbound image download fails", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+    };
+    const apiClient = createApiClientDouble({
+      downloadMessageResource: vi.fn(async () => {
+        throw new Error("FEISHU_DOWNLOAD_FAILED");
+      }),
+    });
+    const pendingAssetStore = createPendingAssetStoreDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+      pendingAssetStore,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-image-fail-1",
+      },
+      event: {
+        message: {
+          message_id: "om_image_fail_1",
+          chat_type: "p2p",
+          message_type: "image",
+          content: JSON.stringify({ image_key: "img_dm_fail_1" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+    expect(pendingAssetStore.savePendingBridgeAsset).not.toHaveBeenCalled();
+    expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+      "ou_demo",
+      "[ca] error: FEISHU_DOWNLOAD_FAILED",
+    );
+  });
+
   it("sends action cards as standard interactive messages", async () => {
     const hubCard = {
       schema: "2.0",
