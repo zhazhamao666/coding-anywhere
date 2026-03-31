@@ -71,6 +71,8 @@
 42. 计划中的 `todo_list` 会被结构化渲染到飞书状态卡，而不再只作为一段 waiting 文本掠过
 43. bridge 现在会把计划中的单选问题持久化为待回答交互，并在飞书卡片上渲染可点击选项；用户点选后会继续续跑同一个 native Codex thread
 44. 飞书卡片中的所有 `/ca` 命令按钮现在都会先在 `card.action.trigger` 中即时返回确认卡，再在后台完成实际操作并通过 `updateInteractiveCard` 回填最终结果；只有纯表单切换类动作仍保留即时返回目标卡片的模型
+45. runtime 输出到控制台的日志现在会统一在每一行开头追加本地时间戳，格式精确到毫秒，便于直接比对消息和回调时序
+46. 真正进入 bridge 处理链路的飞书入站消息，以及发往飞书的出站消息，现在都会打印一条简略日志；同一条消息或卡片的连续推送更新会做去重收敛，避免控制台刷屏
 
 ### 2.3 当前仍未打通的部分
 
@@ -171,6 +173,7 @@ Windows 控制台编码初始化模块。
 - 在 Windows 环境下把控制台代码页切到 `65001`
 - 将 `stdout` / `stderr` 默认编码设置为 `utf8`
 - 供 `index.ts`、`doctor-cli.ts`、`init-config.ts` 这类 CLI 入口复用，减少 PowerShell 中中文日志乱码
+- runtime 主日志在真正写入控制台前还会统一补上毫秒级时间戳前缀
 
 ### 5.1.2 `scripts/startup-cleanup.mjs`
 
@@ -195,6 +198,7 @@ Windows 启动前清理模块。
 - 文本消息过滤
 - DM 与群线程 surface 识别
 - mention-only fallback 过滤
+- 对真正进入 bridge 的飞书入站消息打印简略收包日志
 - 创建状态卡控制器
 - 将 CA 输出转成飞书消息、卡片或线程回复
 - 发送导航类按钮卡片时统一使用普通 `interactive` 消息卡片
@@ -696,6 +700,7 @@ channel + peer_id -> codex_thread_id
 6. 飞书 DM 发 `test`
 7. 确认 DM 中先出现流式状态卡；run 完成后，卡片收口为摘要卡，完整 assistant 正文以下方单独消息展示
 8. 打开 `/ops/ui`
+9. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志
 
 ### 15.2 群线程回归
 

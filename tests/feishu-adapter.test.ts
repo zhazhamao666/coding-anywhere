@@ -23,6 +23,9 @@ describe("FeishuAdapter", () => {
       ),
     };
     const apiClient = createApiClientDouble();
+    const logger = {
+      info: vi.fn(),
+    };
     const controller = {
       push: vi.fn(async () => undefined),
       finalizeError: vi.fn(async () => undefined),
@@ -33,6 +36,7 @@ describe("FeishuAdapter", () => {
       bridgeService,
       apiClient,
       createStreamingCardController: () => controller,
+      logger,
     });
 
     const envelope = {
@@ -73,6 +77,15 @@ describe("FeishuAdapter", () => {
       }),
     );
     expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", "收到，开始处理");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("feishu recv"),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("chat_type=p2p"),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("text=\"你好，codex\""),
+    );
   });
 
   it("sends an explicit CA error when the codex pipeline fails before any progress starts", async () => {

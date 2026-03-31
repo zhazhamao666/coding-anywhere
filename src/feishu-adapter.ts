@@ -1,5 +1,6 @@
 import { StreamingCardController } from "./feishu-card/streaming-card-controller.js";
 import { isBridgeCommandMessage } from "./command-router.js";
+import { buildFeishuInboundLog } from "./feishu-message-log.js";
 import type { BridgeReply, ProgressCardState } from "./types.js";
 
 export interface BridgeServiceLike {
@@ -78,6 +79,9 @@ export class FeishuAdapter {
         anchorMessageId?: string;
       }) => StreamingCardControllerLike;
       requireGroupMention?: boolean;
+      logger?: {
+        info?: (message: string) => void;
+      };
     },
   ) {}
 
@@ -126,6 +130,17 @@ export class FeishuAdapter {
     ) {
       return;
     }
+
+    this.dependencies.logger?.info?.(
+      buildFeishuInboundLog({
+        peerId,
+        chatType: message.chat_type,
+        messageId: message.message_id,
+        chatId: message.chat_id,
+        threadId: message.thread_id,
+        text: parsedContent.text,
+      }),
+    );
 
     let cardController: StreamingCardControllerLike | undefined;
     let replies: BridgeReply[];

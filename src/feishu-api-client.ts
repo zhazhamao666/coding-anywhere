@@ -1,5 +1,7 @@
 import { Client } from "@larksuiteoapi/node-sdk";
 
+import { buildFeishuOutboundLog } from "./feishu-message-log.js";
+
 interface SdkResponse {
   code?: number;
   msg?: string;
@@ -41,6 +43,12 @@ interface FeishuSdkClientLike {
 
 export class FeishuApiClient {
   private readonly sdkClient: FeishuSdkClientLike;
+  private readonly logger?: {
+    info?: (message: string) => void;
+  };
+  private readonly now: () => number;
+  private readonly pushLogWindowMs: number;
+  private readonly recentOutboundLogs = new Map<string, number>();
 
   public constructor(
     private readonly config: {
@@ -49,12 +57,22 @@ export class FeishuApiClient {
       apiBaseUrl: string;
     },
     sdkClient?: FeishuSdkClientLike,
+    options?: {
+      logger?: {
+        info?: (message: string) => void;
+      };
+      now?: () => number;
+      pushLogWindowMs?: number;
+    },
   ) {
     this.sdkClient = sdkClient ?? new Client({
       appId: this.config.appId,
       appSecret: this.config.appSecret,
       domain: normalizeSdkDomain(this.config.apiBaseUrl),
     }) as unknown as FeishuSdkClientLike;
+    this.logger = options?.logger;
+    this.now = options?.now ?? (() => Date.now());
+    this.pushLogWindowMs = options?.pushLogWindowMs ?? 60_000;
   }
 
   public async sendTextMessage(peerId: string, text: string): Promise<string> {
@@ -69,7 +87,18 @@ export class FeishuApiClient {
       },
     });
 
-    return response.data?.message_id ?? "";
+    const messageId = response.data?.message_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "text",
+        mode: "create",
+        messageId,
+        peerId,
+        text,
+      },
+      [`message:${messageId}`],
+    );
+    return messageId;
   }
 
   public async sendTextMessageToChat(
@@ -87,9 +116,22 @@ export class FeishuApiClient {
       },
     });
 
+    const messageId = response.data?.message_id ?? "";
+    const threadId = response.data?.thread_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "text",
+        mode: "create",
+        messageId,
+        chatId,
+        threadId,
+        text,
+      },
+      [`message:${messageId}`],
+    );
     return {
-      messageId: response.data?.message_id ?? "",
-      threadId: response.data?.thread_id ?? "",
+      messageId,
+      threadId,
     };
   }
 
@@ -103,6 +145,16 @@ export class FeishuApiClient {
         content: JSON.stringify({ text }),
       },
     });
+    this.logOutbound(
+      {
+        messageType: "text",
+        mode: "patch",
+        messageId,
+        text,
+      },
+      [`message:${messageId}`],
+      true,
+    );
   }
 
   public async replyTextMessage(messageId: string, text: string): Promise<string> {
@@ -116,7 +168,19 @@ export class FeishuApiClient {
       },
     });
 
-    return response.data?.message_id ?? "";
+    const replyMessageId = response.data?.message_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "text",
+        mode: "reply",
+        messageId: replyMessageId,
+        anchorMessageId: messageId,
+        threadId: response.data?.thread_id ?? "",
+        text,
+      },
+      [`message:${replyMessageId}`],
+    );
+    return replyMessageId;
   }
 
   public async sendInteractiveCard(peerId: string, card: Record<string, unknown>): Promise<string> {
@@ -131,7 +195,18 @@ export class FeishuApiClient {
       },
     });
 
-    return response.data?.message_id ?? "";
+    const messageId = response.data?.message_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "interactive",
+        mode: "create",
+        messageId,
+        peerId,
+        card,
+      },
+      [`message:${messageId}`],
+    );
+    return messageId;
   }
 
   public async updateInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<void> {
@@ -143,6 +218,16 @@ export class FeishuApiClient {
         content: JSON.stringify(card),
       },
     });
+    this.logOutbound(
+      {
+        messageType: "interactive",
+        mode: "patch",
+        messageId,
+        card,
+      },
+      [`message:${messageId}`],
+      true,
+    );
   }
 
   public async replyInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<string> {
@@ -156,7 +241,19 @@ export class FeishuApiClient {
       },
     });
 
-    return response.data?.message_id ?? "";
+    const replyMessageId = response.data?.message_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "interactive",
+        mode: "reply",
+        messageId: replyMessageId,
+        anchorMessageId: messageId,
+        threadId: response.data?.thread_id ?? "",
+        card,
+      },
+      [`message:${replyMessageId}`],
+    );
+    return replyMessageId;
   }
 
   public async createCardEntity(card: Record<string, unknown>): Promise<string> {
@@ -188,7 +285,18 @@ export class FeishuApiClient {
       },
     });
 
-    return response.data?.message_id ?? "";
+    const messageId = response.data?.message_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "interactive",
+        mode: "cardkit",
+        messageId,
+        peerId,
+        cardId,
+      },
+      [`message:${messageId}`, `card:${cardId}`],
+    );
+    return messageId;
   }
 
   public async streamCardElement(
@@ -208,6 +316,15 @@ export class FeishuApiClient {
       },
     });
     assertSdkSuccess(response, "cardkit.element.content");
+    this.logOutbound(
+      {
+        messageType: "interactive",
+        mode: "cardkit",
+        cardId,
+      },
+      [`card:${cardId}`],
+      true,
+    );
   }
 
   public async setCardStreamingMode(
@@ -227,6 +344,15 @@ export class FeishuApiClient {
       },
     });
     assertSdkSuccess(response, "cardkit.settings");
+    this.logOutbound(
+      {
+        messageType: "interactive",
+        mode: "cardkit",
+        cardId,
+      },
+      [`card:${cardId}`],
+      true,
+    );
   }
 
   public async updateCardKitCard(
@@ -247,6 +373,65 @@ export class FeishuApiClient {
       },
     });
     assertSdkSuccess(response, "cardkit.update");
+    this.logOutbound(
+      {
+        messageType: "interactive",
+        mode: "cardkit",
+        cardId,
+        card,
+      },
+      [`card:${cardId}`],
+      true,
+    );
+  }
+
+  private logOutbound(
+    input: {
+      mode: string;
+      messageType: "text" | "interactive";
+      messageId?: string;
+      peerId?: string;
+      chatId?: string;
+      threadId?: string;
+      anchorMessageId?: string;
+      cardId?: string;
+      text?: string;
+      card?: Record<string, unknown>;
+    },
+    keys: string[],
+    suppressIfRecent = false,
+  ): void {
+    if (!this.logger?.info) {
+      return;
+    }
+
+    const effectiveKeys = keys.filter(Boolean);
+    const now = this.now();
+    this.pruneRecentOutboundLogs(now);
+
+    if (
+      suppressIfRecent &&
+      effectiveKeys.some(key => {
+        const lastLoggedAt = this.recentOutboundLogs.get(key);
+        return lastLoggedAt !== undefined && now - lastLoggedAt < this.pushLogWindowMs;
+      })
+    ) {
+      return;
+    }
+
+    for (const key of effectiveKeys) {
+      this.recentOutboundLogs.set(key, now);
+    }
+
+    this.logger.info(buildFeishuOutboundLog(input));
+  }
+
+  private pruneRecentOutboundLogs(now: number): void {
+    for (const [key, lastLoggedAt] of this.recentOutboundLogs.entries()) {
+      if (now - lastLoggedAt >= this.pushLogWindowMs) {
+        this.recentOutboundLogs.delete(key);
+      }
+    }
   }
 }
 

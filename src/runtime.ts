@@ -61,7 +61,7 @@ export async function createRuntime(
     codexCatalog = undefined;
   }
   const apiClient =
-    overrides?.createApiClient?.(config) ?? createDefaultApiClient(config);
+    overrides?.createApiClient?.(config) ?? createDefaultApiClient(config, overrides?.logger);
   const projectThreadService = new ProjectThreadService({
     apiClient,
     runner,
@@ -79,6 +79,7 @@ export async function createRuntime(
     bridgeService,
     apiClient,
     requireGroupMention: config.feishu.requireGroupMention,
+    logger: overrides?.logger,
   });
   const cardActionService = new FeishuCardActionService({
     bridgeService,
@@ -159,11 +160,13 @@ export async function reapIdleThreads(input: {
   }
 }
 
-function createDefaultApiClient(config: BridgeConfig) {
+function createDefaultApiClient(config: BridgeConfig, logger?: Logger) {
   return new FeishuApiClient({
     appId: config.feishu.appId,
     appSecret: config.feishu.appSecret,
     apiBaseUrl: config.feishu.apiBaseUrl,
+  }, undefined, {
+    logger,
   });
 }
 

@@ -4,13 +4,15 @@ import pino from "pino";
 
 import { loadConfig } from "./config.js";
 import { createRuntime } from "./runtime.js";
+import { createTimestampPrefixingConsoleStream } from "./timestamped-console-stream.js";
 import { ensureWindowsConsoleUtf8 } from "./windows-console.js";
 
 ensureWindowsConsoleUtf8();
 
 const logger = pino({
   name: "coding-anywhere",
-});
+  timestamp: false,
+}, createTimestampPrefixingConsoleStream(process.stdout));
 
 async function main() {
   const configPath = process.env.BRIDGE_CONFIG ?? path.resolve(process.cwd(), "config.toml");
