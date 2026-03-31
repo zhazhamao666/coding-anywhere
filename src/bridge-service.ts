@@ -40,9 +40,9 @@ interface BridgeRunner {
   submitVerbatim(
     context: RunContext,
     prompt: string,
-    options?: {
+    optionsOrOnEvent?: {
       images?: string[];
-    },
+    } | ((event: AcpxEvent) => void | Promise<void>),
     onEvent?: (event: AcpxEvent) => void,
   ): Promise<RunOutcome>;
   cancel(context: RunContext): Promise<void>;
@@ -220,47 +220,54 @@ export class BridgeService {
         activeResolved.sessionName,
       );
 
+      const runnerEventHandler = async (event: AcpxEvent) => {
+        sawRunnerEvent = true;
+        let snapshot = reduceProgressEvent(currentProgress, event);
+        if (event.type === "text" && event.planInteraction && activeResolved.threadId) {
+          const interaction = this.dependencies.store.savePendingPlanInteraction({
+            runId: currentProgress.runId,
+            channel: input.channel,
+            peerId: input.peerId,
+            chatId: activeResolved.deliveryChatId,
+            surfaceType: activeResolved.deliverySurfaceType,
+            surfaceRef: activeResolved.deliverySurfaceRef,
+            threadId: activeResolved.threadId,
+            sessionName: activeResolved.sessionName,
+            question: event.planInteraction.question,
+            choices: event.planInteraction.choices,
+          });
+          snapshot = {
+            ...snapshot,
+            planInteraction: interaction,
+          };
+        }
+        await emitSnapshot(
+          snapshot,
+          "acpx",
+          event.type === "tool_call" ? event.toolName : undefined,
+          event.type === "text" || event.type === "waiting",
+        );
+      };
+
       let outcome: RunOutcome;
       try {
-        outcome = await this.dependencies.runner.submitVerbatim(
-          activeResolved.context,
-          promptText,
-          consumedAssets.length > 0
-            ? {
-                images: consumedAssets
-                  .filter(asset => asset.resourceType === "image")
-                  .map(asset => asset.localPath),
-              }
-            : undefined,
-          async event => {
-            sawRunnerEvent = true;
-            let snapshot = reduceProgressEvent(currentProgress, event);
-            if (event.type === "text" && event.planInteraction && activeResolved.threadId) {
-              const interaction = this.dependencies.store.savePendingPlanInteraction({
-                runId: currentProgress.runId,
-                channel: input.channel,
-                peerId: input.peerId,
-                chatId: activeResolved.deliveryChatId,
-                surfaceType: activeResolved.deliverySurfaceType,
-                surfaceRef: activeResolved.deliverySurfaceRef,
-                threadId: activeResolved.threadId,
-                sessionName: activeResolved.sessionName,
-                question: event.planInteraction.question,
-                choices: event.planInteraction.choices,
-              });
-              snapshot = {
-                ...snapshot,
-                planInteraction: interaction,
-              };
-            }
-            await emitSnapshot(
-              snapshot,
-              "acpx",
-              event.type === "tool_call" ? event.toolName : undefined,
-              event.type === "text" || event.type === "waiting",
+        const imagePaths = consumedAssets
+          .filter(asset => asset.resourceType === "image")
+          .map(asset => asset.localPath);
+        outcome = imagePaths.length > 0
+          ? await this.dependencies.runner.submitVerbatim(
+              activeResolved.context,
+              promptText,
+              {
+                images: imagePaths,
+              },
+              runnerEventHandler,
+            )
+          : await this.dependencies.runner.submitVerbatim(
+              activeResolved.context,
+              promptText,
+              runnerEventHandler,
             );
-          },
-        );
       } catch (error) {
         if (!sawRunnerEvent && consumedAssets.length > 0) {
           this.dependencies.store.restoreConsumedBridgeAssets({

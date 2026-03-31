@@ -321,7 +321,6 @@ describe("BridgeService", () => {
         cwd: bridgeRootCwd,
       },
       expect.stringContaining("[bridge-context]"),
-      undefined,
       expect.any(Function),
     );
 
@@ -555,7 +554,8 @@ describe("BridgeService", () => {
       text: "再继续一次",
     });
 
-    expect(runner.submitVerbatim.mock.calls[1]?.[2]).toBeUndefined();
+    expect(runner.submitVerbatim.mock.calls[1]).toHaveLength(3);
+    expect(runner.submitVerbatim.mock.calls[1]?.[2]).toEqual(expect.any(Function));
     expect((runner.submitVerbatim.mock.calls[1]?.[1] as string)).not.toContain("[bridge-attachments]");
   });
 
@@ -1523,7 +1523,6 @@ describe("BridgeService", () => {
         cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       },
       expect.stringContaining("先补测试和验证路径，不要直接改代码。"),
-      undefined,
       expect.any(Function),
     );
     expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("[user-message]");
