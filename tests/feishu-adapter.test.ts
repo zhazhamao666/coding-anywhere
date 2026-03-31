@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FeishuAdapter } from "../src/feishu-adapter.js";
+import { FeishuCardActionService } from "../src/feishu-card-action-service.js";
 import type { BridgeReply, ProgressCardState } from "../src/types.js";
 
 describe("FeishuAdapter", () => {
@@ -244,6 +245,66 @@ describe("FeishuAdapter", () => {
     expect(apiClient.sendTextMessage).not.toHaveBeenCalled();
   });
 
+  it("delivers image replies from card actions as native image messages when possible", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [
+        {
+          kind: "image",
+          localPath: "D:/tmp/result.png",
+          caption: "结果图",
+        } as unknown as BridgeReply,
+      ]),
+    };
+    const apiClient = createApiClientDouble();
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const card = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_card_1",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca project current",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    expect(card).toMatchObject({
+      card: {
+        type: "raw",
+        data: {
+          header: {
+            title: {
+              content: "命令已提交",
+            },
+          },
+        },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(apiClient.uploadImage).toHaveBeenCalledWith({
+        imagePath: "D:/tmp/result.png",
+      });
+      expect(apiClient.replyImageMessage).toHaveBeenCalledWith("om_card_1", "img-uploaded-1");
+      expect(apiClient.sendImageMessage).not.toHaveBeenCalled();
+      expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith(
+        "om_card_1",
+        expect.objectContaining({
+          header: expect.objectContaining({
+            title: expect.objectContaining({
+              content: "图片结果",
+            }),
+          }),
+        }),
+      );
+    });
+  });
+
   it("finalizes the streaming card when a normal message fails after progress has started", async () => {
     const bridgeService = {
       handleMessage: vi.fn(
@@ -326,5 +387,8 @@ function createApiClientDouble() {
     streamCardElement: vi.fn(async () => undefined),
     setCardStreamingMode: vi.fn(async () => undefined),
     updateCardKitCard: vi.fn(async () => undefined),
+    uploadImage: vi.fn(async () => ({ imageKey: "img-uploaded-1" })),
+    sendImageMessage: vi.fn(async () => "msg-image-1"),
+    replyImageMessage: vi.fn(async () => "msg-reply-image-1"),
   };
 }

@@ -24,6 +24,9 @@ export interface FeishuApiClientLike {
   sendTextMessageToChat(chatId: string, text: string): Promise<{ messageId: string; threadId: string }>;
   replyTextMessage(messageId: string, text: string): Promise<string>;
   updateTextMessage(messageId: string, text: string): Promise<void>;
+  uploadImage?(input: { imagePath: string }): Promise<{ imageKey?: string; image_key?: string } | string>;
+  sendImageMessage?(peerId: string, imageKey: string): Promise<string>;
+  replyImageMessage?(messageId: string, imageKey: string): Promise<string>;
   sendInteractiveCard(peerId: string, card: Record<string, unknown>): Promise<string>;
   replyInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<string>;
   updateInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<void>;
@@ -97,6 +100,7 @@ export class FeishuAdapter {
 
     const peerId = envelope.event?.sender?.sender_id?.open_id;
     const message = envelope.event?.message;
+    const anchorMessageId = message?.chat_type === "group" ? message.message_id : undefined;
 
     if (!peerId || !this.dependencies.allowlist.includes(peerId)) {
       return;
@@ -198,15 +202,24 @@ export class FeishuAdapter {
       if (reply.kind === "card") {
         await this.replyCard({
           peerId,
-          anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
+          anchorMessageId,
           card: reply.card,
+        });
+        continue;
+      }
+
+      if (reply.kind === "image") {
+        await this.replyImage({
+          peerId,
+          anchorMessageId,
+          reply,
         });
         continue;
       }
 
       await this.replyText({
         peerId,
-        anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
+        anchorMessageId,
         text: reply.text,
       });
     }
@@ -256,6 +269,48 @@ export class FeishuAdapter {
 
     await this.dependencies.apiClient.sendInteractiveCard(input.peerId, input.card);
   }
+
+  private async replyImage(input: {
+    peerId: string;
+    anchorMessageId?: string;
+    reply: Extract<BridgeReply, { kind: "image" }>;
+  }): Promise<void> {
+    const fallbackText = formatImageFallbackText(input.reply);
+    const imageKey = await this.uploadImageKey(input.reply.localPath);
+    if (!imageKey) {
+      await this.replyText({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        text: fallbackText,
+      });
+      return;
+    }
+
+    if (input.anchorMessageId && this.dependencies.apiClient.replyImageMessage) {
+      await this.dependencies.apiClient.replyImageMessage(input.anchorMessageId, imageKey);
+      return;
+    }
+
+    if (this.dependencies.apiClient.sendImageMessage) {
+      await this.dependencies.apiClient.sendImageMessage(input.peerId, imageKey);
+      return;
+    }
+
+    await this.replyText({
+      peerId: input.peerId,
+      anchorMessageId: input.anchorMessageId,
+      text: fallbackText,
+    });
+  }
+
+  private async uploadImageKey(imagePath: string): Promise<string | undefined> {
+    if (!this.dependencies.apiClient.uploadImage) {
+      return undefined;
+    }
+
+    const result = await this.dependencies.apiClient.uploadImage({ imagePath });
+    return extractImageKey(result);
+  }
 }
 
 function getEnvelopeMessageKey(envelope: FeishuEnvelope): string | undefined {
@@ -278,6 +333,20 @@ function normalizeBridgeError(error: unknown): string {
   }
 
   return "RUN_STREAM_FAILED";
+}
+
+function extractImageKey(value: { imageKey?: string; image_key?: string } | string): string | undefined {
+  if (typeof value === "string") {
+    return value.trim() || undefined;
+  }
+
+  return value.imageKey?.trim() || value.image_key?.trim() || undefined;
+}
+
+function formatImageFallbackText(reply: Extract<BridgeReply, { kind: "image" }>): string {
+  return reply.caption?.trim()
+    ? `图片结果：${reply.caption.trim()}`
+    : "图片结果已生成。";
 }
 
 function parseFeishuTextContent(content?: string): { text?: string; hasMention: boolean } {

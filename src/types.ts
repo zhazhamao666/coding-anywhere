@@ -348,4 +348,5 @@ export type BridgeReply =
   | { kind: "system"; text: string }
   | { kind: "progress"; text: string; status: ProgressStatus }
   | { kind: "card"; card: Record<string, unknown> }
-  | { kind: "assistant"; text: string };
+  | { kind: "assistant"; text: string }
+  | { kind: "image"; localPath: string; caption?: string };
