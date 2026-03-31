@@ -559,6 +559,81 @@ describe("BridgeService", () => {
     expect((runner.submitVerbatim.mock.calls[1]?.[1] as string)).not.toContain("[bridge-attachments]");
   });
 
+  it("restores staged images when the runner fails before emitting any event", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-created",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-created",
+      title: "image-thread",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+    store.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      messageId: "om_image_1",
+      resourceKey: "img_dm_1",
+      localPath: "D:/assets/one.png",
+      fileName: "one.png",
+      mimeType: "image/png",
+      fileSize: 1024,
+    });
+
+    const runner = {
+      createThread: vi.fn(async () => ({
+        exitCode: 0,
+        events: [],
+        threadId: "thread-created",
+      })),
+      ensureSession: vi.fn(async () => undefined),
+      cancel: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      submitVerbatim: vi.fn(async () => {
+        throw new Error("CODEX_LAUNCH_FAILED");
+      }),
+    };
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    await expect(service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "请结合刚才的图片继续分析",
+    })).rejects.toThrow("CODEX_LAUNCH_FAILED");
+
+    expect(store.listPendingBridgeAssetsForSurface({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    })).toEqual([
+      expect.objectContaining({
+        status: "pending",
+        runId: null,
+        localPath: "D:/assets/one.png",
+      }),
+    ]);
+  });
+
   it("persists bridge-managed plan interactions from runner events and exposes them on the final progress snapshot", async () => {
     store.createProject({
       projectId: "proj-current",

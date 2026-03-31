@@ -1537,6 +1537,74 @@ export class SessionStore {
     }));
   }
 
+  public restoreConsumedBridgeAssets(input: {
+    runId: string;
+    assetIds: string[];
+  }): BridgeAssetRecord[] {
+    if (input.assetIds.length === 0) {
+      return [];
+    }
+
+    const restoredAt = new Date().toISOString();
+    const placeholders = input.assetIds.map(() => "?").join(", ");
+    const rows = this.db.prepare(`
+      SELECT
+        asset_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        message_id,
+        resource_type,
+        resource_key,
+        local_path,
+        file_name,
+        mime_type,
+        file_size,
+        status,
+        error_text,
+        created_at,
+        updated_at,
+        consumed_at,
+        failed_at,
+        expired_at
+      FROM pending_bridge_assets
+      WHERE
+        status = 'consumed'
+        AND run_id = ?
+        AND asset_id IN (${placeholders})
+      ORDER BY created_at ASC, asset_id ASC
+    `).all(input.runId, ...input.assetIds) as BridgeAssetRow[];
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    const selectedAssetIds = rows.map(row => row.asset_id);
+    const updatePlaceholders = selectedAssetIds.map(() => "?").join(", ");
+
+    this.db.prepare(`
+      UPDATE pending_bridge_assets
+      SET
+        run_id = NULL,
+        status = 'pending',
+        updated_at = ?,
+        consumed_at = NULL
+      WHERE run_id = ?
+        AND asset_id IN (${updatePlaceholders})
+    `).run(restoredAt, input.runId, ...selectedAssetIds);
+
+    return rows.map(row => rowToBridgeAsset({
+      ...row,
+      run_id: null,
+      status: "pending",
+      updated_at: restoredAt,
+      consumed_at: null,
+    }));
+  }
+
   public failPendingBridgeAsset(input: {
     assetId: string;
     errorText?: string | null;

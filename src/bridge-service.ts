@@ -142,6 +142,8 @@ export class BridgeService {
 
     const executeRun = async (): Promise<BridgeReply[]> => {
       let activeResolved = resolved;
+      let consumedAssets: BridgeAssetRecord[] = [];
+      let sawRunnerEvent = false;
 
       this.dependencies.store.createRun({
         runId: currentProgress.runId,
@@ -193,7 +195,7 @@ export class BridgeService {
         `[ca] session ready: ${activeResolved.sessionName}`,
         activeResolved.sessionName,
       );
-      const consumedAssets = stagedAssets.length > 0
+      consumedAssets = stagedAssets.length > 0
         ? this.dependencies.store.consumePendingBridgeAssets({
             runId: currentProgress.runId,
             assetIds: stagedAssets.map(asset => asset.assetId),
@@ -212,44 +214,56 @@ export class BridgeService {
         activeResolved.sessionName,
       );
 
-      const outcome = await this.dependencies.runner.submitVerbatim(
-        activeResolved.context,
-        promptText,
-        consumedAssets.length > 0
-          ? {
-              images: consumedAssets
-                .filter(asset => asset.resourceType === "image")
-                .map(asset => asset.localPath),
+      let outcome: RunOutcome;
+      try {
+        outcome = await this.dependencies.runner.submitVerbatim(
+          activeResolved.context,
+          promptText,
+          consumedAssets.length > 0
+            ? {
+                images: consumedAssets
+                  .filter(asset => asset.resourceType === "image")
+                  .map(asset => asset.localPath),
+              }
+            : undefined,
+          async event => {
+            sawRunnerEvent = true;
+            let snapshot = reduceProgressEvent(currentProgress, event);
+            if (event.type === "text" && event.planInteraction && activeResolved.threadId) {
+              const interaction = this.dependencies.store.savePendingPlanInteraction({
+                runId: currentProgress.runId,
+                channel: input.channel,
+                peerId: input.peerId,
+                chatId: activeResolved.deliveryChatId,
+                surfaceType: activeResolved.deliverySurfaceType,
+                surfaceRef: activeResolved.deliverySurfaceRef,
+                threadId: activeResolved.threadId,
+                sessionName: activeResolved.sessionName,
+                question: event.planInteraction.question,
+                choices: event.planInteraction.choices,
+              });
+              snapshot = {
+                ...snapshot,
+                planInteraction: interaction,
+              };
             }
-          : undefined,
-        async event => {
-          let snapshot = reduceProgressEvent(currentProgress, event);
-          if (event.type === "text" && event.planInteraction && activeResolved.threadId) {
-            const interaction = this.dependencies.store.savePendingPlanInteraction({
-              runId: currentProgress.runId,
-              channel: input.channel,
-              peerId: input.peerId,
-              chatId: activeResolved.deliveryChatId,
-              surfaceType: activeResolved.deliverySurfaceType,
-              surfaceRef: activeResolved.deliverySurfaceRef,
-              threadId: activeResolved.threadId,
-              sessionName: activeResolved.sessionName,
-              question: event.planInteraction.question,
-              choices: event.planInteraction.choices,
-            });
-            snapshot = {
-              ...snapshot,
-              planInteraction: interaction,
-            };
-          }
-          await emitSnapshot(
-            snapshot,
-            "acpx",
-            event.type === "tool_call" ? event.toolName : undefined,
-            event.type === "text" || event.type === "waiting",
-          );
-        },
-      );
+            await emitSnapshot(
+              snapshot,
+              "acpx",
+              event.type === "tool_call" ? event.toolName : undefined,
+              event.type === "text" || event.type === "waiting",
+            );
+          },
+        );
+      } catch (error) {
+        if (!sawRunnerEvent && consumedAssets.length > 0) {
+          this.dependencies.store.restoreConsumedBridgeAssets({
+            runId: currentProgress.runId,
+            assetIds: consumedAssets.map(asset => asset.assetId),
+          });
+        }
+        throw error;
+      }
 
       const finalText = findFinalAssistantText(outcome.events);
 
