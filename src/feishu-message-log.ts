@@ -64,13 +64,14 @@ export function buildFeishuInboundLog(input: {
 
 export function buildFeishuOutboundLog(input: {
   mode: string;
-  messageType: "text" | "interactive";
+  messageType: "text" | "interactive" | "image";
   messageId?: string;
   peerId?: string;
   chatId?: string;
   threadId?: string;
   anchorMessageId?: string;
   cardId?: string;
+  imageKey?: string;
   text?: string;
   card?: Record<string, unknown>;
 }): string {
@@ -86,7 +87,9 @@ export function buildFeishuOutboundLog(input: {
     input.cardId ? `card_id=${input.cardId}` : undefined,
     input.messageType === "text"
       ? formatSummary("text", summarizeFeishuText(input.text))
-      : formatSummary("card", summarizeFeishuCard(input.card)),
+      : input.messageType === "interactive"
+        ? formatSummary("card", summarizeFeishuCard(input.card))
+        : formatSummary("image_key", input.imageKey),
   ];
 
   return parts.filter(Boolean).join(" ");

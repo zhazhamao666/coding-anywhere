@@ -84,4 +84,75 @@ describe("run delivery target persistence", () => {
       sessionName: "thread-a",
     });
   });
+
+  it("keeps the same delivery target when a staged image is consumed for the run", async () => {
+    store.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_user",
+      chatId: "oc_chat_1",
+      surfaceType: "thread",
+      surfaceRef: "omt_1",
+      messageId: "om_image_1",
+      resourceKey: "img_thread_1",
+      localPath: "D:/assets/thread.png",
+      fileName: "thread.png",
+      mimeType: "image/png",
+      fileSize: 2048,
+    });
+
+    const runner = {
+      createThread: vi.fn(),
+      ensureSession: vi.fn(async () => undefined),
+      cancel: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      submitVerbatim: vi.fn(async (): Promise<RunOutcome> => ({
+        exitCode: 0,
+        events: [{ type: "done", content: "ok" }],
+      })),
+    };
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_user",
+      chatId: "oc_chat_1",
+      surfaceType: "thread",
+      surfaceRef: "omt_1",
+      text: "继续处理图片",
+    });
+
+    expect(runner.submitVerbatim).toHaveBeenCalledWith(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-a",
+        sessionName: "thread-a",
+        cwd: "D:/repo",
+      },
+      expect.stringContaining("[bridge-attachments]"),
+      {
+        images: ["D:/assets/thread.png"],
+      },
+      expect.any(Function),
+    );
+
+    const [run] = store.listRuns({ limit: 1 });
+    expect(run).toMatchObject({
+      projectId: "proj-a",
+      threadId: "thread-a",
+      deliveryChatId: "oc_chat_1",
+      deliverySurfaceType: "thread",
+      deliverySurfaceRef: "omt_1",
+      sessionName: "thread-a",
+    });
+    expect(store.listPendingBridgeAssetsForSurface({
+      channel: "feishu",
+      peerId: "ou_user",
+      chatId: "oc_chat_1",
+      surfaceType: "thread",
+      surfaceRef: "omt_1",
+    })).toEqual([]);
+  });
 });

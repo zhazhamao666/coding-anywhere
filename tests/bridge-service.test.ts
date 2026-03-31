@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -453,6 +453,315 @@ describe("BridgeService", () => {
       {
         kind: "assistant",
         text: "响应正常。",
+      },
+    ]);
+  });
+
+  it("consumes staged surface images and forwards them to the next prompt only once", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-created",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-created",
+      title: "image-thread",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+    store.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      messageId: "om_image_1",
+      resourceKey: "img_dm_1",
+      localPath: "D:/assets/one.png",
+      fileName: "one.png",
+      mimeType: "image/png",
+      fileSize: 1024,
+    });
+    store.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      messageId: "om_image_2",
+      resourceKey: "img_dm_2",
+      localPath: "D:/assets/two.png",
+      fileName: "two.png",
+      mimeType: "image/png",
+      fileSize: 2048,
+    });
+
+    const runner = createRunnerDouble([
+      { type: "text", content: "结合图片分析完成。" },
+      { type: "done", content: "结合图片分析完成。" },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "请结合刚才的图片继续分析",
+    });
+
+    expect(runner.submitVerbatim).toHaveBeenCalledWith(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-created",
+        sessionName: "thread-created",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      },
+      expect.stringContaining("[bridge-attachments]"),
+      {
+        images: ["D:/assets/one.png", "D:/assets/two.png"],
+      },
+      expect.any(Function),
+    );
+    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("image_count: 2");
+    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("file_name=one.png");
+    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("source_message_id=om_image_1");
+    expect(store.listPendingBridgeAssetsForSurface({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    })).toEqual([]);
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "再继续一次",
+    });
+
+    expect(runner.submitVerbatim.mock.calls[1]).toHaveLength(3);
+    expect(runner.submitVerbatim.mock.calls[1]?.[2]).toEqual(expect.any(Function));
+    expect((runner.submitVerbatim.mock.calls[1]?.[1] as string)).not.toContain("[bridge-attachments]");
+  });
+
+  it("restores staged images when the runner fails before emitting any event", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-created",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-created",
+      title: "image-thread",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+    store.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      messageId: "om_image_1",
+      resourceKey: "img_dm_1",
+      localPath: "D:/assets/one.png",
+      fileName: "one.png",
+      mimeType: "image/png",
+      fileSize: 1024,
+    });
+
+    const runner = {
+      createThread: vi.fn(async () => ({
+        exitCode: 0,
+        events: [],
+        threadId: "thread-created",
+      })),
+      ensureSession: vi.fn(async () => undefined),
+      cancel: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      submitVerbatim: vi.fn(async () => {
+        throw new Error("CODEX_LAUNCH_FAILED");
+      }),
+    };
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    await expect(service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "请结合刚才的图片继续分析",
+    })).rejects.toThrow("CODEX_LAUNCH_FAILED");
+
+    expect(store.listPendingBridgeAssetsForSurface({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    })).toEqual([
+      expect.objectContaining({
+        status: "pending",
+        runId: null,
+        localPath: "D:/assets/one.png",
+      }),
+    ]);
+  });
+
+  it("strips bridge-image directives from assistant text and returns image replies", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    const imagePath = path.join(projectCwd, "artifacts", "result.png");
+    mkdirSync(path.dirname(imagePath), { recursive: true });
+    writeFileSync(imagePath, "png");
+
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    store.createCodexThread({
+      threadId: "thread-created",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-created",
+      title: "image-thread",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+
+    const directiveText = [
+      "已生成结果图。",
+      "[bridge-image]",
+      JSON.stringify({
+        images: [{
+          path: imagePath,
+          caption: "处理结果图",
+        }],
+      }),
+      "[/bridge-image]",
+    ].join("\n");
+    const runner = createRunnerDouble([
+      { type: "text", content: directiveText },
+      { type: "done", content: directiveText },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "请返回结果图",
+    });
+
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "已生成结果图。",
+      },
+      {
+        kind: "image",
+        localPath: imagePath,
+        caption: "处理结果图",
+      },
+    ]);
+  });
+
+  it("degrades disallowed bridge-image paths into readable system text", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    const outsideImagePath = path.join(rootDir, "outside.png");
+    writeFileSync(outsideImagePath, "png");
+
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    store.createCodexThread({
+      threadId: "thread-created",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-created",
+      title: "image-thread",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+
+    const directiveText = [
+      "图片已生成。",
+      "[bridge-image]",
+      JSON.stringify({
+        images: [{
+          path: outsideImagePath,
+          caption: "不允许的路径",
+        }],
+      }),
+      "[/bridge-image]",
+    ].join("\n");
+    const runner = createRunnerDouble([
+      { type: "text", content: directiveText },
+      { type: "done", content: directiveText },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "请返回结果图",
+    });
+
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "图片已生成。",
+      },
+      {
+        kind: "system",
+        text: `[ca] image unavailable: disallowed path ${outsideImagePath}`,
       },
     ]);
   });
@@ -1335,7 +1644,16 @@ function createRunnerDouble(
     ensureSession: vi.fn(async () => undefined),
     cancel: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
-    submitVerbatim: vi.fn(async (_context, _prompt, onEvent?: (event: AcpxEvent) => void) => {
+    submitVerbatim: vi.fn(async (
+      _context,
+      _prompt,
+      optionsOrOnEvent?: { images?: string[] } | ((event: AcpxEvent) => void),
+      maybeOnEvent?: (event: AcpxEvent) => void,
+    ) => {
+      const onEvent = typeof optionsOrOnEvent === "function"
+        ? optionsOrOnEvent
+        : maybeOnEvent;
+
       for (const event of events) {
         onEvent?.(event);
       }

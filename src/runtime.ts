@@ -78,6 +78,7 @@ export async function createRuntime(
     allowlist: config.feishu.allowlist,
     bridgeService,
     apiClient,
+    pendingAssetStore: store,
     requireGroupMention: config.feishu.requireGroupMention,
     logger: overrides?.logger,
   });
@@ -120,7 +121,7 @@ export async function createRuntime(
       });
       await wsClient.start();
       idleReaper = setInterval(() => {
-        void reapIdleThreads({
+        void runRuntimeMaintenance({
           store,
           runner,
           ttlHours: config.root.idleTtlHours,
@@ -136,6 +137,26 @@ export async function createRuntime(
       store.close();
     },
   };
+}
+
+export async function runRuntimeMaintenance(input: {
+  store: SessionStore;
+  runner: ThreadReapRunnerLike;
+  ttlHours: number;
+  now?: Date;
+}): Promise<void> {
+  const now = input.now ?? new Date();
+  await reapIdleThreads({
+    store: input.store,
+    runner: input.runner,
+    ttlHours: input.ttlHours,
+    now,
+  });
+  expireStalePendingBridgeAssets({
+    store: input.store,
+    ttlHours: input.ttlHours,
+    now,
+  });
 }
 
 export async function reapIdleThreads(input: {
@@ -158,6 +179,16 @@ export async function reapIdleThreads(input: {
       lastActivityAt: now.toISOString(),
     });
   }
+}
+
+export function expireStalePendingBridgeAssets(input: {
+  store: SessionStore;
+  ttlHours: number;
+  now?: Date;
+}): number {
+  const now = input.now ?? new Date();
+  const cutoffIso = new Date(now.getTime() - input.ttlHours * 60 * 60 * 1000).toISOString();
+  return input.store.expirePendingBridgeAssets(cutoffIso);
 }
 
 function createDefaultApiClient(config: BridgeConfig, logger?: Logger) {

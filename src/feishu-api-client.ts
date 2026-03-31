@@ -1,6 +1,10 @@
+import { mkdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+
 import { Client } from "@larksuiteoapi/node-sdk";
 
 import { buildFeishuOutboundLog } from "./feishu-message-log.js";
+import type { BridgeAssetDownloadResult } from "./types.js";
 
 interface SdkResponse {
   code?: number;
@@ -25,6 +29,19 @@ interface FeishuSdkClientLike {
       }>;
       patch(params: Record<string, unknown>): Promise<unknown>;
       update(params: Record<string, unknown>): Promise<unknown>;
+    };
+    v1?: {
+      image?: {
+        create(params: Record<string, unknown>): Promise<{
+          image_key?: string;
+        } | null>;
+      };
+      messageResource?: {
+        get(params: Record<string, unknown>): Promise<{
+          writeFile(filePath: string): Promise<unknown>;
+          headers: unknown;
+        }>;
+      };
     };
   };
   cardkit: {
@@ -73,6 +90,78 @@ export class FeishuApiClient {
     this.logger = options?.logger;
     this.now = options?.now ?? (() => Date.now());
     this.pushLogWindowMs = options?.pushLogWindowMs ?? 60_000;
+  }
+
+  public async downloadMessageResource(input: {
+    messageId: string;
+    fileKey: string;
+    type: "image";
+    downloadDir: string;
+    preferredFileName?: string;
+  }): Promise<BridgeAssetDownloadResult> {
+    const messageResourceClient = this.sdkClient.im.v1?.messageResource;
+    if (!messageResourceClient) {
+      throw new Error("FEISHU_MESSAGE_RESOURCE_UNAVAILABLE");
+    }
+
+    mkdirSync(input.downloadDir, { recursive: true });
+    const response = await messageResourceClient.get({
+      params: {
+        type: input.type,
+      },
+      path: {
+        message_id: input.messageId,
+        file_key: input.fileKey,
+      },
+    });
+
+    const headers = normalizeHeaderMap(response.headers);
+    const fileName = resolveDownloadedFileName(
+      headers,
+      input.preferredFileName ?? `${input.fileKey}.bin`,
+    );
+    const localPath = path.join(input.downloadDir, fileName);
+    await response.writeFile(localPath);
+
+    const fileStat = statSync(localPath);
+    return {
+      resourceKey: input.fileKey,
+      localPath,
+      fileName,
+      mimeType: headers["content-type"] ?? null,
+      fileSize: fileStat.size,
+    };
+  }
+
+  public async uploadImage(input: {
+    imagePath: string;
+    imageType?: "message" | "avatar";
+  }): Promise<string> {
+    const imageClient = this.sdkClient.im.v1?.image;
+    if (!imageClient) {
+      throw new Error("FEISHU_IMAGE_UPLOAD_UNAVAILABLE");
+    }
+
+    const response = await imageClient.create({
+      data: {
+        image_type: input.imageType ?? "message",
+        image: readFileSync(input.imagePath),
+      },
+    });
+    const imageKey = response?.image_key ?? "";
+    if (!imageKey) {
+      throw new Error("FEISHU_IMAGE_UPLOAD_FAILED");
+    }
+
+    this.logOutbound(
+      {
+        messageType: "image",
+        mode: "upload",
+        imageKey,
+      },
+      [`image:${imageKey}`],
+    );
+    return imageKey;
   }
 
   public async sendTextMessage(peerId: string, text: string): Promise<string> {
@@ -179,6 +268,58 @@ export class FeishuApiClient {
         text,
       },
       [`message:${replyMessageId}`],
+    );
+    return replyMessageId;
+  }
+
+  public async sendImageMessage(peerId: string, imageKey: string): Promise<string> {
+    const response = await this.sdkClient.im.message.create({
+      params: {
+        receive_id_type: "open_id",
+      },
+      data: {
+        receive_id: peerId,
+        msg_type: "image",
+        content: JSON.stringify({ image_key: imageKey }),
+      },
+    });
+
+    const messageId = response.data?.message_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "image",
+        mode: "create",
+        messageId,
+        peerId,
+        imageKey,
+      },
+      [`message:${messageId}`, `image:${imageKey}`],
+    );
+    return messageId;
+  }
+
+  public async replyImageMessage(messageId: string, imageKey: string): Promise<string> {
+    const response = await this.sdkClient.im.message.reply({
+      path: {
+        message_id: messageId,
+      },
+      data: {
+        msg_type: "image",
+        content: JSON.stringify({ image_key: imageKey }),
+      },
+    });
+
+    const replyMessageId = response.data?.message_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "image",
+        mode: "reply",
+        messageId: replyMessageId,
+        anchorMessageId: messageId,
+        threadId: response.data?.thread_id ?? "",
+        imageKey,
+      },
+      [`message:${replyMessageId}`, `image:${imageKey}`],
     );
     return replyMessageId;
   }
@@ -388,13 +529,14 @@ export class FeishuApiClient {
   private logOutbound(
     input: {
       mode: string;
-      messageType: "text" | "interactive";
+      messageType: "text" | "interactive" | "image";
       messageId?: string;
       peerId?: string;
       chatId?: string;
       threadId?: string;
       anchorMessageId?: string;
       cardId?: string;
+      imageKey?: string;
       text?: string;
       card?: Record<string, unknown>;
     },
@@ -443,4 +585,45 @@ function assertSdkSuccess(response: SdkResponse, operation: string): void {
 
 function normalizeSdkDomain(apiBaseUrl: string): string {
   return apiBaseUrl.replace(/\/open-apis\/?$/, "");
+}
+
+function normalizeHeaderMap(headers: unknown): Record<string, string> {
+  if (!headers || typeof headers !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(headers as Record<string, unknown>)
+      .filter((entry): entry is [string, string | string[]] =>
+        typeof entry[1] === "string" || Array.isArray(entry[1]),
+      )
+      .map(([key, value]) => [
+        key.toLowerCase(),
+        Array.isArray(value) ? value[0] ?? "" : value,
+      ]),
+  );
+}
+
+function resolveDownloadedFileName(
+  headers: Record<string, string>,
+  fallbackFileName: string,
+): string {
+  const contentDisposition = headers["content-disposition"];
+  const encodedMatch = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i);
+  if (encodedMatch?.[1]) {
+    return sanitizeFileName(decodeURIComponent(encodedMatch[1]));
+  }
+
+  const plainMatch = contentDisposition?.match(/filename="?([^";]+)"?/i);
+  if (plainMatch?.[1]) {
+    return sanitizeFileName(plainMatch[1]);
+  }
+
+  return sanitizeFileName(fallbackFileName);
+}
+
+function sanitizeFileName(fileName: string): string {
+  const baseName = path.basename(fileName).trim();
+  const sanitized = baseName.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
+  return sanitized || "download.bin";
 }

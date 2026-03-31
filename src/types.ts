@@ -36,6 +36,42 @@ export interface PendingPlanInteractionRecord extends PlanInteractionDraft {
   resolvedAt: string | null;
 }
 
+export type BridgeAssetStatus = "pending" | "consumed" | "failed" | "expired" | "sent";
+
+export type BridgeAssetResourceType = "image";
+
+export interface BridgeAssetRecord {
+  assetId: string;
+  runId: string | null;
+  channel: string;
+  peerId: string;
+  chatId: string | null;
+  surfaceType: "thread" | null;
+  surfaceRef: string | null;
+  messageId: string;
+  resourceType: BridgeAssetResourceType;
+  resourceKey: string;
+  localPath: string;
+  fileName: string;
+  mimeType: string | null;
+  fileSize: number | null;
+  status: BridgeAssetStatus;
+  errorText: string | null;
+  createdAt: string;
+  updatedAt: string;
+  consumedAt: string | null;
+  failedAt: string | null;
+  expiredAt: string | null;
+}
+
+export interface BridgeAssetDownloadResult {
+  resourceKey: string;
+  localPath: string;
+  fileName: string;
+  mimeType: string | null;
+  fileSize: number | null;
+}
+
 export interface RootProfile {
   id: string;
   name: string;

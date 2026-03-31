@@ -106,6 +106,32 @@ describe("AcpxRunner", () => {
     ]);
   });
 
+  it("forwards staged images to codex exec when creating a native thread", async () => {
+    const child = createChildFromFixture("create-thread.jsonl", 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+
+    await runner.createThread({
+      cwd: "D:/repo",
+      prompt: "Initialize a bridge thread.",
+      images: [
+        "D:/assets/one.png",
+        "D:/assets/two.png",
+      ],
+    });
+
+    expect(execaMock).toHaveBeenCalledWith(
+      "codex",
+      ["exec", "--json", "-i", "D:/assets/one.png", "-i", "D:/assets/two.png", "-"],
+      {
+        cwd: "D:/repo",
+        input: "Initialize a bridge thread.",
+        reject: false,
+      },
+    );
+  });
+
   it("treats close as a no-op for native-only execution", async () => {
     const runner = new AcpxRunner("acpx", "codex");
 
@@ -176,6 +202,49 @@ describe("AcpxRunner", () => {
       { type: "text", content: "RESUMED" },
       { type: "done", content: "RESUMED" },
     ]);
+  });
+
+  it("forwards staged images to codex exec resume", async () => {
+    const child = createChildFromFixture("resume-thread.jsonl", 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new AcpxRunner("acpx", "codex");
+
+    await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "test",
+      {
+        images: [
+          "D:/assets/one.png",
+          "D:/assets/two.png",
+        ],
+      },
+    );
+
+    expect(execaMock).toHaveBeenCalledWith(
+      "codex",
+      [
+        "exec",
+        "resume",
+        "--json",
+        "-i",
+        "D:/assets/one.png",
+        "-i",
+        "D:/assets/two.png",
+        "thread-demo",
+        "-",
+      ],
+      {
+        cwd: "D:/repo",
+        input: "test",
+        reject: false,
+      },
+    );
   });
 
   it("reports a failed command execution as an error and still completes the turn", async () => {

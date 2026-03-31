@@ -1,12 +1,18 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
+import {
+  DEFAULT_BRIDGE_ASSET_ROOT_DIR,
+  parseBridgeImageDirective,
+  validateBridgeImagePath,
+} from "./bridge-image-directive.js";
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import type { ProjectThreadService } from "./project-thread-service.js";
 import { createProgressCardState, reduceProgressEvent } from "./progress-relay.js";
 import type {
   AcpxEvent,
+  BridgeAssetRecord,
   BridgeMessageInput,
   BridgeLifecycleStage,
   BridgeReply,
@@ -26,6 +32,7 @@ interface BridgeRunner {
     input: {
       cwd: string;
       prompt: string;
+      images?: string[];
     },
     onEvent?: (event: AcpxEvent) => void,
   ): Promise<RunOutcome & { threadId: string }>;
@@ -33,6 +40,9 @@ interface BridgeRunner {
   submitVerbatim(
     context: RunContext,
     prompt: string,
+    optionsOrOnEvent?: {
+      images?: string[];
+    } | ((event: AcpxEvent) => void | Promise<void>),
     onEvent?: (event: AcpxEvent) => void,
   ): Promise<RunOutcome>;
   cancel(context: RunContext): Promise<void>;
@@ -69,6 +79,7 @@ export class BridgeService {
     private readonly dependencies: {
       store: SessionStore;
       runner: BridgeRunner;
+      managedAssetRootDir?: string;
       workerManager?: RunWorkerManagerLike;
       projectThreadService?: Pick<ProjectThreadService, "createThread" | "linkThread">;
       codexCatalog?: CodexCatalogLike;
@@ -83,6 +94,14 @@ export class BridgeService {
     if (routed.kind === "command") {
       return this.handleCommand(input, routed.command.name, routed.command.args);
     }
+
+    const stagedAssets = this.dependencies.store.listPendingBridgeAssetsForSurface({
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+    });
 
     const resolved = this.resolveContext(input);
     let currentProgress = createProgressCardState({
@@ -129,6 +148,8 @@ export class BridgeService {
 
     const executeRun = async (): Promise<BridgeReply[]> => {
       let activeResolved = resolved;
+      let consumedAssets: BridgeAssetRecord[] = [];
+      let sawRunnerEvent = false;
 
       this.dependencies.store.createRun({
         runId: currentProgress.runId,
@@ -180,6 +201,18 @@ export class BridgeService {
         `[ca] session ready: ${activeResolved.sessionName}`,
         activeResolved.sessionName,
       );
+      consumedAssets = stagedAssets.length > 0
+        ? this.dependencies.store.consumePendingBridgeAssets({
+            runId: currentProgress.runId,
+            assetIds: stagedAssets.map(asset => asset.assetId),
+          })
+        : [];
+      const promptText = buildPromptForCodexRun({
+        root: activeResolved.root,
+        prompt: routed.prompt,
+        wrapPrompt: activeResolved.wrapPrompt,
+        assets: consumedAssets,
+      });
       await emitLifecycle("submitting_prompt", "[ca] submitting prompt", activeResolved.sessionName);
       await emitLifecycle(
         "waiting_first_event",
@@ -187,41 +220,70 @@ export class BridgeService {
         activeResolved.sessionName,
       );
 
-      const outcome = await this.dependencies.runner.submitVerbatim(
-        activeResolved.context,
-        activeResolved.wrapPrompt
-          ? buildCodexPromptEnvelope(activeResolved.root, routed.prompt)
-          : routed.prompt,
-        async event => {
-          let snapshot = reduceProgressEvent(currentProgress, event);
-          if (event.type === "text" && event.planInteraction && activeResolved.threadId) {
-            const interaction = this.dependencies.store.savePendingPlanInteraction({
-              runId: currentProgress.runId,
-              channel: input.channel,
-              peerId: input.peerId,
-              chatId: activeResolved.deliveryChatId,
-              surfaceType: activeResolved.deliverySurfaceType,
-              surfaceRef: activeResolved.deliverySurfaceRef,
-              threadId: activeResolved.threadId,
-              sessionName: activeResolved.sessionName,
-              question: event.planInteraction.question,
-              choices: event.planInteraction.choices,
-            });
-            snapshot = {
-              ...snapshot,
-              planInteraction: interaction,
-            };
-          }
-          await emitSnapshot(
-            snapshot,
-            "acpx",
-            event.type === "tool_call" ? event.toolName : undefined,
-            event.type === "text" || event.type === "waiting",
-          );
-        },
-      );
+      const runnerEventHandler = async (event: AcpxEvent) => {
+        sawRunnerEvent = true;
+        let snapshot = reduceProgressEvent(currentProgress, event);
+        if (event.type === "text" && event.planInteraction && activeResolved.threadId) {
+          const interaction = this.dependencies.store.savePendingPlanInteraction({
+            runId: currentProgress.runId,
+            channel: input.channel,
+            peerId: input.peerId,
+            chatId: activeResolved.deliveryChatId,
+            surfaceType: activeResolved.deliverySurfaceType,
+            surfaceRef: activeResolved.deliverySurfaceRef,
+            threadId: activeResolved.threadId,
+            sessionName: activeResolved.sessionName,
+            question: event.planInteraction.question,
+            choices: event.planInteraction.choices,
+          });
+          snapshot = {
+            ...snapshot,
+            planInteraction: interaction,
+          };
+        }
+        await emitSnapshot(
+          snapshot,
+          "acpx",
+          event.type === "tool_call" ? event.toolName : undefined,
+          event.type === "text" || event.type === "waiting",
+        );
+      };
+
+      let outcome: RunOutcome;
+      try {
+        const imagePaths = consumedAssets
+          .filter(asset => asset.resourceType === "image")
+          .map(asset => asset.localPath);
+        outcome = imagePaths.length > 0
+          ? await this.dependencies.runner.submitVerbatim(
+              activeResolved.context,
+              promptText,
+              {
+                images: imagePaths,
+              },
+              runnerEventHandler,
+            )
+          : await this.dependencies.runner.submitVerbatim(
+              activeResolved.context,
+              promptText,
+              runnerEventHandler,
+            );
+      } catch (error) {
+        if (!sawRunnerEvent && consumedAssets.length > 0) {
+          this.dependencies.store.restoreConsumedBridgeAssets({
+            runId: currentProgress.runId,
+            assetIds: consumedAssets.map(asset => asset.assetId),
+          });
+        }
+        throw error;
+      }
 
       const finalText = findFinalAssistantText(outcome.events);
+      const finalOutput = buildFinalBridgeReplies({
+        finalText,
+        cwd: activeResolved.context.cwd,
+        managedAssetRootDir: this.dependencies.managedAssetRootDir ?? DEFAULT_BRIDGE_ASSET_ROOT_DIR,
+      });
 
       if (currentProgress.status === "error" || outcome.exitCode !== 0) {
         const errorText = currentProgress.status === "error"
@@ -241,7 +303,7 @@ export class BridgeService {
       if (!isTerminalProgress(currentProgress)) {
         const snapshot = reduceProgressEvent(currentProgress, {
           type: "done",
-          content: finalText,
+          content: finalOutput.previewText,
         });
         await emitSnapshot(snapshot, "system");
       }
@@ -262,12 +324,7 @@ export class BridgeService {
         });
       }
 
-      return [
-        {
-          kind: "assistant",
-          text: finalText,
-        },
-      ];
+      return finalOutput.replies;
     };
 
     const executeWithErrorHandling = async (): Promise<BridgeReply[]> => {
@@ -1759,20 +1816,112 @@ function extractErrorText(preview: string): string {
   return preview.startsWith(prefix) ? preview.slice(prefix.length) : preview;
 }
 
-function buildCodexPromptEnvelope(root: RootProfile, prompt: string): string {
-  return [
-    "[bridge-context]",
-    `root_name: ${root.id}`,
-    `root_path: ${root.cwd}`,
-    "instructions:",
-    "- You are operating inside the configured bridge root.",
-    "- Discover projects and repositories under this root yourself.",
-    "- If the user asks about available projects, inspect the filesystem and answer directly.",
-    `- Do not tell the user to use ${BRIDGE_COMMAND_PREFIX} repo commands because bridge does not manage projects.`,
-    "[/bridge-context]",
-    "",
+function buildPromptForCodexRun(input: {
+  root: RootProfile;
+  prompt: string;
+  wrapPrompt: boolean;
+  assets: BridgeAssetRecord[];
+}): string {
+  if (!input.wrapPrompt && input.assets.length === 0) {
+    return input.prompt;
+  }
+
+  const sections: string[] = [];
+
+  if (input.wrapPrompt) {
+    sections.push(
+      "[bridge-context]",
+      `root_name: ${input.root.id}`,
+      `root_path: ${input.root.cwd}`,
+      "instructions:",
+      "- You are operating inside the configured bridge root.",
+      "- Discover projects and repositories under this root yourself.",
+      "- If the user asks about available projects, inspect the filesystem and answer directly.",
+      `- Do not tell the user to use ${BRIDGE_COMMAND_PREFIX} repo commands because bridge does not manage projects.`,
+      "[/bridge-context]",
+      "",
+    );
+  }
+
+  if (input.assets.length > 0) {
+    sections.push(
+      "[bridge-attachments]",
+      `image_count: ${input.assets.length}`,
+      ...input.assets.map((asset, index) =>
+        `image_${index + 1}: file_name=${asset.fileName}; source_message_id=${asset.messageId}; mime_type=${asset.mimeType ?? "unknown"}`,
+      ),
+      "[/bridge-attachments]",
+      "",
+    );
+  }
+
+  sections.push(
     "[user-message]",
-    prompt,
+    input.prompt,
     "[/user-message]",
-  ].join("\n");
+  );
+
+  return sections.join("\n");
+}
+
+function buildFinalBridgeReplies(input: {
+  finalText: string;
+  cwd: string;
+  managedAssetRootDir: string;
+}): {
+  previewText: string;
+  replies: BridgeReply[];
+} {
+  const parsed = parseBridgeImageDirective(input.finalText);
+  const replies: BridgeReply[] = [];
+  const fallbackTexts = [...parsed.errors];
+  const captionTexts: string[] = [];
+
+  for (const image of parsed.images) {
+    const validation = validateBridgeImagePath({
+      candidatePath: image.localPath,
+      cwd: input.cwd,
+      managedAssetRootDir: input.managedAssetRootDir,
+    });
+    if (!validation.ok) {
+      fallbackTexts.push(validation.errorText);
+      continue;
+    }
+
+    replies.push({
+      kind: "image",
+      localPath: validation.image.localPath,
+      caption: image.caption,
+    });
+    if (image.caption) {
+      captionTexts.push(image.caption);
+    }
+  }
+
+  const assistantText = parsed.cleanedText || captionTexts.join("\n\n");
+  if (assistantText) {
+    replies.unshift({
+      kind: "assistant",
+      text: assistantText,
+    });
+  }
+
+  for (const text of fallbackTexts) {
+    replies.push({
+      kind: "system",
+      text,
+    });
+  }
+
+  if (replies.length === 0) {
+    replies.push({
+      kind: "assistant",
+      text: input.finalText,
+    });
+  }
+
+  return {
+    previewText: assistantText || fallbackTexts[0] || "[ca] image reply generated",
+    replies,
+  };
 }

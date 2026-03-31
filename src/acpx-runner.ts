@@ -167,11 +167,12 @@ export class AcpxRunner {
     input: {
       cwd: string;
       prompt: string;
+      images?: string[];
     },
     onEvent?: (event: AcpxEvent) => void,
   ): Promise<RunOutcome & { threadId: string }> {
     const outcome = await this.runCodexExec(
-      ["exec", "--json", "-"],
+      withCodexImages(["exec", "--json", "-"], input.images),
       input.cwd,
       input.prompt,
       onEvent,
@@ -190,20 +191,26 @@ export class AcpxRunner {
   public async submitVerbatim(
     context: RunContext,
     prompt: string,
+    optionsOrOnEvent?: {
+      images?: string[];
+    } | ((event: AcpxEvent) => void),
     onEvent?: (event: AcpxEvent) => void,
   ): Promise<RunOutcome> {
+    const options = typeof optionsOrOnEvent === "function" ? undefined : optionsOrOnEvent;
+    const effectiveOnEvent = typeof optionsOrOnEvent === "function" ? optionsOrOnEvent : onEvent;
+
     if (context.targetKind === "codex_thread") {
       return this.runCodexExec(
-        [
+        withCodexImages([
           "exec",
           "resume",
           "--json",
           context.threadId,
           "-",
-        ],
+        ], options?.images, 2),
         context.cwd,
         prompt,
-        onEvent,
+        effectiveOnEvent,
       );
     }
 
@@ -220,11 +227,11 @@ export class AcpxRunner {
         "--file",
         "-",
       ],
-      {
-        cwd: context.cwd,
-        input: prompt,
-        reject: false,
-      },
+          {
+            cwd: context.cwd,
+            input: prompt,
+            reject: false,
+          },
     );
 
     const events: AcpxEvent[] = [];
@@ -238,7 +245,7 @@ export class AcpxRunner {
           buffer,
           assistantText,
           events,
-          onEvent,
+          onEvent: effectiveOnEvent,
         });
         buffer = remainingBuffer;
         assistantText = nextAssistantText;
@@ -249,7 +256,7 @@ export class AcpxRunner {
       buffer,
       assistantText,
       events,
-      onEvent,
+      onEvent: effectiveOnEvent,
       flushPartial: true,
     });
     assistantText = finalFlush.nextAssistantText;
@@ -322,6 +329,27 @@ export class AcpxRunner {
       threadId,
     };
   }
+}
+
+function withCodexImages(
+  args: string[],
+  images: string[] | undefined,
+  trailingArgsCount = 1,
+): string[] {
+  if (!images || images.length === 0) {
+    return args;
+  }
+
+  const imageArgs = images.flatMap(imagePath => ["-i", imagePath]);
+  if (trailingArgsCount <= 0 || trailingArgsCount > args.length) {
+    return [...args, ...imageArgs];
+  }
+
+  const insertIndex = args.length - trailingArgsCount;
+  const prefixArgs = args.slice(0, insertIndex);
+  const trailingArgs = args.slice(insertIndex);
+
+  return [...prefixArgs, ...imageArgs, ...trailingArgs];
 }
 
 function coalesceCodexExecEvent(event: AcpxEvent, assistantText: string): {

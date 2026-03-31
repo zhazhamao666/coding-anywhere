@@ -295,6 +295,193 @@ describe("SessionStore", () => {
     ).toBeUndefined();
   });
 
+  it("persists pending image assets per Feishu surface and consumes them by run", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+    const assetStore = store as any;
+
+    const dmAsset = assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_dm",
+      chatId: null,
+      surfaceType: null,
+      surfaceRef: null,
+      runId: null,
+      messageId: "om_dm_1",
+      resourceType: "image",
+      resourceKey: "img_dm_1",
+      localPath: path.join(rootDir, "assets", "dm-1.png"),
+      fileName: "dm-1.png",
+      mimeType: "image/png",
+      fileSize: 1234,
+      createdAt: "2026-03-28T00:00:00.000Z",
+    });
+
+    const duplicateDmAsset = assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_dm",
+      chatId: null,
+      surfaceType: null,
+      surfaceRef: null,
+      runId: null,
+      messageId: "om_dm_1",
+      resourceType: "image",
+      resourceKey: "img_dm_1",
+      localPath: path.join(rootDir, "assets", "dm-1.png"),
+      fileName: "dm-1.png",
+      mimeType: "image/png",
+      fileSize: 1234,
+      createdAt: "2026-03-28T00:02:00.000Z",
+    });
+
+    assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_dm",
+      chatId: "oc_chat_1",
+      surfaceType: "thread",
+      surfaceRef: "omt_1",
+      runId: null,
+      messageId: "om_thread_1",
+      resourceType: "image",
+      resourceKey: "img_thread_1",
+      localPath: path.join(rootDir, "assets", "thread-1.png"),
+      fileName: "thread-1.png",
+      mimeType: "image/png",
+      fileSize: 2345,
+      createdAt: "2026-03-28T00:01:00.000Z",
+    });
+
+    expect(duplicateDmAsset.assetId).toBe(dmAsset.assetId);
+
+    expect(
+      assetStore.listPendingBridgeAssetsForSurface({
+        channel: "feishu",
+        peerId: "ou_dm",
+        chatId: null,
+        surfaceType: null,
+        surfaceRef: null,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        assetId: dmAsset.assetId,
+        resourceKey: "img_dm_1",
+        status: "pending",
+      }),
+    ]);
+
+    const consumed = assetStore.consumePendingBridgeAssetsForSurface({
+      runId: "run-1",
+      channel: "feishu",
+      peerId: "ou_dm",
+      chatId: null,
+      surfaceType: null,
+      surfaceRef: null,
+    });
+
+    expect(consumed).toEqual([
+      expect.objectContaining({
+        assetId: dmAsset.assetId,
+        runId: "run-1",
+        status: "consumed",
+      }),
+    ]);
+
+    expect(
+      assetStore.listPendingBridgeAssetsForSurface({
+        channel: "feishu",
+        peerId: "ou_dm",
+        chatId: null,
+        surfaceType: null,
+        surfaceRef: null,
+      }),
+    ).toEqual([]);
+
+    expect(
+      assetStore.listPendingBridgeAssetsForSurface({
+        channel: "feishu",
+        peerId: "ou_dm",
+        chatId: "oc_chat_1",
+        surfaceType: "thread",
+        surfaceRef: "omt_1",
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        resourceKey: "img_thread_1",
+        status: "pending",
+      }),
+    ]);
+  });
+
+  it("marks pending image assets as failed and expires stale ones", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+    const assetStore = store as any;
+
+    const failedAsset = assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_dm",
+      chatId: null,
+      surfaceType: null,
+      surfaceRef: null,
+      runId: null,
+      messageId: "om_failed",
+      resourceType: "image",
+      resourceKey: "img_failed",
+      localPath: path.join(rootDir, "assets", "failed.png"),
+      fileName: "failed.png",
+      mimeType: "image/png",
+      fileSize: 3456,
+      createdAt: "2026-03-28T00:00:00.000Z",
+    });
+
+    const staleAsset = assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_dm",
+      chatId: null,
+      surfaceType: null,
+      surfaceRef: null,
+      runId: null,
+      messageId: "om_stale",
+      resourceType: "image",
+      resourceKey: "img_stale",
+      localPath: path.join(rootDir, "assets", "stale.png"),
+      fileName: "stale.png",
+      mimeType: "image/png",
+      fileSize: 4567,
+      createdAt: "2026-03-20T00:00:00.000Z",
+    });
+
+    expect(
+      assetStore.failPendingBridgeAsset({
+        assetId: failedAsset.assetId,
+        errorText: "download failed",
+      }),
+    ).toMatchObject({
+      assetId: failedAsset.assetId,
+      status: "failed",
+      errorText: "download failed",
+    });
+    expect(
+      assetStore.failPendingBridgeAsset({
+        assetId: failedAsset.assetId,
+        errorText: "download failed again",
+      }),
+    ).toBeUndefined();
+
+    expect(assetStore.expirePendingBridgeAssets("2026-03-25T00:00:00.000Z")).toBe(1);
+    expect(assetStore.getBridgeAsset(staleAsset.assetId)).toMatchObject({
+      assetId: staleAsset.assetId,
+      status: "expired",
+    });
+    expect(
+      assetStore.listPendingBridgeAssetsForSurface({
+        channel: "feishu",
+        peerId: "ou_dm",
+        chatId: null,
+        surfaceType: null,
+        surfaceRef: null,
+      }),
+    ).toEqual([]);
+  });
+
   it("migrates the legacy workspace root and drops obsolete tables", () => {
     const dbPath = path.join(rootDir, "bridge.db");
     const legacyDb = new Database(dbPath);

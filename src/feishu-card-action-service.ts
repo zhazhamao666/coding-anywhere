@@ -283,11 +283,10 @@ export class FeishuCardActionService {
     }
 
     if (reply.kind === "image") {
-      const infoCard = this.buildInfoCard(
-        "图片结果",
-        [reply.caption?.trim() ? reply.caption.trim() : "图片结果已生成。"],
-        input.actionValue,
-      );
+      const imageLines = reply.caption
+        ? [reply.caption, "图片结果已生成。"]
+        : ["图片结果已生成。"];
+      const infoCard = this.buildInfoCard("图片结果", imageLines, input.actionValue);
       this.dependencies.logger?.info?.(
         {
           openId: input.openId,

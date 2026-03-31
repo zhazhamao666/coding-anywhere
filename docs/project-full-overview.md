@@ -73,6 +73,12 @@
 44. 飞书卡片中的所有 `/ca` 命令按钮现在都会先在 `card.action.trigger` 中即时返回确认卡，再在后台完成实际操作并通过 `updateInteractiveCard` 回填最终结果；只有纯表单切换类动作仍保留即时返回目标卡片的模型
 45. runtime 输出到控制台的日志现在会统一在每一行开头追加本地时间戳，格式精确到毫秒，便于直接比对消息和回调时序
 46. 真正进入 bridge 处理链路的飞书入站消息，以及发往飞书的出站消息，现在都会打印一条简略日志；同一条消息或卡片的连续推送更新会做去重收敛，避免控制台刷屏
+47. 飞书 DM 和已注册群线程现在都可以先发送图片；bridge 会把图片下载为本地受管资产，并按当前飞书 surface 暂存，而不是立刻触发 Codex
+48. 同一个 DM / 线程 surface 上，下一条普通文本消息会自动消费这些待处理图片，并通过 `codex exec -i ...` 或 `codex exec resume -i ...` 一起送入 Codex
+49. bridge 现在会把图片附件清单包装进 prompt，明确告诉 Codex 当前带了几张图、文件名和来源消息 ID
+50. assistant 可以通过 `[bridge-image] ... [/bridge-image]` 私有指令声明本地图片路径；bridge 会校验路径后，把图片作为原生飞书图片消息回发
+51. 卡片按钮触发的异步 `/ca` 命令与计划模式链路也不会再静默吞掉图片结果；能发图时会真发图片，不能发图时会退回明确的文本卡说明
+52. runtime 维护任务除了线程空闲回收外，还会按 TTL 清理过期的待处理图片资产，避免 pending 图片长期滞留
 
 ### 2.3 当前仍未打通的部分
 
@@ -99,7 +105,7 @@ Feishu DM / Group Thread
   -> codex exec worker or codex exec resume worker
   -> Codex
   -> BridgeService
-  -> StreamingCardController / text reply
+  -> StreamingCardController / text + image reply
   -> Feishu API
   -> 飞书状态更新 + 最终结果回推
 ```
@@ -159,10 +165,11 @@ Browser / script
 - 初始化 `BridgeService`
 - 初始化 `CodexSqliteCatalog`
 - 初始化飞书 API client 和 WS client
+- 将 `SessionStore` 注入飞书适配层，承接待处理图片资产
 - 装配飞书长连接上的卡片按钮回调分发
 - 由 `FeishuWsClient` 直接归一化 `card.action.trigger` 长连接 payload，并把按钮动作交给 `FeishuCardActionService`
 - 装配 `/ops/*`
-- 启动线程空闲回收定时器
+- 启动线程空闲回收和待处理图片过期清理定时器
 
 ### 5.1.1 `src/windows-console.ts`
 
@@ -196,11 +203,12 @@ Windows 启动前清理模块。
 
 - 用户 allowlist 校验
 - 文本消息过滤
+- 图片消息下载与 surface 级暂存
 - DM 与群线程 surface 识别
 - mention-only fallback 过滤
 - 对真正进入 bridge 的飞书入站消息打印简略收包日志
 - 创建状态卡控制器
-- 将 CA 输出转成飞书消息、卡片或线程回复
+- 将 CA 输出转成飞书文本消息、图片消息、卡片或线程回复
 - 发送导航类按钮卡片时统一使用普通 `interactive` 消息卡片
 - 保留 CardKit 仅用于流式进度卡，不再把导航卡混入 CardKit/cardId 回写链路
 - 对普通对话 run 的终态保持“摘要卡 + 完整正文消息”分工，避免卡片和消息同时完整展示同一大段 assistant 结果
@@ -221,10 +229,23 @@ Windows 启动前清理模块。
 - 为导航卡按钮编码回放命令上下文
 - 为计划模式表单和计划选择按钮编码 bridge 动作上下文
 - root 上下文封装
+- 同 surface 待处理图片的消费与 prompt 附件清单封装
 - run 生命周期组织
 - 线程状态更新
 - 观测数据写入
 - 计划交互的持久化与续跑编排
+- `[bridge-image]` 私有指令解析、路径校验与图片回复编排
+
+### 5.3.1 `src/bridge-image-directive.ts`
+
+bridge 图片指令解析与路径校验层。
+
+职责：
+
+- 解析 assistant 输出中的 `[bridge-image]` 指令块
+- 从可见 assistant 文本中剥离 bridge 私有指令
+- 校验图片路径必须位于当前 run `cwd` 或 bridge 受管资产目录内
+- 对缺失文件、非法路径和坏 JSON 生成可读的降级错误文本
 
 ### 5.4 `src/feishu-card-action-service.ts`
 
@@ -242,6 +263,7 @@ Windows 启动前清理模块。
 - 对计划模式按钮返回 JSON 2.0 表单卡，并读取 `form_value` 中的多行输入
 - 对 bridge 持久化的计划选择返回即时确认卡，并在后台继续同一 native thread
 - 对所有 `/ca` 命令按钮统一先返回即时确认卡，再在后台完成命令并用 `updateInteractiveCard` 回填终态卡，避免卡片回调超时，同时保留计划表单打开动作的即时切卡体验
+- 当后台异步 run 返回图片结果时，优先发送原生飞书图片消息；无法发图时退回明确的文本说明，不静默吞掉结果
 
 ### 5.5 `src/run-worker-manager.ts`
 
@@ -260,6 +282,7 @@ Codex 执行适配层。
 
 - 通过 `codex exec --json` 创建新的 native thread
 - 通过 `codex exec resume --json` 续跑已有 native thread
+- 将 surface 暂存图片映射成 `codex exec -i <file>` / `codex exec resume -i <file>`
 - 解析 `codex exec` / `codex exec resume` 的 JSONL 事件流
 - 将 native `todo_list` 计划事件归一化为 bridge `waiting`
 - 将 native `collab_tool_call` 子代理事件归一化为 bridge `tool_call`
@@ -321,6 +344,7 @@ SQLite 持久化层。
 - projects
 - project_chats
 - codex_threads
+- pending_bridge_assets
 - pending_plan_interactions
 - observability_runs
 - observability_run_events
@@ -331,6 +355,7 @@ SQLite 持久化层。
 - 启动迁移时会把旧版遗留表 `workspaces`、`users`、`acp_sessions`、`runs`、`message_links`、`event_offsets` 清理掉
 - 如果数据库里仍只有旧版 `workspaces` 根配置而没有 `bridge_root`，会先把旧根信息迁入 `bridge_root` 再删除旧表
 - 如果数据库里的 `codex_threads` 仍以 `thread_id` 作为主键，启动迁移会自动重建为“按飞书 surface 建模”的新结构，允许多个话题绑定到同一个 native `thread_id`
+- `pending_bridge_assets` 会按飞书 surface 暂存待处理图片，记录本地文件路径、来源消息和当前状态；runtime 维护任务会按 TTL 标记过期图片
 - `pending_plan_interactions` 会按飞书 surface 记录待回答的计划单选问题；同一 surface 上出现新的待回答问题时，旧记录会被标记为 `superseded`
 
 ## 6. 路由与消息流
@@ -356,6 +381,8 @@ channel + peerId -> codex_thread_id
 
 如果当前 DM 还没有绑定 native thread，则普通 prompt 会先创建一个新的 native thread，再把该窗口绑定过去。
 
+如果这个 DM surface 上已经先收到过图片，则这些待处理图片会在这条文本消息进入 Codex 前被一并消费，并作为 `-i` 图片参数传给 `codex exec` / `codex exec resume`。
+
 ## 6.2 群线程普通消息
 
 ```text
@@ -376,6 +403,27 @@ Feishu group thread text
 ```
 
 来解析上下文。
+
+如果同一个 `(chat_id, thread_id)` 上已经暂存过图片，则下一条线程文本消息会先消费这些图片，再续跑当前 native `thread_id`。
+
+## 6.2.1 图片暂存链路
+
+```text
+Feishu DM / Group Thread image
+  -> FeishuAdapter
+  -> FeishuApiClient.downloadMessageResource(type=image)
+  -> SessionStore.pending_bridge_assets
+  -> 轻量确认消息
+  -> 下一条同 surface 文本消息
+  -> BridgeService.consumePendingBridgeAssets
+  -> codex exec / codex exec resume -i ...
+```
+
+特点：
+
+- 图片消息本身不会立即触发 Codex run
+- 暂存作用域固定为 `(channel, peerId, chatId, surfaceType, surfaceRef)`
+- assistant 若回传 `[bridge-image]` 指令，bridge 会在终态文本外额外发送原生飞书图片消息
 
 ## 6.3 群主时间线
 
@@ -482,6 +530,7 @@ Feishu group thread text
 - 这样既能保留上下文，又不会让一个 worker 常驻不退
 - 未绑定 surface 先执行 `codex exec --json`
 - 已绑定 surface 执行 `codex exec resume --json <thread_id>`
+- 若当前 surface 上存在待处理图片，会在同一轮 run 里附加为重复的 `-i <localPath>` 参数
 
 ## 7.3 并发策略
 
@@ -516,6 +565,12 @@ Feishu group thread text
 - 周期性扫描 `warm` 状态线程
 - 如果超过 `root.idleTtlHours` 没有活动
 - 将线程状态置为 `closed`
+
+同一个维护周期里还会处理待处理图片资产：
+
+- 周期性扫描 `pending_bridge_assets`
+- 如果待处理图片超过 `root.idleTtlHours` 仍未被后续文本消息消费
+- 将其标记为 `expired`
 
 线程再次收到消息时，会继续复用该线程记录上的 native `thread_id`；runtime 不再尝试关闭 `acpx` session。
 
@@ -565,6 +620,7 @@ channel + peer_id -> codex_thread_id
 - `projects`
 - `project_chats`
 - `codex_threads`
+- `pending_bridge_assets`
 - `pending_plan_interactions`
 
 其中：
@@ -574,6 +630,7 @@ channel + peer_id -> codex_thread_id
 - `codex_threads` 表示“飞书 surface 到 native Codex thread”的绑定记录
 - `codex_threads` 以 `(chat_id, feishu_thread_id)` 唯一标识一个飞书话题 surface，而不是再把 `thread_id` 当作唯一主键
 - 因此同一个 native `thread_id` 可以被多个飞书话题引用；项目摘要中的线程数按去重后的 native `thread_id` 统计
+- `pending_bridge_assets` 表示某个飞书 surface 上还没被下一条文本 prompt 消费的图片资产；状态支持 `pending / consumed / failed / expired`
 - `pending_plan_interactions` 表示某个飞书 surface 上最近一次待回答的 bridge 计划选择题，以及它对应的 native `thread_id`
 
 ## 10.4 Run 观测
@@ -627,6 +684,7 @@ channel + peer_id -> codex_thread_id
 
 - 它既是 root 侧的空闲 TTL
 - 目前也被线程回收逻辑用作线程 session TTL
+- 同时也被 runtime 用作待处理图片资产的过期 TTL
 
 ## 12. 后台观测与运维接口
 
@@ -670,6 +728,8 @@ channel + peer_id -> codex_thread_id
 - 可以在 DM 和已注册飞书线程里直接点击“计划模式”，用表单方式发起一次 `/plan ...`
 - 计划中的待办项会作为结构化 checklist 出现在飞书状态卡上
 - 计划中的单选问题可以直接点卡片按钮继续，不需要把选项再手输回消息里
+- 可以先在 DM 或已注册飞书线程里发送图片，再补一条文字说明；bridge 会自动把这些图片带进下一次 Codex run
+- 如果 Codex 最终结果声明了合法的本地图片路径，飞书里会额外收到原生图片消息，而不是把路径字符串原样吐给用户
 - 按钮回调通过同一条飞书长连接返回，不需要额外暴露公网回调地址
 - 相同线程不会并发执行两个 run
 - 后台可以看项目、线程和线程对应 run
@@ -685,7 +745,8 @@ channel + peer_id -> codex_thread_id
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
 - 普通对话 run 的终态投递策略当前固定为“摘要卡 + 完整正文消息”，尚未开放配置；如后续确有分场景需求，可再扩展为可配置策略，但当前记为低优先级后续计划
 - 现在的“计划模式”是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，不等同于官方交互式 CLI `/plan` 原语
-- 只支持文本，不支持图片、文件、语音
+- 当前只支持文本 + 图片；通用文件、语音仍未接通
+- outbound 图片必须位于当前 run `cwd` 或 bridge 受管资产目录下；超出范围的路径会被拒绝并退回文本错误
 - 不支持多实例集群部署
 
 ## 15. 推荐验证路径
@@ -701,6 +762,7 @@ channel + peer_id -> codex_thread_id
 7. 确认 DM 中先出现流式状态卡；run 完成后，卡片收口为摘要卡，完整 assistant 正文以下方单独消息展示
 8. 打开 `/ops/ui`
 9. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志
+10. 飞书 DM 先发一张图片，再补一条文字说明，确认 bridge 会先回复“已收到图片”，随后下一条文本 run 会消费该图片
 
 ### 15.2 群线程回归
 
@@ -716,7 +778,15 @@ channel + peer_id -> codex_thread_id
 3. 观察线程内状态更新与最终结果，确认终态卡只保留摘要，完整 assistant 正文以线程内单独回复为准
 4. 检查 `/ops/projects`、`/ops/projects/:id/threads`、`/ops/threads/:id/runs`
 
-### 15.2.1 桥接式计划模式回归
+### 15.2.1 图片链路回归
+
+1. 在 DM 中先发送一张图片，再发送“请结合刚才图片继续分析”
+2. 确认图片消息本身不会直接触发 run，只会先收到轻量确认文本
+3. 确认下一条文本消息触发的 run 会消费待处理图片，且同一张图片不会被后续文本重复带入
+4. 在已注册飞书线程里重复上述流程，确认 thread surface 也能复用同样的暂存与消费逻辑
+5. 如需验证出图链路，准备一个位于当前项目目录或 bridge 受管资产目录内的本地图片，让 assistant 返回 `[bridge-image]` 指令，确认飞书会收到原生图片消息
+
+### 15.2.2 桥接式计划模式回归
 
 1. 在 DM 中点击导航卡里的“计划模式”
 2. 在表单里输入类似“帮我先梳理这个仓库的改造方案，不要直接改代码”
@@ -754,4 +824,4 @@ channel + peer_id -> codex_thread_id
 
 这个项目现在已经从“飞书私聊直连 Codex”演进到：
 
-**一个支持 DM 和群话题线程、具备线程级会话、run 级 worker、线程内回推和项目/线程/run 三层观测的单实例桥接服务。**
+**一个支持 DM / 群话题线程、文本与图片桥接、线程级会话、run 级 worker、线程内回推和项目/线程/run 三层观测的单实例桥接服务。**
