@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -1181,8 +1181,31 @@ export class SessionStore {
     fileSize?: number | null;
     createdAt?: string;
   }): BridgeAssetRecord {
-    const assetId = `asset-${randomUUID()}`;
     const createdAt = input.createdAt ?? new Date().toISOString();
+    const existing = this.getBridgeAssetByIdentity({
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+      messageId: input.messageId,
+      resourceKey: input.resourceKey,
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    const assetId = buildBridgeAssetId({
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+      messageId: input.messageId,
+      resourceKey: input.resourceKey,
+    });
+
     this.db.prepare(`
       INSERT INTO pending_bridge_assets (
         asset_id,
@@ -1253,6 +1276,62 @@ export class SessionStore {
     }
 
     return created;
+  }
+
+  private getBridgeAssetByIdentity(input: {
+    channel: string;
+    peerId: string;
+    chatId: string | null;
+    surfaceType: "thread" | null;
+    surfaceRef: string | null;
+    messageId: string;
+    resourceKey: string;
+  }): BridgeAssetRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT
+        asset_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        message_id,
+        resource_type,
+        resource_key,
+        local_path,
+        file_name,
+        mime_type,
+        file_size,
+        status,
+        error_text,
+        created_at,
+        updated_at,
+        consumed_at,
+        failed_at,
+        expired_at
+      FROM pending_bridge_assets
+      WHERE
+        channel = ?
+        AND peer_id = ?
+        AND COALESCE(chat_id, '') = COALESCE(?, '')
+        AND COALESCE(surface_type, '') = COALESCE(?, '')
+        AND COALESCE(surface_ref, '') = COALESCE(?, '')
+        AND message_id = ?
+        AND resource_key = ?
+      ORDER BY created_at ASC, asset_id ASC
+      LIMIT 1
+    `).get(
+      input.channel,
+      input.peerId,
+      input.chatId,
+      input.surfaceType,
+      input.surfaceRef,
+      input.messageId,
+      input.resourceKey,
+    ) as BridgeAssetRow | undefined;
+
+    return row ? rowToBridgeAsset(row) : undefined;
   }
 
   public getBridgeAsset(assetId: string): BridgeAssetRecord | undefined {
@@ -1414,7 +1493,7 @@ export class SessionStore {
     errorText?: string | null;
   }): BridgeAssetRecord | undefined {
     const failedAt = new Date().toISOString();
-    this.db.prepare(`
+    const result = this.db.prepare(`
       UPDATE pending_bridge_assets
       SET
         status = 'failed',
@@ -1428,6 +1507,10 @@ export class SessionStore {
       errorText: input.errorText ?? null,
       failedAt,
     });
+
+    if (result.changes === 0) {
+      return undefined;
+    }
 
     return this.getBridgeAsset(input.assetId);
   }
@@ -2171,6 +2254,28 @@ function rowToBridgeAsset(row: BridgeAssetRow): BridgeAssetRecord {
     failedAt: row.failed_at,
     expiredAt: row.expired_at,
   };
+}
+
+function buildBridgeAssetId(input: {
+  channel: string;
+  peerId: string;
+  chatId: string | null;
+  surfaceType: "thread" | null;
+  surfaceRef: string | null;
+  messageId: string;
+  resourceKey: string;
+}): string {
+  const identity = [
+    input.channel,
+    input.peerId,
+    input.chatId ?? "",
+    input.surfaceType ?? "",
+    input.surfaceRef ?? "",
+    input.messageId,
+    input.resourceKey,
+  ].join("|");
+
+  return `asset-${createHash("sha256").update(identity).digest("hex")}`;
 }
 
 function rowToCodexWindowBinding(row: CodexWindowBindingRow): CodexWindowBinding {

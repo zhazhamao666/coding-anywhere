@@ -316,6 +316,23 @@ describe("SessionStore", () => {
       createdAt: "2026-03-28T00:00:00.000Z",
     });
 
+    const duplicateDmAsset = assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_dm",
+      chatId: null,
+      surfaceType: null,
+      surfaceRef: null,
+      runId: null,
+      messageId: "om_dm_1",
+      resourceType: "image",
+      resourceKey: "img_dm_1",
+      localPath: path.join(rootDir, "assets", "dm-1.png"),
+      fileName: "dm-1.png",
+      mimeType: "image/png",
+      fileSize: 1234,
+      createdAt: "2026-03-28T00:02:00.000Z",
+    });
+
     assetStore.savePendingBridgeAsset({
       channel: "feishu",
       peerId: "ou_dm",
@@ -332,6 +349,8 @@ describe("SessionStore", () => {
       fileSize: 2345,
       createdAt: "2026-03-28T00:01:00.000Z",
     });
+
+    expect(duplicateDmAsset.assetId).toBe(dmAsset.assetId);
 
     expect(
       assetStore.listPendingBridgeAssetsForSurface({
@@ -440,6 +459,12 @@ describe("SessionStore", () => {
       status: "failed",
       errorText: "download failed",
     });
+    expect(
+      assetStore.failPendingBridgeAsset({
+        assetId: failedAsset.assetId,
+        errorText: "download failed again",
+      }),
+    ).toBeUndefined();
 
     expect(assetStore.expirePendingBridgeAssets("2026-03-25T00:00:00.000Z")).toBe(1);
     expect(assetStore.getBridgeAsset(staleAsset.assetId)).toMatchObject({
