@@ -80,6 +80,7 @@
 51. assistant 可以通过 `[bridge-image] ... [/bridge-image]` 私有指令声明本地图片路径；bridge 会校验路径后，把图片作为原生飞书图片消息回发
 52. 卡片按钮触发的异步 `/ca` 命令与计划模式链路也不会再静默吞掉图片结果；能发图时会真发图片，不能发图时会退回明确的文本卡说明
 53. runtime 维护任务除了线程空闲回收外，还会按 TTL 清理过期的待处理图片资产，避免 pending 图片长期滞留
+54. 仓库新增基于 Playwright 的飞书 live auth bootstrap 与 smoke 脚本：首次人工登录一次后，可复用本地持久化浏览器 profile 做真实飞书网页链路验证
 
 ### 2.3 当前仍未打通的部分
 
@@ -691,6 +692,17 @@ channel + peer_id -> codex_thread_id
 - 目前也被线程回收逻辑用作线程 session TTL
 - 同时也被 runtime 用作待处理图片资产的过期 TTL
 
+### 11.3 本地 live smoke 约定
+
+为了验证“真实飞书用户发消息 -> bridge -> Codex -> 飞书回推”的整条链路，仓库额外约定了一套只用于本地或专用 runner 的 Playwright live smoke：
+
+- `npm run test:feishu:auth` 会启动一个最大化的持久化浏览器 profile，默认打开 `https://feishu.cn/messages/`
+- 首次执行需要人工完成飞书登录；成功后会在仓库根目录 `.auth/feishu-profile` 保存本地登录态，并写入 `.auth/feishu-live-auth.json`
+- `npm run test:feishu:live` 会复用该 profile 打开真实飞书 DM 页面，不再重复自动登录
+- `FEISHU_LIVE_DM_URL` 用于指定待测机器人 DM 的网页地址；未设置时只允许做 auth bootstrap，不允许发消息 smoke
+- `FEISHU_LIVE_OPS_BASE_URL` 可显式覆盖 `/ops` 根地址；未设置时会从 `config.toml` 的 `[server]` 配置自动推导
+- `.auth/` 仅用于本地测试，不纳入 git
+
 ## 12. 后台观测与运维接口
 
 当前 `/ops/*` 已支持：
@@ -738,6 +750,7 @@ channel + peer_id -> codex_thread_id
 - 按钮回调通过同一条飞书长连接返回，不需要额外暴露公网回调地址
 - 相同线程不会并发执行两个 run
 - 后台可以看项目、线程和线程对应 run
+- 运维侧可以先运行 `npm run test:feishu:auth` 完成一次人工登录，然后重复复用持久 profile 跑真实飞书网页版 smoke，而不用每次回归都重新登录
 
 ## 14. 当前限制
 
@@ -752,6 +765,7 @@ channel + peer_id -> codex_thread_id
 - 现在的“计划模式”是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，不等同于官方交互式 CLI `/plan` 原语
 - 当前只支持文本 + 图片；通用文件、语音仍未接通
 - outbound 图片必须位于当前 run `cwd` 或 bridge 受管资产目录下；超出范围的路径会被拒绝并退回文本错误
+- 真实飞书网页版 live smoke 当前采用“首次人工登录 + 持久 profile 复用”模型；如果租户启用了 SSO、验证码或二次验证，登录刷新仍需要人工介入
 - 不支持多实例集群部署
 
 ## 15. 推荐验证路径
@@ -805,7 +819,23 @@ channel + peer_id -> codex_thread_id
 2. 等待超过 `root.idleTtlHours`
 3. 观察线程是否被关闭并进入 `closed`
 
-### 15.4 Codex 真实调用烟测
+### 15.4 飞书真实网页登录 smoke
+
+前提：
+
+- 本地 bridge 已启动，且当前只有一个 bridge 实例连接飞书长连接
+- 已拿到机器人 DM 的网页版 URL，并设置 `FEISHU_LIVE_DM_URL`
+- 首次运行前先执行 `npm run test:feishu:auth`，在打开的最大化浏览器中手动完成登录
+
+1. `npm run test:feishu:auth`
+2. 首次执行时，在打开的浏览器里完成登录，确认已经进入 `feishu.cn/messages` 后回到终端按 Enter
+3. `npm run test:feishu:live`
+4. smoke 会复用 `.auth/feishu-profile` 打开真实 DM，默认发送 `/ca`，并等待页面出现“导航”字样
+5. smoke 还会请求 `/ops/overview` 确认本地 bridge 控制面可达；如需覆盖地址，设置 `FEISHU_LIVE_OPS_BASE_URL`
+6. 如需调整 smoke 指令或断言，可设置 `FEISHU_LIVE_SMOKE_TEXT`、`FEISHU_LIVE_EXPECT_TEXT`、`FEISHU_LIVE_COMPOSER_SELECTOR`
+7. 登录态失效时，重新运行 `npm run test:feishu:auth` 刷新 profile
+
+### 15.5 Codex 真实调用烟测
 
 当需要验证真实 Codex CLI 的 JSONL 协议、线程创建和预算控制时，可以运行：
 

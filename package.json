@@ -13,6 +13,8 @@
     "test:bridge:codex": "vitest run tests/bridge-real-codex.test.ts",
     "test:codex:real": "vitest run tests/codex-real-smoke.test.ts",
     "test:codex:resume": "vitest run tests/codex-real-resume.test.ts",
+    "test:feishu:auth": "tsx src/feishu-live-auth-cli.ts",
+    "test:feishu:live": "playwright test -c playwright.config.ts --project=feishu-live",
     "test:watch": "vitest"
   },
   "keywords": [],
@@ -32,6 +34,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",
