@@ -81,6 +81,7 @@
 52. 卡片按钮触发的异步 `/ca` 命令与计划模式链路也不会再静默吞掉图片结果；能发图时会真发图片，不能发图时会退回明确的文本卡说明
 53. runtime 维护任务除了线程空闲回收外，还会按 TTL 清理过期的待处理图片资产，避免 pending 图片长期滞留
 54. 仓库新增基于 Playwright 的飞书 live auth bootstrap 与 smoke 脚本：首次人工登录一次后，可复用本地持久化浏览器 profile 做真实飞书网页链路验证
+55. 群主时间线中的 `/ca project list` 现在也会读取 Codex 派生项目列表，标出“已绑定当前群 / 已绑定其他群 / 未绑定”，并允许从未绑定项目行直接把当前群绑定到该项目
 
 ### 2.3 当前仍未打通的部分
 
@@ -453,6 +454,7 @@ Feishu DM / Group Thread image
 - `/ca logs`
 - `/ca project bind <projectId> <chatId> <cwd> [name]`
 - `/ca project bind-current <projectId> <cwd> [name]`
+- `/ca project bind-current <projectKey>`
 - `/ca project current`
 - `/ca project list`
 - `/ca project switch <projectKey>`
@@ -469,7 +471,9 @@ Feishu DM / Group Thread image
   - 展示 Codex 派生项目列表
   - 每个项目行都可直接“查看线程”或“切换项目”
 - 群聊 / 已注册线程中的 `/ca project list`
-- 仍然展示 CA 本地注册的项目列表
+  - 如果已配置 Codex catalog，也展示 Codex 派生项目列表
+  - 群主时间线中会标出每个项目的群绑定状态，并允许点击未绑定项目直接绑定当前群
+  - 如果没有 Codex catalog，则回退展示 CA 本地注册的项目列表
 - 已绑定项目群 / 已注册线程中的 `/ca thread list-current`
   - 通过当前项目的 `cwd` 对齐到 Codex catalog project
   - 直接列出该项目下的 native Codex thread
@@ -500,6 +504,7 @@ Feishu DM / Group Thread image
 - DM 中已切到 Codex 原生线程后，`/ca session` 会返回当前会话卡片，并附带同一套“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
 - `/ca thread create*` 成功后会返回线程摘要卡片
 - DM 中的项目列表卡和线程列表卡现在带行级按钮：项目列表可“查看线程”“切换项目”，线程列表可“切换到此线程”
+- 群主时间线中的项目列表卡也带行级按钮：未绑定项目可“绑定到本群”，已绑定当前群可进入“当前项目”，已绑定其他群只展示状态，避免误转绑
 - DM 中点选线程后，CA 只记录当前窗口绑定到哪个 `codex_thread_id`
 - 已注册飞书线程中点选线程后，CA 会把当前 surface 重绑到选中的 native `thread_id`
 - 已绑定项目群中点选线程后，CA 会新建一个飞书话题，并把该话题绑定到选中的 native `thread_id`
@@ -632,7 +637,7 @@ channel + peer_id -> codex_thread_id
 其中：
 
 - `projects` 表示 CA 视角下的项目
-- `project_chats` 表示一个项目对应的飞书项目群
+- `project_chats` 表示一个项目对应的飞书项目群；当前群从项目列表绑定到另一个未绑定项目时，会先清理该群旧绑定，再写入新绑定，避免一个群同时绑定多个项目
 - `codex_threads` 表示“飞书 surface 到 native Codex thread”的绑定记录
 - `codex_threads` 以 `(chat_id, feishu_thread_id)` 唯一标识一个飞书话题 surface，而不是再把 `thread_id` 当作唯一主键
 - 因此同一个 native `thread_id` 可以被多个飞书话题引用；项目摘要中的线程数按去重后的 native `thread_id` 统计
@@ -739,7 +744,7 @@ channel + peer_id -> codex_thread_id
 - 可以通过摘要卡快速确认当前项目和新建线程结果
 - 普通对话 run 完成后，不会再在终态卡和普通消息里重复完整展示同一份 assistant 正文；卡片保留摘要，完整正文以下方消息为准
 - 输入未知子命令时也能自动回到导航卡
-- 可以在群主时间线里直接绑定当前群，而不用手工输入 `chatId`
+- 可以在群主时间线里直接绑定当前群，而不用手工输入 `chatId`；也可以从项目列表卡中点击未绑定的 Codex 项目完成绑定，不需要知道 `projectId` 或手工复制 `cwd`
 - 可以直接点击卡片按钮回到导航、当前项目和线程列表，而不用重新手输命令
 - 当卡片同时展示“当前线程”和 `Session` 时，当前线程现在只显示线程名称，不再重复展示同一个 native `thread_id`
 - 可以在 DM 和已注册飞书线程里直接点击“计划模式”，用表单方式发起一次 `/plan ...`
@@ -757,7 +762,7 @@ channel + peer_id -> codex_thread_id
 当前仍有这些限制：
 
 - 没有完整 DM Hub
-- 还不能自动创建飞书项目群，只能先绑定已有 `chatId`
+- 还不能自动创建飞书项目群，只能先绑定已有群；当前群可以通过 `/ca project bind-current` 或项目列表卡片按钮完成绑定
 - CA 不提供精确跳转到指定飞书话题的能力
 - 卡片按钮目前除了导航命令外，只额外覆盖桥接式计划模式的表单提交与单选题续跑，不是通用的任意参数命令表单平台
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
@@ -790,6 +795,7 @@ channel + peer_id -> codex_thread_id
 - 数据库中已经存在对应的 `project_chats` 和 `codex_threads` 记录
 - 或者先通过 `/ca project bind` 和 `/ca thread create` 完成注册
 - 或者在群主时间线直接执行 `/ca project bind-current`
+- 或者在群主时间线发送 `/ca`，点击“项目列表”，再点击未绑定项目的“绑定到本群”
 - 或者在已绑定项目群主时间线直接执行 `/ca thread create-current`
 
 1. 在已注册的飞书话题里发普通文本

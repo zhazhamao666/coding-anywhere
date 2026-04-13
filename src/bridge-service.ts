@@ -74,6 +74,12 @@ interface CodexCatalogLike {
   listRecentConversation(threadId: string, limit?: number): CodexCatalogConversationItem[];
 }
 
+interface CatalogProjectChatBinding {
+  projectId: string;
+  cwd: string;
+  chatId: string | null;
+}
+
 export class BridgeService {
   public constructor(
     private readonly dependencies: {
@@ -738,12 +744,16 @@ export class BridgeService {
   ): Promise<BridgeReply[]> {
     const [action = "help", rawProjectId, rawChatIdOrCwd, rawCwdOrName, ...rest] = args;
     const projectCommandHelp =
-      `[ca] project commands: ${BRIDGE_COMMAND_PREFIX} project bind <projectId> <chatId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project bind-current <projectId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project current, ${BRIDGE_COMMAND_PREFIX} project list, ${BRIDGE_COMMAND_PREFIX} project switch <projectKey>`;
+      `[ca] project commands: ${BRIDGE_COMMAND_PREFIX} project bind <projectId> <chatId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project bind-current <projectId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project bind-current <projectKey>, ${BRIDGE_COMMAND_PREFIX} project current, ${BRIDGE_COMMAND_PREFIX} project list, ${BRIDGE_COMMAND_PREFIX} project switch <projectKey>`;
 
     if (action === "list") {
       if (this.isDmContext(input) && this.dependencies.codexCatalog) {
         const projects = this.dependencies.codexCatalog.listProjects();
         return [this.buildCodexProjectListCardReply(input, projects)];
+      }
+      if (input.chatId && this.dependencies.codexCatalog) {
+        const projects = this.dependencies.codexCatalog.listProjects();
+        return [this.buildGroupCodexProjectListCardReply(input, projects)];
       }
       const projects = this.dependencies.store.listProjects();
       return [this.buildProjectListCardReply(input, projects)];
@@ -823,6 +833,10 @@ export class BridgeService {
 
     const isBindCurrent = action === "bind-current";
     const isBind = action === "bind";
+    if (isBindCurrent && rawProjectId && !rawChatIdOrCwd && this.dependencies.codexCatalog) {
+      return [this.bindCurrentGroupToCatalogProject(input, rawProjectId)];
+    }
+
     if (
       (!isBindCurrent && !isBind) ||
       !rawProjectId ||
@@ -852,6 +866,16 @@ export class BridgeService {
     const resolvedCwd = path.isAbsolute(cwdArg)
       ? cwdArg
       : path.resolve(root.cwd, cwdArg);
+    const existingTargetChat = this.dependencies.store.getProjectChat(projectId);
+    if (isBindCurrent && existingTargetChat?.chatId && existingTargetChat.chatId !== chatId) {
+      return [this.buildProjectAlreadyBoundToOtherGroupCardReply({
+        projectName: name,
+        projectId,
+        cwd: resolvedCwd,
+        currentChatId: chatId,
+        boundChatId: existingTargetChat.chatId,
+      })];
+    }
 
     this.dependencies.store.createProject({
       projectId,
@@ -859,6 +883,9 @@ export class BridgeService {
       cwd: resolvedCwd,
       repoRoot: resolvedCwd,
     });
+    if (isBindCurrent) {
+      this.dependencies.store.clearProjectChatByChatId(chatId);
+    }
     this.dependencies.store.upsertProjectChat({
       projectId,
       chatId,
@@ -1144,6 +1171,124 @@ export class BridgeService {
     }
   }
 
+  private bindCurrentGroupToCatalogProject(
+    input: BridgeMessageInput,
+    projectKey: string,
+  ): BridgeReply {
+    if (!input.chatId) {
+      throw new Error("PROJECT_CHAT_CONTEXT_REQUIRED");
+    }
+    if (!this.dependencies.codexCatalog) {
+      throw new Error("CODEX_CATALOG_NOT_CONFIGURED");
+    }
+
+    const project = this.dependencies.codexCatalog.getProject(projectKey, {
+      includeArchived: true,
+    });
+    if (!project) {
+      return this.buildCodexProjectUnavailableCardReply(input);
+    }
+
+    const bindings = this.listCatalogProjectChatBindings();
+    const binding = lookupCatalogProjectChatBinding(project, bindings, input.chatId);
+    if (binding.state === "other") {
+      return this.buildProjectAlreadyBoundToOtherGroupCardReply({
+        projectName: project.displayName,
+        projectId: project.projectKey,
+        cwd: project.cwd,
+        currentChatId: input.chatId,
+        boundChatId: binding.chatId,
+      });
+    }
+
+    this.dependencies.store.createProject({
+      projectId: project.projectKey,
+      name: project.displayName,
+      cwd: project.cwd,
+      repoRoot: project.cwd,
+    });
+    this.dependencies.store.clearProjectChatByChatId(input.chatId);
+    this.dependencies.store.upsertProjectChat({
+      projectId: project.projectKey,
+      chatId: input.chatId,
+      groupMessageType: "thread",
+      title: `Codex | ${project.displayName}`,
+    });
+
+    return this.buildCatalogProjectBoundCardReply(input, project);
+  }
+
+  private buildCatalogProjectBoundCardReply(
+    input: BridgeMessageInput,
+    project: CodexCatalogProject,
+  ): BridgeReply {
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: "项目已绑定",
+        summaryLines: [
+          "**视图**：项目已绑定",
+          `**项目**：${project.displayName}`,
+          `**群聊**：${input.chatId ?? "unknown"}`,
+          `**路径**：${project.cwd}`,
+        ],
+        sections: [
+          {
+            title: "下一步",
+            items: [
+              `在本群发送 \`${BRIDGE_COMMAND_PREFIX} thread create-current <标题>\` 创建飞书话题。`,
+              "之后在新话题里发送普通消息，Codex 会在该项目上下文中执行。",
+            ],
+          },
+        ],
+        actions: [
+          {
+            label: "导航",
+            type: "primary",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
+          },
+          {
+            label: "当前项目",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
+          },
+          {
+            label: "线程列表",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+        ],
+      }),
+    };
+  }
+
+  private buildProjectAlreadyBoundToOtherGroupCardReply(input: {
+    projectName: string;
+    projectId: string;
+    cwd: string;
+    currentChatId: string;
+    boundChatId: string;
+  }): BridgeReply {
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: "项目已绑定其他群",
+        summaryLines: [
+          "**视图**：项目已绑定其他群",
+          `**项目**：${input.projectName}`,
+          `**项目 ID**：${input.projectId}`,
+          `**已绑定群**：${input.boundChatId}`,
+          `**当前群**：${input.currentChatId}`,
+          `**路径**：${input.cwd}`,
+        ],
+        sections: [
+          {
+            title: "未执行绑定",
+            items: ["为避免误伤其它群，本次不会把该项目从原群转绑到当前群。"],
+          },
+        ],
+      }),
+    };
+  }
+
   private buildProjectListCardReply(
     input: BridgeMessageInput,
     projects: Array<{
@@ -1188,6 +1333,75 @@ export class BridgeService {
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project list`),
           },
           ...(!this.isDmContext(input) && input.chatId
+            ? [{
+                label: "当前项目",
+                value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
+              }]
+            : []),
+        ],
+      }),
+    };
+  }
+
+  private buildGroupCodexProjectListCardReply(
+    input: BridgeMessageInput,
+    projects: CodexCatalogProject[],
+  ): BridgeReply {
+    const bindings = this.listCatalogProjectChatBindings();
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: "项目列表",
+        summaryLines: [
+          "**视图**：Codex 项目列表",
+          `**项目数**：${projects.length}`,
+          `**当前群**：${input.chatId ?? "unknown"}`,
+        ],
+        sections: projects.length > 0
+          ? []
+          : [
+              {
+                title: "暂无可浏览项目",
+                items: ["当前 Codex 线程库中没有可用项目。"],
+              },
+            ],
+        rows: projects.map(project => {
+          const binding = lookupCatalogProjectChatBinding(project, bindings, input.chatId ?? null);
+          const buttons = buildGroupProjectButtons({
+            bindingState: binding.state,
+            currentChatId: input.chatId,
+            currentProjectValue: this.buildCardActionValue(
+              this.buildCardActionContext(input),
+              `${BRIDGE_COMMAND_PREFIX} project current`,
+            ),
+            bindValue: this.buildCardActionValue(
+              this.buildCardActionContext(input),
+              `${BRIDGE_COMMAND_PREFIX} project bind-current ${project.projectKey}`,
+            ),
+          });
+
+          return {
+            title: project.displayName,
+            lines: [
+              `路径：${project.cwd}`,
+              `线程：${project.activeThreadCount}/${project.threadCount}`,
+              `最近更新：${project.lastUpdatedAt}`,
+              `绑定：${formatGroupProjectBinding(binding)}`,
+            ],
+            buttons,
+          };
+        }),
+        actions: [
+          {
+            label: "导航",
+            type: "primary",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} hub`),
+          },
+          {
+            label: "项目列表",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project list`),
+          },
+          ...(input.chatId
             ? [{
                 label: "当前项目",
                 value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
@@ -1802,6 +2016,23 @@ export class BridgeService {
     return Boolean(this.dependencies.codexCatalog.getThread(threadId));
   }
 
+  private listCatalogProjectChatBindings(): CatalogProjectChatBinding[] {
+    return this.dependencies.store.listProjects()
+      .map(project => {
+        const record = this.dependencies.store.getProject(project.projectId);
+        if (!record) {
+          return undefined;
+        }
+
+        return {
+          projectId: project.projectId,
+          cwd: record.cwd,
+          chatId: project.chatId,
+        };
+      })
+      .filter((binding): binding is CatalogProjectChatBinding => Boolean(binding));
+  }
+
   private lookupCatalogProjectForSurface(input: BridgeMessageInput): {
     projectId: string;
     project: CodexCatalogProject;
@@ -1909,6 +2140,83 @@ export class BridgeService {
       surfaceRef: context.surfaceRef,
     };
   }
+}
+
+function lookupCatalogProjectChatBinding(
+  project: CodexCatalogProject,
+  bindings: CatalogProjectChatBinding[],
+  currentChatId: string | null,
+): (
+  | { state: "current"; chatId: string }
+  | { state: "other"; chatId: string }
+  | { state: "unbound"; chatId: null }
+) {
+  const matches = bindings.filter(binding =>
+    binding.projectId === project.projectKey ||
+    normalizePathKey(binding.cwd) === normalizePathKey(project.cwd)
+  );
+  const current = matches.find(binding => binding.chatId && binding.chatId === currentChatId);
+  if (current?.chatId) {
+    return {
+      state: "current",
+      chatId: current.chatId,
+    };
+  }
+
+  const other = matches.find(binding => binding.chatId && binding.chatId !== currentChatId);
+  if (other?.chatId) {
+    return {
+      state: "other",
+      chatId: other.chatId,
+    };
+  }
+
+  return {
+    state: "unbound",
+    chatId: null,
+  };
+}
+
+function formatGroupProjectBinding(input: {
+  state: "current" | "other" | "unbound";
+  chatId: string | null;
+}): string {
+  if (input.state === "current") {
+    return "已绑定当前群";
+  }
+  if (input.state === "other") {
+    return `已绑定其他群（${input.chatId ?? "unknown"}）`;
+  }
+  return "未绑定";
+}
+
+function buildGroupProjectButtons(input: {
+  bindingState: "current" | "other" | "unbound";
+  currentChatId?: string;
+  currentProjectValue: Record<string, unknown>;
+  bindValue: Record<string, unknown>;
+}): Array<{
+  label: string;
+  value: Record<string, unknown>;
+  type?: "default" | "primary" | "danger";
+}> {
+  if (input.bindingState === "current") {
+    return [{
+      label: "当前项目",
+      type: "primary",
+      value: input.currentProjectValue,
+    }];
+  }
+
+  if (input.bindingState === "unbound" && input.currentChatId) {
+    return [{
+      label: "绑定到本群",
+      type: "primary",
+      value: input.bindValue,
+    }];
+  }
+
+  return [];
 }
 
 function buildSessionName(rootId: string): string {

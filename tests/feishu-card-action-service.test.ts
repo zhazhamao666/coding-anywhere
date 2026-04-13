@@ -442,6 +442,70 @@ describe("FeishuCardActionService", () => {
     });
   });
 
+  it("passes group project bind buttons through the generic command callback path", async () => {
+    const deferred = createDeferred<BridgeReply[]>();
+    const replyCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "项目已绑定",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
+    const bridgeService = {
+      handleMessage: vi.fn(() => deferred.promise),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const card = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_project_bind_1",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca project bind-current project-alpha",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca project bind-current project-alpha",
+    });
+    expect(card).toMatchObject({
+      card: {
+        type: "raw",
+        data: {
+          header: {
+            title: {
+              content: "命令已提交",
+            },
+          },
+        },
+      },
+    });
+
+    deferred.resolve([
+      { kind: "card", card: replyCard } as unknown as BridgeReply,
+    ]);
+
+    await vi.waitFor(() => {
+      expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith("om_project_bind_1", replyCard);
+    });
+  });
+
   it("launches a stored plan choice asynchronously and returns an immediate ack card", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => []),

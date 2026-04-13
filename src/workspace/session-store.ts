@@ -266,6 +266,13 @@ export class SessionStore {
     return row ? rowToProjectChat(row) : undefined;
   }
 
+  public clearProjectChatByChatId(chatId: string): void {
+    this.db.prepare(`
+      DELETE FROM project_chats
+      WHERE chat_id = ?
+    `).run(chatId);
+  }
+
   public createCodexThread(input: CodexThreadRecord): void {
     const createdAt = input.createdAt ?? new Date().toISOString();
     const updatedAt = input.updatedAt ?? createdAt;

@@ -106,6 +106,47 @@ describe("SessionStore project thread persistence", () => {
     ]);
   });
 
+  it("clears only the project chat binding for one group chat", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    const projectStore = store as any;
+    projectStore.createProject({
+      projectId: "proj-a",
+      name: "Alpha",
+      cwd: "D:/alpha",
+      repoRoot: "D:/alpha",
+    });
+    projectStore.createProject({
+      projectId: "proj-b",
+      name: "Beta",
+      cwd: "D:/beta",
+      repoRoot: "D:/beta",
+    });
+    projectStore.upsertProjectChat({
+      projectId: "proj-a",
+      chatId: "oc_chat_current",
+      groupMessageType: "thread",
+      title: "Codex | Alpha",
+    });
+    projectStore.upsertProjectChat({
+      projectId: "proj-b",
+      chatId: "oc_chat_other",
+      groupMessageType: "thread",
+      title: "Codex | Beta",
+    });
+
+    projectStore.clearProjectChatByChatId("oc_chat_current");
+
+    expect(projectStore.getProject("proj-a")).toMatchObject({
+      projectId: "proj-a",
+      name: "Alpha",
+    });
+    expect(projectStore.getProjectChat("proj-a")).toBeUndefined();
+    expect(projectStore.getProjectChat("proj-b")).toMatchObject({
+      chatId: "oc_chat_other",
+    });
+  });
+
   it("migrates legacy codex_threads rows off thread_id primary-key semantics", () => {
     const dbPath = path.join(rootDir, "bridge.db");
     const legacyDb = new Database(dbPath);

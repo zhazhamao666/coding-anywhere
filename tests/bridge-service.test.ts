@@ -1127,6 +1127,253 @@ describe("BridgeService", () => {
     ]);
   });
 
+  it("shows Codex catalog projects with group binding status in group project list cards", async () => {
+    const currentCwd = path.join(bridgeRootCwd, "current");
+    const otherCwd = path.join(bridgeRootCwd, "other");
+    store.createProject({
+      projectId: "project-current",
+      name: "Current Project",
+      cwd: currentCwd,
+      repoRoot: currentCwd,
+    });
+    store.upsertProjectChat({
+      projectId: "project-current",
+      chatId: "oc_chat_current",
+      groupMessageType: "thread",
+      title: "Codex | Current Project",
+    });
+    store.createProject({
+      projectId: "project-other",
+      name: "Other Project",
+      cwd: otherCwd,
+      repoRoot: otherCwd,
+    });
+    store.upsertProjectChat({
+      projectId: "project-other",
+      chatId: "oc_chat_other",
+      groupMessageType: "thread",
+      title: "Codex | Other Project",
+    });
+
+    const catalog = {
+      listProjects: vi.fn(() => [
+        {
+          projectKey: "project-current",
+          cwd: currentCwd,
+          displayName: "Current Project",
+          threadCount: 2,
+          activeThreadCount: 1,
+          lastUpdatedAt: "2026-04-01T00:00:00.000Z",
+          gitBranch: "main",
+        },
+        {
+          projectKey: "project-unbound",
+          cwd: path.join(bridgeRootCwd, "unbound"),
+          displayName: "Unbound Project",
+          threadCount: 0,
+          activeThreadCount: 0,
+          lastUpdatedAt: "2026-04-02T00:00:00.000Z",
+          gitBranch: "feature/demo",
+        },
+        {
+          projectKey: "project-other",
+          cwd: otherCwd,
+          displayName: "Other Project",
+          threadCount: 1,
+          activeThreadCount: 1,
+          lastUpdatedAt: "2026-04-03T00:00:00.000Z",
+          gitBranch: "main",
+        },
+      ]),
+      getProject: vi.fn(),
+      listThreads: vi.fn(() => []),
+      getThread: vi.fn(),
+      listRecentConversation: vi.fn(() => []),
+    };
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: catalog,
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca project list",
+    });
+
+    expect(catalog.listProjects).toHaveBeenCalled();
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ kind: "card" });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("Codex 项目列表");
+    expect(cardText).toContain("Current Project");
+    expect(cardText).toContain("已绑定当前群");
+    expect(cardText).toContain("Unbound Project");
+    expect(cardText).toContain("未绑定");
+    expect(cardText).toContain("/ca project bind-current project-unbound");
+    expect(cardText).toContain("Other Project");
+    expect(cardText).toContain("已绑定其他群");
+    expect(cardText).not.toContain("/ca project bind-current project-other");
+    expect(cardText).not.toContain("切换项目");
+  });
+
+  it("binds the current group chat to a Codex catalog project by project key", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "alpha");
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: {
+        listProjects: vi.fn(() => []),
+        getProject: vi.fn((projectKey: string) => projectKey === "project-alpha"
+          ? {
+              projectKey: "project-alpha",
+              cwd: projectCwd,
+              displayName: "Alpha",
+              threadCount: 3,
+              activeThreadCount: 2,
+              lastUpdatedAt: "2026-04-01T00:00:00.000Z",
+              gitBranch: "main",
+            }
+          : undefined),
+        listThreads: vi.fn(() => []),
+        getThread: vi.fn(),
+        listRecentConversation: vi.fn(() => []),
+      },
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca project bind-current project-alpha",
+    });
+
+    expect(store.getProject("project-alpha")).toMatchObject({
+      projectId: "project-alpha",
+      name: "Alpha",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    expect((store as any).getProjectChat("project-alpha")).toMatchObject({
+      chatId: "oc_chat_current",
+      title: "Codex | Alpha",
+    });
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ kind: "card" });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("项目已绑定");
+    expect(cardText).toContain("Alpha");
+    expect(cardText).toContain("oc_chat_current");
+    expect(cardText).toContain("/ca thread create-current");
+  });
+
+  it("switches the current group chat binding to an unbound Codex catalog project", async () => {
+    const oldCwd = path.join(bridgeRootCwd, "old");
+    const newCwd = path.join(bridgeRootCwd, "new");
+    store.createProject({
+      projectId: "project-old",
+      name: "Old Project",
+      cwd: oldCwd,
+      repoRoot: oldCwd,
+    });
+    store.upsertProjectChat({
+      projectId: "project-old",
+      chatId: "oc_chat_current",
+      groupMessageType: "thread",
+      title: "Codex | Old Project",
+    });
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: {
+        listProjects: vi.fn(() => []),
+        getProject: vi.fn((projectKey: string) => projectKey === "project-new"
+          ? {
+              projectKey: "project-new",
+              cwd: newCwd,
+              displayName: "New Project",
+              threadCount: 1,
+              activeThreadCount: 1,
+              lastUpdatedAt: "2026-04-01T00:00:00.000Z",
+              gitBranch: "main",
+            }
+          : undefined),
+        listThreads: vi.fn(() => []),
+        getThread: vi.fn(),
+        listRecentConversation: vi.fn(() => []),
+      },
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca project bind-current project-new",
+    });
+
+    expect((store as any).getProjectChat("project-old")).toBeUndefined();
+    expect((store as any).getProjectChat("project-new")).toMatchObject({
+      chatId: "oc_chat_current",
+    });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("项目已绑定");
+    expect(cardText).toContain("New Project");
+  });
+
+  it("does not steal a Codex catalog project already bound to another group chat", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "alpha");
+    store.createProject({
+      projectId: "project-alpha",
+      name: "Alpha",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    store.upsertProjectChat({
+      projectId: "project-alpha",
+      chatId: "oc_chat_other",
+      groupMessageType: "thread",
+      title: "Codex | Alpha",
+    });
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: {
+        listProjects: vi.fn(() => []),
+        getProject: vi.fn((projectKey: string) => projectKey === "project-alpha"
+          ? {
+              projectKey: "project-alpha",
+              cwd: projectCwd,
+              displayName: "Alpha",
+              threadCount: 3,
+              activeThreadCount: 2,
+              lastUpdatedAt: "2026-04-01T00:00:00.000Z",
+              gitBranch: "main",
+            }
+          : undefined),
+        listThreads: vi.fn(() => []),
+        getThread: vi.fn(),
+        listRecentConversation: vi.fn(() => []),
+      },
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca project bind-current project-alpha",
+    });
+
+    expect((store as any).getProjectChat("project-alpha")).toMatchObject({
+      chatId: "oc_chat_other",
+    });
+    expect(store.getProjectChatByChatId("oc_chat_current")).toBeUndefined();
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("项目已绑定其他群");
+    expect(cardText).toContain("oc_chat_other");
+  });
+
   it("reports the current project bound to the active group chat", async () => {
     store.createProject({
       projectId: "proj-current",
