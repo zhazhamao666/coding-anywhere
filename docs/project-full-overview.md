@@ -82,6 +82,7 @@
 53. runtime 维护任务除了线程空闲回收外，还会按 TTL 清理过期的待处理图片资产，避免 pending 图片长期滞留
 54. 仓库新增基于 Playwright 的飞书 live auth bootstrap 与 smoke 脚本：首次人工登录一次后，可复用本地持久化浏览器 profile 做真实飞书网页链路验证
 55. 群主时间线中的 `/ca project list` 现在也会读取 Codex 派生项目列表，标出“已绑定当前群 / 已绑定其他群 / 未绑定”，并允许从未绑定项目行直接把当前群绑定到该项目
+56. Codex 线程列表卡会把 subagent 来源解析为结构化的母 agent / 子 agent 展示，按父线程分组缩进显示 agent 名称、角色、父线程和层级，不再把 Codex raw `source` JSON 原样暴露到飞书卡片里
 
 ### 2.3 当前仍未打通的部分
 
@@ -304,6 +305,7 @@ Codex 本地线程目录读取层。
 - 提供线程列表和线程按 `thread_id` 查询
 - 提供线程最近对话预览读取，数据来源是对应 rollout JSONL 中的 `response_item`
 - 线程标题优先取 `session_index.jsonl` 中最新的 `thread_name`，以尽量和 Codex App 显示保持一致；取不到时再回退到 SQLite `threads.title`
+- 解析 Codex `source` 字符串，普通来源会显示为 `VS Code` / `CLI` / `未知`，subagent JSON 会转成父线程、层级、agent 名称和角色等内部展示字段；无法识别的 JSON 会降级为 `Codex 元数据`，不对飞书用户展示 raw JSON
 - 当 `state_*.sqlite` 还没追上最新线程时，会继续读取 `session_index.jsonl` 与 `sessions/**/rollout-*.jsonl` 里的 `session_meta`，补齐最近创建但尚未落进 SQLite 的线程
 - 不在 CA 本地复制保存 Codex 项目/线程清单
 
@@ -500,6 +502,7 @@ Feishu DM / Group Thread image
 - `/ca project list` 会返回项目列表卡片
 - `/ca project current` 会返回当前项目摘要卡片；在 DM 中若当前没有 native thread 绑定，则会回退到当前所选项目
 - `/ca thread list <projectId>` 与 `/ca thread list-current` 会返回线程列表卡片；在 DM 中若当前没有 native thread 绑定，则 `thread list-current` 会回退到当前所选项目
+- 线程列表卡会汇总“线程数 / 母 agent / 子 agent”，父线程显示来源和分支，子线程以缩进行跟随父线程显示，并标出 agent 名称、角色、父线程引用和层级；父线程不在当前列表时会显示父线程 ID 和“不在当前列表”
 - DM 中 `/ca thread switch <threadId>` 成功后会返回线程切换确认卡，并附带“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
 - DM 中已切到 Codex 原生线程后，`/ca session` 会返回当前会话卡片，并附带同一套“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
 - `/ca thread create*` 成功后会返回线程摘要卡片

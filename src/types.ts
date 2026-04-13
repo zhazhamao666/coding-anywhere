@@ -154,6 +154,15 @@ export interface CodexCatalogProject {
   gitBranch: string | null;
 }
 
+export interface CodexCatalogThreadSourceInfo {
+  kind: "normal" | "subagent" | "unknown";
+  label: string;
+  parentThreadId?: string;
+  depth?: number;
+  agentNickname?: string;
+  agentRole?: string;
+}
+
 export interface CodexCatalogThread {
   threadId: string;
   projectKey: string;
@@ -161,6 +170,7 @@ export interface CodexCatalogThread {
   displayName: string;
   title: string;
   source: string;
+  sourceInfo?: CodexCatalogThreadSourceInfo;
   archived: boolean;
   updatedAt: string;
   createdAt: string;

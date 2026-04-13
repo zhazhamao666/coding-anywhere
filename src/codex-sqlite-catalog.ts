@@ -4,6 +4,7 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
+import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
 import type {
   CodexCatalogConversationItem,
   CodexCatalogProject,
@@ -284,6 +285,7 @@ export class CodexSqliteCatalog {
       displayName: path.basename(cwd) || cwd,
       title: sessionEntry.threadName,
       source: sessionMeta.source,
+      sourceInfo: parseCodexThreadSourceInfo(sessionMeta.source),
       archived: false,
       updatedAt: sessionEntry.updatedAt,
       createdAt: sessionMeta.createdAt,
@@ -368,6 +370,7 @@ function mapThreadRow(row: CodexThreadRow, sessionIndex: Map<string, SessionInde
     displayName: path.basename(cwd) || cwd,
     title: resolvedTitle,
     source: row.source,
+    sourceInfo: parseCodexThreadSourceInfo(row.source),
     archived: row.archived === 1,
     updatedAt: epochToIso(row.updated_at),
     createdAt: epochToIso(row.created_at),

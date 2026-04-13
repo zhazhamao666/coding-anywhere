@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BridgeService } from "../src/bridge-service.js";
-import type { AcpxEvent, ProgressCardState } from "../src/types.js";
+import type { AcpxEvent, CodexCatalogThread, ProgressCardState } from "../src/types.js";
 import { SessionStore } from "../src/workspace/session-store.js";
 
 describe("BridgeService", () => {
@@ -1601,6 +1601,181 @@ describe("BridgeService", () => {
     expect(cardText).toContain("coding-anywhere");
     expect(cardText).toContain("thread-native-current");
     expect(cardText).toContain("follow-up");
+  });
+
+  it("renders Codex subagent threads under their parent without leaking raw source JSON", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.upsertProjectChat({
+      projectId: "proj-current",
+      chatId: "oc_chat_current",
+      groupMessageType: "thread",
+      title: "Codex | Current Project",
+    });
+
+    const rawSubagentSource = JSON.stringify({
+      subagent: {
+        thread_spawn: {
+          parent_thread_id: "thread-parent",
+          depth: 1,
+          agent_path: null,
+          agent_nickname: "Gauss",
+          agent_role: "worker",
+        },
+      },
+    });
+    const catalogThreads: CodexCatalogThread[] = [
+      {
+        threadId: "thread-child",
+        projectKey: "proj-native",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        displayName: "coding-anywhere",
+        title: "配置 social-link-ingest 运行环境",
+        source: rawSubagentSource,
+        sourceInfo: {
+          kind: "subagent",
+          label: "子 agent",
+          parentThreadId: "thread-parent",
+          depth: 1,
+          agentNickname: "Gauss",
+          agentRole: "worker",
+        },
+        archived: false,
+        updatedAt: "2026-04-13T01:00:00.000Z",
+        createdAt: "2026-04-13T00:30:00.000Z",
+        gitBranch: "feature/subagent",
+        cliVersion: "0.116.0",
+        rolloutPath: "D:/rollout-child",
+      },
+      {
+        threadId: "thread-parent",
+        projectKey: "proj-native",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        displayName: "coding-anywhere",
+        title: "导入小红书优化版Karpthy知识库分享",
+        source: "vscode",
+        sourceInfo: {
+          kind: "normal",
+          label: "VS Code",
+        },
+        archived: false,
+        updatedAt: "2026-04-13T00:50:00.000Z",
+        createdAt: "2026-04-13T00:00:00.000Z",
+        gitBranch: "main",
+        cliVersion: "0.116.0",
+        rolloutPath: "D:/rollout-parent",
+      },
+      {
+        threadId: "thread-other",
+        projectKey: "proj-native",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        displayName: "coding-anywhere",
+        title: "另一个母 agent 线程",
+        source: "cli",
+        sourceInfo: {
+          kind: "normal",
+          label: "CLI",
+        },
+        archived: false,
+        updatedAt: "2026-04-13T00:40:00.000Z",
+        createdAt: "2026-04-12T00:00:00.000Z",
+        gitBranch: null,
+        cliVersion: "0.116.0",
+        rolloutPath: "D:/rollout-other",
+      },
+      {
+        threadId: "thread-orphan-child",
+        projectKey: "proj-native",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        displayName: "coding-anywhere",
+        title: "缺失父线程的子任务",
+        source: JSON.stringify({
+          subagent: {
+            thread_spawn: {
+              parent_thread_id: "thread-missing",
+              depth: 2,
+              agent_nickname: "Meitner",
+              agent_role: "explorer",
+            },
+          },
+        }),
+        sourceInfo: {
+          kind: "subagent",
+          label: "子 agent",
+          parentThreadId: "thread-missing",
+          depth: 2,
+          agentNickname: "Meitner",
+          agentRole: "explorer",
+        },
+        archived: false,
+        updatedAt: "2026-04-12T23:00:00.000Z",
+        createdAt: "2026-04-12T22:00:00.000Z",
+        gitBranch: "feature/subagent",
+        cliVersion: "0.116.0",
+        rolloutPath: "D:/rollout-orphan-child",
+      },
+    ];
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: {
+        listProjects: vi.fn(() => [{
+          projectKey: "proj-native",
+          cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+          displayName: "coding-anywhere",
+          threadCount: 4,
+          activeThreadCount: 4,
+          lastUpdatedAt: "2026-04-13T00:00:00.000Z",
+          gitBranch: "main",
+        }]),
+        getProject: vi.fn((projectKey: string) => projectKey === "proj-native"
+          ? {
+              projectKey: "proj-native",
+              cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+              displayName: "coding-anywhere",
+              threadCount: 4,
+              activeThreadCount: 4,
+              lastUpdatedAt: "2026-04-13T00:00:00.000Z",
+              gitBranch: "main",
+            }
+          : undefined),
+        listThreads: vi.fn(() => catalogThreads),
+        getThread: vi.fn(),
+        listRecentConversation: vi.fn(() => []),
+      },
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca thread list-current",
+    });
+
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("线程数：4 · 母 agent：2 · 子 agent：2");
+    expect(cardText).toContain("身份：母 agent · 来源：VS Code · 分支：main");
+    expect(cardText).toContain("└ 配置 social-link-ingest 运行环境");
+    expect(cardText).toContain("身份：子 agent · Gauss / worker");
+    expect(cardText).toContain("父线程：导入小红书优化版Karpthy知识库分享（thread-parent）");
+    expect(cardText).toContain("线程 ID：thread-child · 层级：1");
+    expect(cardText).toContain("身份：子 agent · Meitner / explorer");
+    expect(cardText).toContain("父线程：thread-missing（不在当前列表）");
+    expect(cardText).toContain("/ca thread switch thread-child");
+    expect(cardText).toContain("/ca thread switch thread-orphan-child");
+    expect(cardText).not.toContain("{\\\"subagent\\\"");
+    expect(cardText).not.toContain("thread_spawn");
+
+    expect(cardText.indexOf("导入小红书优化版Karpthy知识库分享")).toBeLessThan(
+      cardText.indexOf("└ 配置 social-link-ingest 运行环境"),
+    );
+    expect(cardText.indexOf("└ 配置 social-link-ingest 运行环境")).toBeLessThan(
+      cardText.indexOf("另一个母 agent 线程"),
+    );
   });
 
   it("rebinds a registered Feishu thread to a selected native thread", async () => {

@@ -151,8 +151,92 @@ describe("CodexSqliteCatalog", () => {
       cwd: "D:\\Repos\\Alpha",
       title: "Alpha 正式名称",
       source: "cli",
+      sourceInfo: {
+        kind: "normal",
+        label: "CLI",
+      },
       archived: false,
     });
+    expect(threads[1]).toMatchObject({
+      threadId: "thread-alpha-1",
+      sourceInfo: {
+        kind: "normal",
+        label: "VS Code",
+      },
+    });
+  });
+
+  it("parses subagent source metadata without exposing raw source JSON", () => {
+    const db = new Database(sqlitePath);
+    const insert = db.prepare(`
+      INSERT INTO threads (
+        id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
+        sandbox_policy, approval_mode, archived, git_branch, cli_version
+      ) VALUES (
+        @id, @rolloutPath, @createdAt, @updatedAt, @source, 'openai', @cwd, @title,
+        '{}', 'never', 0, @gitBranch, '0.116.0'
+      )
+    `);
+    insert.run({
+      id: "thread-alpha-child",
+      rolloutPath: path.join(rootDir, "alpha-child.jsonl"),
+      createdAt: 1_700_000_600,
+      updatedAt: 1_700_000_700,
+      source: JSON.stringify({
+        subagent: {
+          thread_spawn: {
+            parent_thread_id: "thread-alpha-1",
+            depth: 1,
+            agent_path: null,
+            agent_nickname: "Gauss",
+            agent_role: "worker",
+          },
+        },
+      }),
+      cwd: "D:\\Repos\\Alpha",
+      title: "Alpha delegated task",
+      gitBranch: "feature/subagent",
+    });
+    insert.run({
+      id: "thread-alpha-json-source",
+      rolloutPath: path.join(rootDir, "alpha-json-source.jsonl"),
+      createdAt: 1_700_000_650,
+      updatedAt: 1_700_000_650,
+      source: JSON.stringify({ unexpected: { raw: true } }),
+      cwd: "D:\\Repos\\Alpha",
+      title: "Alpha metadata thread",
+      gitBranch: "feature/subagent",
+    });
+    db.close();
+
+    const catalog = new CodexSqliteCatalog({
+      sqlitePath,
+      sessionIndexPath,
+    });
+
+    const project = catalog.listProjects()[0];
+    const threads = catalog.listThreads(project.projectKey);
+    const child = threads.find(thread => thread.threadId === "thread-alpha-child");
+    const unknownJson = threads.find(thread => thread.threadId === "thread-alpha-json-source");
+
+    expect(child).toMatchObject({
+      sourceInfo: {
+        kind: "subagent",
+        label: "子 agent",
+        parentThreadId: "thread-alpha-1",
+        depth: 1,
+        agentNickname: "Gauss",
+        agentRole: "worker",
+      },
+    });
+    expect(JSON.stringify(child?.sourceInfo)).not.toContain("thread_spawn");
+    expect(unknownJson).toMatchObject({
+      sourceInfo: {
+        kind: "unknown",
+        label: "Codex 元数据",
+      },
+    });
+    expect(JSON.stringify(unknownJson?.sourceInfo)).not.toContain("unexpected");
   });
 
   it("can read archived threads when explicitly requested", () => {

@@ -7,6 +7,7 @@ import {
   validateBridgeImagePath,
 } from "./bridge-image-directive.js";
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
+import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import type { ProjectThreadService } from "./project-thread-service.js";
 import { createProgressCardState, reduceProgressEvent } from "./progress-relay.js";
@@ -19,6 +20,7 @@ import type {
   CodexCatalogConversationItem,
   CodexCatalogProject,
   CodexCatalogThread,
+  CodexCatalogThreadSourceInfo,
   PendingPlanInteractionRecord,
   RootProfile,
   ProgressCardState,
@@ -1613,6 +1615,11 @@ export class BridgeService {
     project: CodexCatalogProject,
     threads: CodexCatalogThread[],
   ): BridgeReply {
+    const displayThreads = orderCodexThreadsForParentChildDisplay(threads);
+    const threadById = new Map(threads.map(thread => [thread.threadId, thread]));
+    const subagentCount = threads.filter(thread => getCodexThreadSourceInfo(thread).kind === "subagent").length;
+    const parentAgentCount = threads.length - subagentCount;
+
     return {
       kind: "card",
       card: buildBridgeHubCard({
@@ -1621,7 +1628,7 @@ export class BridgeService {
           "**视图**：Codex 线程列表",
           `**当前项目**：${project.displayName}`,
           `**路径**：${project.cwd}`,
-          `**线程数**：${threads.length}`,
+          `线程数：${threads.length} · 母 agent：${parentAgentCount} · 子 agent：${subagentCount}`,
         ],
         sections: threads.length > 0
           ? []
@@ -1631,13 +1638,9 @@ export class BridgeService {
                 items: ["当前项目下没有可切换的 Codex 线程。"],
               },
             ],
-        rows: threads.map(thread => ({
-          title: thread.title,
-          lines: [
-            `线程 ID：${thread.threadId}`,
-            `来源：${thread.source} · 分支：${thread.gitBranch ?? "unknown"}`,
-            `最近更新：${thread.updatedAt}`,
-          ],
+        rows: displayThreads.map(thread => ({
+          title: formatCodexThreadListTitle(thread),
+          lines: formatCodexThreadListLines(thread, threadById),
           buttonLabel: "切换到此线程",
           value: this.buildCardActionValue(
             this.buildCardActionContext(input),
@@ -2230,6 +2233,152 @@ function buildRunId(): string {
 function formatCurrentThreadLabel(title: string, fallbackThreadId: string): string {
   const normalizedTitle = title.trim();
   return normalizedTitle.length > 0 ? normalizedTitle : fallbackThreadId;
+}
+
+function orderCodexThreadsForParentChildDisplay(threads: CodexCatalogThread[]): CodexCatalogThread[] {
+  const threadById = new Map(threads.map(thread => [thread.threadId, thread]));
+  const childrenByParent = new Map<string, CodexCatalogThread[]>();
+  const nestedChildThreadIds = new Set<string>();
+
+  for (const thread of threads) {
+    const sourceInfo = getCodexThreadSourceInfo(thread);
+    if (
+      sourceInfo.kind !== "subagent" ||
+      !sourceInfo.parentThreadId ||
+      sourceInfo.parentThreadId === thread.threadId ||
+      !threadById.has(sourceInfo.parentThreadId)
+    ) {
+      continue;
+    }
+
+    const children = childrenByParent.get(sourceInfo.parentThreadId) ?? [];
+    children.push(thread);
+    childrenByParent.set(sourceInfo.parentThreadId, children);
+    nestedChildThreadIds.add(thread.threadId);
+  }
+
+  const visited = new Set<string>();
+  const ordered: CodexCatalogThread[] = [];
+  const roots = threads
+    .filter(thread => !nestedChildThreadIds.has(thread.threadId))
+    .sort((left, right) => compareCodexThreadGroupActivity(right, left, childrenByParent, new Set()));
+
+  const visit = (thread: CodexCatalogThread) => {
+    if (visited.has(thread.threadId)) {
+      return;
+    }
+
+    visited.add(thread.threadId);
+    ordered.push(thread);
+
+    const children = (childrenByParent.get(thread.threadId) ?? [])
+      .sort((left, right) => compareCodexThreadGroupActivity(right, left, childrenByParent, new Set()));
+    for (const child of children) {
+      visit(child);
+    }
+  };
+
+  for (const root of roots) {
+    visit(root);
+  }
+
+  return ordered;
+}
+
+function compareCodexThreadGroupActivity(
+  left: CodexCatalogThread,
+  right: CodexCatalogThread,
+  childrenByParent: Map<string, CodexCatalogThread[]>,
+  seen: Set<string>,
+): number {
+  const leftLatest = latestCodexThreadGroupUpdatedAt(left, childrenByParent, new Set(seen));
+  const rightLatest = latestCodexThreadGroupUpdatedAt(right, childrenByParent, new Set(seen));
+
+  return leftLatest.localeCompare(rightLatest);
+}
+
+function latestCodexThreadGroupUpdatedAt(
+  thread: CodexCatalogThread,
+  childrenByParent: Map<string, CodexCatalogThread[]>,
+  seen: Set<string>,
+): string {
+  if (seen.has(thread.threadId)) {
+    return thread.updatedAt;
+  }
+
+  seen.add(thread.threadId);
+  const childLatest = (childrenByParent.get(thread.threadId) ?? [])
+    .map(child => latestCodexThreadGroupUpdatedAt(child, childrenByParent, seen))
+    .sort((left, right) => right.localeCompare(left))[0];
+
+  return childLatest && childLatest > thread.updatedAt ? childLatest : thread.updatedAt;
+}
+
+function formatCodexThreadListTitle(thread: CodexCatalogThread): string {
+  const sourceInfo = getCodexThreadSourceInfo(thread);
+  return sourceInfo.kind === "subagent" ? `└ ${thread.title}` : thread.title;
+}
+
+function formatCodexThreadListLines(
+  thread: CodexCatalogThread,
+  threadById: Map<string, CodexCatalogThread>,
+): string[] {
+  const sourceInfo = getCodexThreadSourceInfo(thread);
+
+  if (sourceInfo.kind === "subagent") {
+    return [
+      `身份：子 agent · ${formatSubagentIdentity(sourceInfo)}`,
+      `父线程：${formatParentThreadLabel(sourceInfo.parentThreadId, threadById)}`,
+      `线程 ID：${thread.threadId}${formatSubagentDepth(sourceInfo)}`,
+      `最近更新：${thread.updatedAt}`,
+    ];
+  }
+
+  return [
+    `线程 ID：${thread.threadId}`,
+    `身份：母 agent · 来源：${sourceInfo.label} · 分支：${thread.gitBranch ?? "unknown"}`,
+    `最近更新：${thread.updatedAt}`,
+  ];
+}
+
+function getCodexThreadSourceInfo(thread: CodexCatalogThread): CodexCatalogThreadSourceInfo {
+  return thread.sourceInfo ?? parseCodexThreadSourceInfo(thread.source);
+}
+
+function formatSubagentIdentity(sourceInfo: CodexCatalogThreadSourceInfo): string {
+  const parts = [sourceInfo.agentNickname, sourceInfo.agentRole]
+    .map(part => part?.trim())
+    .filter((part): part is string => Boolean(part));
+
+  return parts.length > 0 ? parts.join(" / ") : "未命名";
+}
+
+function formatParentThreadLabel(
+  parentThreadId: string | undefined,
+  threadById: Map<string, CodexCatalogThread>,
+): string {
+  if (!parentThreadId) {
+    return "未知";
+  }
+
+  const parent = threadById.get(parentThreadId);
+  if (!parent) {
+    return `${formatThreadIdReference(parentThreadId)}（不在当前列表）`;
+  }
+
+  return `${truncateCardLineText(parent.title, 32)}（${formatThreadIdReference(parent.threadId)}）`;
+}
+
+function formatSubagentDepth(sourceInfo: CodexCatalogThreadSourceInfo): string {
+  return typeof sourceInfo.depth === "number" ? ` · 层级：${sourceInfo.depth}` : "";
+}
+
+function formatThreadIdReference(threadId: string): string {
+  return threadId.length > 18 ? `${threadId.slice(0, 8)}...${threadId.slice(-4)}` : threadId;
+}
+
+function truncateCardLineText(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
 }
 
 function selectSwitchCardConversation(
