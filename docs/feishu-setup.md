@@ -132,6 +132,12 @@ npm run init:config
 
 然后把 `config.toml` 里的 `[feishu]` 段改成真实值。一个最常见的写法如下：
 
+说明：
+
+- 仓库只提交 `config.example.toml`
+- `npm run init:config` 会在本地生成可编辑的 `config.toml`
+- 真实 `config.toml` 只保留在本机，不提交到 git
+
 ```toml
 [feishu]
 appId = "cli_xxx"

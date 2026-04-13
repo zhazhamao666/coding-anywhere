@@ -676,6 +676,8 @@ channel + peer_id -> codex_thread_id
 - `[feishu]`
 - `[root]`
 
+仓库只提交 `config.example.toml` 作为示例模板；真实 `config.toml` 只保留在本地并由 `.gitignore` 忽略。新环境需要先执行 `npm run init:config`，再填写本地配置。
+
 飞书应用初始化、长连接配置以及 `config.toml` 的字段映射，可参考 [飞书配置说明](./feishu-setup.md)。
 
 ### 11.1 新增配置

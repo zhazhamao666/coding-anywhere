@@ -80,7 +80,8 @@ D:\services\feishu-codex-bridge
 
 项目目录内关键位置：
 
-- `config.toml`
+- `config.example.toml`
+- 本地 `config.toml`
 - `data/bridge.db`
 - `logs/`
 - `docs/`
@@ -99,6 +100,12 @@ npm install
 ```bash
 npm run init:config
 ```
+
+说明：
+
+- 仓库只提交 `config.example.toml`
+- `npm run init:config` 会在本地生成或补齐 `config.toml`
+- 真实 `config.toml` 只保留在部署机，不提交到 git
 
 ### 第三步：填写 `config.toml`
 
@@ -426,7 +433,7 @@ test
 2. `readyz`
 3. `/ops/ui` 与 `/ops/overview`
 4. 飞书 `/ca status`
-5. [故障排查手册](D:/eijud/OneDrive/eijud-sync/project/coding-anywhere/docs/troubleshooting.md)
+5. [故障排查手册](./troubleshooting.md)
 
 如果这 5 类信息都对不上，再去查更深层的问题。
 
