@@ -20,7 +20,7 @@ test("reuses the persistent feishu profile without returning to the login screen
       waitUntil: "domcontentloaded",
     });
 
-    await expect(page).toHaveURL(/feishu\.cn\/(messages|messenger|chat|im)/);
+    await expect(page).toHaveURL(/feishu\.cn\/(?:next\/)?(?:messages|messenger|chat|im)/);
     await expect(page).not.toHaveURL(/login|passport/i);
   } finally {
     await context.close();

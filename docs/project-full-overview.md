@@ -702,9 +702,11 @@ channel + peer_id -> codex_thread_id
 为了验证“真实飞书用户发消息 -> bridge -> Codex -> 飞书回推”的整条链路，仓库额外约定了一套只用于本地或专用 runner 的 Playwright live smoke：
 
 - `npm run test:feishu:auth` 会启动一个最大化的持久化浏览器 profile，默认打开 `https://feishu.cn/messages/`
+- 登录成功后的页面既可能是 `https://feishu.cn/messages/`，也可能是租户域名下的 `/next/messenger/`
 - 首次执行需要人工完成飞书登录；成功后会在仓库根目录 `.auth/feishu-profile` 保存本地登录态，并写入 `.auth/feishu-live-auth.json`
 - `npm run test:feishu:live` 会复用该 profile 打开真实飞书 DM 页面，不再重复自动登录
 - `FEISHU_LIVE_DM_URL` 用于指定待测机器人 DM 的网页地址；未设置时只允许做 auth bootstrap，不允许发消息 smoke
+- `FEISHU_LIVE_CONVERSATION_NAME` 可在 `FEISHU_LIVE_DM_URL` 只能打开 messenger 根页时指定左侧会话名，例如机器人 DM 或测试群名
 - `FEISHU_LIVE_OPS_BASE_URL` 可显式覆盖 `/ops` 根地址；未设置时会从 `config.toml` 的 `[server]` 配置自动推导
 - `.auth/` 仅用于本地测试，不纳入 git
 
@@ -838,7 +840,7 @@ channel + peer_id -> codex_thread_id
 3. `npm run test:feishu:live`
 4. smoke 会复用 `.auth/feishu-profile` 打开真实 DM，默认发送 `/ca`，并等待页面出现“导航”字样
 5. smoke 还会请求 `/ops/overview` 确认本地 bridge 控制面可达；如需覆盖地址，设置 `FEISHU_LIVE_OPS_BASE_URL`
-6. 如需调整 smoke 指令或断言，可设置 `FEISHU_LIVE_SMOKE_TEXT`、`FEISHU_LIVE_EXPECT_TEXT`、`FEISHU_LIVE_COMPOSER_SELECTOR`
+6. 如需调整 smoke 指令、会话选择或断言，可设置 `FEISHU_LIVE_SMOKE_TEXT`、`FEISHU_LIVE_CONVERSATION_NAME`、`FEISHU_LIVE_EXPECT_TEXT`、`FEISHU_LIVE_COMPOSER_SELECTOR`
 7. 登录态失效时，重新运行 `npm run test:feishu:auth` 刷新 profile
 
 ### 15.5 Codex 真实调用烟测
