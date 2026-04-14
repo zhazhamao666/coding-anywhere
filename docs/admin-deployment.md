@@ -17,7 +17,7 @@
 
 - 1 个飞书应用
 - 1 个桥接服务实例
-- 1 台运行 `acpx` 和 `codex` 的主机
+- 1 台运行 `codex` 的主机
 - 1 个受控 root 目录
 
 这不是一个多副本、高可用、无状态横向扩缩容服务。当前版本更像一个“单实例专用执行器”。
@@ -30,7 +30,7 @@
 飞书 DM
   -> 飞书长连接事件
   -> Coding Anywhere
-  -> acpx
+  -> Codex CLI
   -> Codex
   -> CA 回写飞书
 ```
@@ -40,7 +40,7 @@
 - 飞书负责消息入口
 - Coding Anywhere 负责路由、会话绑定、消息回写
 - SQLite 负责持久化 root、session 与 backend observability run/event
-- `acpx` 负责连接 Codex
+- `codex exec` / `codex exec resume` 负责实际执行和续跑线程
 - Codex 负责实际代码任务
 
 ## 3. 单实例原则
@@ -64,7 +64,6 @@
 - Node.js 已安装
 - `npm install` 能正常完成
 - 本机可运行 `codex`
-- 本机可运行 `acpx`
 - 飞书应用已配置好机器人与长连接事件
 - 至少有一个可访问的本地 root 目录
 
@@ -106,6 +105,7 @@ npm run init:config
 - 仓库只提交 `config.example.toml`
 - `npm run init:config` 会在本地生成或补齐 `config.toml`
 - 真实 `config.toml` 只保留在部署机，不提交到 git
+- 当前正式配置段是 `[codex]`；旧 `[acpx]` 仍可作为兼容别名读取，但不再建议继续使用
 
 ### 第三步：填写 `config.toml`
 
@@ -115,7 +115,7 @@ npm run init:config
 - `feishu.appSecret`
 - `feishu.allowlist`
 - `feishu.encryptKey`
-- `acpx.command`
+- `codex.command`
 - `[root]`
 
 推荐把 `root.cwd` 指向一个“项目父目录”，而不是整个磁盘。
@@ -197,15 +197,13 @@ http://127.0.0.1:3100/ops/ui
 - 定期备份 `data/bridge.db`
 - 定期清理 `logs/`
 
-### `[acpx]`
+### `[codex]`
 
 - `command`
-- `agent`
 
 建议：
 
-- 默认保持 `command = "acpx"`
-- 默认保持 `agent = "codex"`
+- 默认保持 `command = "codex"`
 
 ### `[feishu]`
 

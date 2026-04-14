@@ -11,52 +11,28 @@ vi.mock("execa", () => ({
   execa: execaMock,
 }));
 
-import { AcpxRunner, parseAcpxEventLine } from "../src/acpx-runner.js";
+import { CodexCliRunner } from "../src/codex-cli-runner.js";
 
-describe("parseAcpxEventLine", () => {
-  it("parses tool call events from acpx json-rpc updates", () => {
-    const event = parseAcpxEventLine(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        method: "session/update",
-        params: {
-          update: {
-            sessionUpdate: "tool_call",
-            title: "npm test",
-          },
-        },
-      }),
-    );
-
-    expect(event).toEqual({
-      type: "tool_call",
-      toolName: "npm test",
-      content: "npm test",
-    });
-  });
-
-  it("ignores non-event json-rpc messages", () => {
-    const event = parseAcpxEventLine(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: 0,
-        result: {
-          protocolVersion: 1,
-        },
-      }),
-    );
-
-    expect(event).toBeUndefined();
-  });
-});
-
-describe("AcpxRunner", () => {
+describe("CodexCliRunner", () => {
   beforeEach(() => {
     execaMock.mockReset();
   });
 
+  it("checks codex cli health instead of the legacy acpx binary", async () => {
+    execaMock.mockResolvedValue({
+      exitCode: 0,
+    });
+    const runner = new CodexCliRunner("codex");
+
+    await expect(runner.checkHealth()).resolves.toBe(true);
+
+    expect(execaMock).toHaveBeenCalledWith("codex", ["--version"], {
+      reject: false,
+    });
+  });
+
   it("does not shell out when ensuring native execution context", async () => {
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
 
     await runner.ensureSession({
       targetKind: "codex_thread",
@@ -72,7 +48,7 @@ describe("AcpxRunner", () => {
     const child = createChildFromFixture("create-thread.jsonl", 0);
     execaMock.mockReturnValue(child);
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
     const seenEvents: unknown[] = [];
 
     const outcome = await runner.createThread(
@@ -110,7 +86,7 @@ describe("AcpxRunner", () => {
     const child = createChildFromFixture("create-thread.jsonl", 0);
     execaMock.mockReturnValue(child);
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
 
     await runner.createThread({
       cwd: "D:/repo",
@@ -133,7 +109,7 @@ describe("AcpxRunner", () => {
   });
 
   it("treats close as a no-op for native-only execution", async () => {
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
 
     await runner.close({
       targetKind: "codex_thread",
@@ -153,7 +129,7 @@ describe("AcpxRunner", () => {
     );
     execaMock.mockReturnValue(child);
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
     const seenEvents: unknown[] = [];
 
     const outcome = await runner.submitVerbatim(
@@ -208,7 +184,7 @@ describe("AcpxRunner", () => {
     const child = createChildFromFixture("resume-thread.jsonl", 0);
     execaMock.mockReturnValue(child);
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
 
     await runner.submitVerbatim(
       {
@@ -251,7 +227,7 @@ describe("AcpxRunner", () => {
     const child = createChildFromFixture("command-failure.jsonl", 1);
     execaMock.mockReturnValue(child);
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
     const seenEvents: unknown[] = [];
 
     const outcome = await runner.submitVerbatim(
@@ -283,7 +259,7 @@ describe("AcpxRunner", () => {
     const child = createChildFromFixture("plan-mode.jsonl", 0);
     execaMock.mockReturnValue(child);
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
     const seenEvents: unknown[] = [];
 
     const outcome = await runner.submitVerbatim(
@@ -330,7 +306,7 @@ describe("AcpxRunner", () => {
     const child = createChildFromFixture("sub-agent.jsonl", 0);
     execaMock.mockReturnValue(child);
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
     const seenEvents: unknown[] = [];
 
     const outcome = await runner.submitVerbatim(
@@ -375,7 +351,7 @@ describe("AcpxRunner", () => {
     const child = createChildFromFixture("plan-choice.jsonl", 0);
     execaMock.mockReturnValue(child);
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
     const seenEvents: unknown[] = [];
 
     const outcome = await runner.submitVerbatim(

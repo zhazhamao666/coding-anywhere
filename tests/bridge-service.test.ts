@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BridgeService } from "../src/bridge-service.js";
-import type { AcpxEvent, CodexCatalogThread, ProgressCardState } from "../src/types.js";
+import type { CodexCatalogThread, ProgressCardState, RunnerEvent } from "../src/types.js";
 import { SessionStore } from "../src/workspace/session-store.js";
 
 describe("BridgeService", () => {
@@ -378,7 +378,7 @@ describe("BridgeService", () => {
           stage: "received",
         }),
         expect.objectContaining({
-          source: "acpx",
+          source: "runner",
           stage: "tool_call",
         }),
       ]),
@@ -918,7 +918,7 @@ describe("BridgeService", () => {
     const observabilityStore = store as any;
     const textEvents = observabilityStore
       .listRunEvents(snapshots[0]?.runId)
-      .filter((event: { source: string; stage: string }) => event.source === "acpx" && event.stage === "text");
+      .filter((event: { source: string; stage: string }) => event.source === "runner" && event.stage === "text");
 
     expect(textEvents).toEqual([
       expect.objectContaining({
@@ -2051,7 +2051,7 @@ describe("BridgeService", () => {
 });
 
 function createRunnerDouble(
-  events: AcpxEvent[] = [
+  events: RunnerEvent[] = [
     { type: "tool_call", toolName: "npm test", content: "npm test" },
     { type: "text", content: "测试已经执行完成" },
     { type: "done", content: "测试已经执行完成" },
@@ -2069,8 +2069,8 @@ function createRunnerDouble(
     submitVerbatim: vi.fn(async (
       _context,
       _prompt,
-      optionsOrOnEvent?: { images?: string[] } | ((event: AcpxEvent) => void),
-      maybeOnEvent?: (event: AcpxEvent) => void,
+      optionsOrOnEvent?: { images?: string[] } | ((event: RunnerEvent) => void),
+      maybeOnEvent?: (event: RunnerEvent) => void,
     ) => {
       const onEvent = typeof optionsOrOnEvent === "function"
         ? optionsOrOnEvent

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import { loadConfig } from "./config.js";
+import { loadConfigWithMetadata } from "./config.js";
 import { resolveExecutable } from "./executable.js";
 
 export interface DoctorCheck {
@@ -37,13 +37,6 @@ export function inspectEnvironment(input?: {
     message: "Codex CLI must be installed and discoverable.",
   });
 
-  checks.push({
-    id: "acpx",
-    ok: Boolean(resolveCommand("acpx")),
-    severity: "blocking",
-    message: "acpx must be installed and discoverable.",
-  });
-
   if (!existsSync(configPath)) {
     checks.push({
       id: "config",
@@ -58,7 +51,17 @@ export function inspectEnvironment(input?: {
     };
   }
 
-  const config = loadConfig(configPath);
+  const loaded = loadConfigWithMetadata(configPath);
+  const config = loaded.config;
+
+  if (loaded.usedLegacyAcpxSection) {
+    checks.push({
+      id: "config.legacyAcpxSection",
+      ok: false,
+      severity: "warning",
+      message: "Legacy [acpx] config detected. Rename it to [codex] when convenient.",
+    });
+  }
 
   checks.push({
     id: "feishu.appId",

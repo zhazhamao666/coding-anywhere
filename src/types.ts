@@ -259,14 +259,14 @@ export interface BridgeLifecycleEvent {
   sessionName?: string;
 }
 
-export type AcpxEvent =
+export type RunnerEvent =
   | { type: "text"; content: string; planInteraction?: PlanInteractionDraft }
   | { type: "tool_call"; toolName: string; content: string }
   | { type: "done"; content?: string }
   | { type: "error"; content: string }
   | { type: "waiting"; content?: string; planTodos?: PlanTodoItem[] };
 
-export type BridgeObservableEvent = BridgeLifecycleEvent | AcpxEvent;
+export type BridgeObservableEvent = BridgeLifecycleEvent | RunnerEvent;
 
 export interface ProgressCardState {
   runId: string;
@@ -343,7 +343,7 @@ export interface ReapableThread {
 export interface ObservabilityRunEvent {
   runId: string;
   seq: number;
-  source: "bridge" | "acpx" | "system";
+  source: "bridge" | "runner" | "system";
   status: ProgressStatus;
   stage: ProgressStage;
   preview: string;
@@ -392,7 +392,7 @@ export type RunContext =
     };
 
 export interface RunOutcome {
-  events: AcpxEvent[];
+  events: RunnerEvent[];
   exitCode: number;
   threadId?: string;
 }

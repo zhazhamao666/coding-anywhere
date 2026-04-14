@@ -19,7 +19,7 @@ describe("inspectEnvironment", () => {
     rmSync(rootDir, { recursive: true, force: true });
   });
 
-  it("flags placeholder feishu credentials and allowlist entries as blocking issues", () => {
+  it("flags placeholder feishu credentials and allowlist entries as blocking issues without requiring acpx", () => {
     writeFileSync(
       configPath,
       createConfigToml({
@@ -34,7 +34,7 @@ describe("inspectEnvironment", () => {
     const report = inspectEnvironment({
       cwd: rootDir,
       configPath,
-      resolveCommand: command => (command === "codex" ? "C:/bin/codex.cmd" : "C:/bin/acpx.cmd"),
+      resolveCommand: command => (command === "codex" ? "C:/bin/codex.cmd" : undefined),
     });
 
     expect(report.ok).toBe(false);
@@ -48,6 +48,36 @@ describe("inspectEnvironment", () => {
       "feishu.allowlist",
       "root.cwd",
     ]);
+  });
+
+  it("warns when the config still uses the legacy acpx section name", () => {
+    writeFileSync(
+      configPath,
+      createConfigToml({
+        appId: "cli_real",
+        appSecret: "secret-real",
+        allowlist: ["ou_real"],
+        rootCwd: rootDir,
+        runnerSection: "acpx",
+      }),
+      "utf8",
+    );
+
+    const report = inspectEnvironment({
+      cwd: rootDir,
+      configPath,
+      resolveCommand: command => (command === "codex" ? "C:/bin/codex.cmd" : undefined),
+    });
+
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "config.legacyAcpxSection",
+          ok: false,
+          severity: "warning",
+        }),
+      ]),
+    );
   });
 
   it("warns that real codex smoke needs auth and explicit opt-in guidance", () => {
@@ -67,7 +97,7 @@ describe("inspectEnvironment", () => {
       cwd: rootDir,
       configPath,
       codexHomePath: codexHome,
-      resolveCommand: command => (command === "codex" ? "C:/bin/codex.cmd" : "C:/bin/acpx.cmd"),
+      resolveCommand: command => (command === "codex" ? "C:/bin/codex.cmd" : undefined),
     });
 
     expect(report.ok).toBe(true);
@@ -85,7 +115,11 @@ function createConfigToml(input: {
   appSecret: string;
   allowlist: string[];
   rootCwd: string;
+  runnerSection?: "codex" | "acpx";
 }) {
+  const runnerSection = input.runnerSection ?? "codex";
+  const runnerCommand = runnerSection === "codex" ? "codex" : "acpx";
+
   return `
 [server]
 host = "127.0.0.1"
@@ -95,9 +129,8 @@ port = 3000
 sqlitePath = "data/bridge.db"
 logDir = "logs"
 
-[acpx]
-command = "acpx"
-agent = "codex"
+[${runnerSection}]
+command = "${runnerCommand}"
 
 [feishu]
 appId = "${input.appId}"

@@ -17,7 +17,53 @@ describe("loadConfig", () => {
     rmSync(rootDir, { recursive: true, force: true });
   });
 
-  it("parses feishu credentials, allowlist, and a single bridge root from toml", () => {
+  it("parses feishu credentials, allowlist, and a single bridge root from the codex config section", () => {
+    const configPath = path.join(rootDir, "config.toml");
+
+    writeFileSync(
+      configPath,
+      `
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[storage]
+sqlitePath = "data/bridge.db"
+logDir = "logs"
+
+[codex]
+command = "codex"
+
+[feishu]
+appId = "cli_xxx"
+appSecret = "secret"
+websocketUrl = "wss://example.invalid/ws"
+apiBaseUrl = "https://open.feishu.cn/open-apis"
+allowlist = ["ou_demo"]
+
+[root]
+id = "main"
+name = "Main Root"
+cwd = "D:/repos"
+repoRoot = "D:/repos"
+branchPolicy = "reuse"
+permissionMode = "workspace-write"
+envAllowlist = ["PATH"]
+idleTtlHours = 24
+`,
+      "utf8",
+    );
+
+    const config = loadConfig(configPath);
+
+    expect(config.feishu.allowlist).toEqual(["ou_demo"]);
+    expect(config.feishu.websocketUrl).toBe("wss://example.invalid/ws");
+    expect(config.root.id).toBe("main");
+    expect(config.root.cwd).toBe("D:/repos");
+    expect((config as any).codex.command).toBe("codex");
+  });
+
+  it("accepts the legacy acpx config section as a compatibility alias for codex", () => {
     const configPath = path.join(rootDir, "config.toml");
 
     writeFileSync(
@@ -57,9 +103,6 @@ idleTtlHours = 24
 
     const config = loadConfig(configPath);
 
-    expect(config.feishu.allowlist).toEqual(["ou_demo"]);
-    expect(config.feishu.websocketUrl).toBe("wss://example.invalid/ws");
-    expect(config.root.id).toBe("main");
-    expect(config.root.cwd).toBe("D:/repos");
+    expect((config as any).codex.command).toBe("codex");
   });
 });

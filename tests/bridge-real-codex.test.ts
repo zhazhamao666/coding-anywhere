@@ -12,7 +12,7 @@ vi.mock("execa", () => ({
   execa: execaMock,
 }));
 
-import { AcpxRunner } from "../src/acpx-runner.js";
+import { CodexCliRunner } from "../src/codex-cli-runner.js";
 import { BridgeService } from "../src/bridge-service.js";
 import { SessionStore } from "../src/workspace/session-store.js";
 
@@ -43,7 +43,7 @@ describe("BridgeService real runner bridge coverage", () => {
     rmSync(rootDir, { recursive: true, force: true });
   });
 
-  it("boots a new DM thread through the real AcpxRunner and records the bridge run", async () => {
+  it("boots a new DM thread through the real CodexCliRunner and records the bridge run", async () => {
     execaMock
       .mockImplementationOnce(() =>
         createChildFromFixture("create-thread.jsonl", 0),
@@ -52,7 +52,7 @@ describe("BridgeService real runner bridge coverage", () => {
         createChildFromFixture("resume-thread.jsonl", 0),
       );
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
     const service = new BridgeService({
       store,
       runner,
@@ -122,7 +122,7 @@ describe("BridgeService real runner bridge coverage", () => {
     );
   });
 
-  it("resumes a bound DM thread through the real AcpxRunner and keeps observability aligned", async () => {
+  it("resumes a bound DM thread through the real CodexCliRunner and keeps observability aligned", async () => {
     store.createProject({
       projectId: "proj-native",
       name: "coding-anywhere",
@@ -139,7 +139,7 @@ describe("BridgeService real runner bridge coverage", () => {
       createChildFromFixture("resume-thread.jsonl", 0),
     );
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
     const service = new BridgeService({
       store,
       runner,
@@ -259,7 +259,7 @@ describe("BridgeService real runner bridge coverage", () => {
       createChildFromFixture("plan-mode.jsonl", 0),
     );
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
     const service = new BridgeService({
       store,
       runner,
@@ -329,7 +329,7 @@ describe("BridgeService real runner bridge coverage", () => {
       createChildFromFixture("sub-agent.jsonl", 0),
     );
 
-    const runner = new AcpxRunner("acpx", "codex");
+    const runner = new CodexCliRunner("codex");
     const service = new BridgeService({
       store,
       runner,

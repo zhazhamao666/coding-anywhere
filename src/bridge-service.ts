@@ -12,7 +12,6 @@ import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import type { ProjectThreadService } from "./project-thread-service.js";
 import { createProgressCardState, reduceProgressEvent } from "./progress-relay.js";
 import type {
-  AcpxEvent,
   BridgeAssetRecord,
   BridgeMessageInput,
   BridgeLifecycleStage,
@@ -26,6 +25,7 @@ import type {
   ProgressCardState,
   RunContext,
   RunOutcome,
+  RunnerEvent,
 } from "./types.js";
 import { SessionStore } from "./workspace/session-store.js";
 
@@ -36,7 +36,7 @@ interface BridgeRunner {
       prompt: string;
       images?: string[];
     },
-    onEvent?: (event: AcpxEvent) => void,
+    onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome & { threadId: string }>;
   ensureSession(context: RunContext): Promise<void>;
   submitVerbatim(
@@ -44,8 +44,8 @@ interface BridgeRunner {
     prompt: string,
     optionsOrOnEvent?: {
       images?: string[];
-    } | ((event: AcpxEvent) => void | Promise<void>),
-    onEvent?: (event: AcpxEvent) => void,
+    } | ((event: RunnerEvent) => void | Promise<void>),
+    onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome>;
   cancel(context: RunContext): Promise<void>;
   close(context: RunContext): Promise<void>;
@@ -123,7 +123,7 @@ export class BridgeService {
 
     const emitSnapshot = async (
       snapshot: ProgressCardState,
-      source: "bridge" | "acpx" | "system",
+      source: "bridge" | "runner" | "system",
       toolName?: string,
       coalesceSimilar = false,
     ) => {
@@ -228,7 +228,7 @@ export class BridgeService {
         activeResolved.sessionName,
       );
 
-      const runnerEventHandler = async (event: AcpxEvent) => {
+      const runnerEventHandler = async (event: RunnerEvent) => {
         sawRunnerEvent = true;
         let snapshot = reduceProgressEvent(currentProgress, event);
         if (event.type === "text" && event.planInteraction && activeResolved.threadId) {
@@ -251,7 +251,7 @@ export class BridgeService {
         }
         await emitSnapshot(
           snapshot,
-          "acpx",
+          "runner",
           event.type === "tool_call" ? event.toolName : undefined,
           event.type === "text" || event.type === "waiting",
         );
@@ -2425,7 +2425,7 @@ function normalizePathKey(value: string): string {
     .toLowerCase();
 }
 
-function findFinalAssistantText(events: AcpxEvent[]): string {
+function findFinalAssistantText(events: RunnerEvent[]): string {
   const finalText = [...events]
     .reverse()
     .find(event => (event.type === "done" || event.type === "text") && event.content);

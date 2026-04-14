@@ -1,7 +1,7 @@
 {
   "name": "feishu-codex-bridge",
   "version": "1.0.0",
-  "description": "Dedicated Feishu to Codex bridge with transparent ACP routing",
+  "description": "Dedicated Feishu to Codex bridge with native Codex CLI execution",
   "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -23,7 +23,6 @@
   "type": "module",
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.59.0",
-    "acpx": "^0.3.1",
     "better-sqlite3": "^12.4.1",
     "execa": "^9.6.0",
     "fastify": "^5.6.1",

@@ -109,7 +109,7 @@ describe("SessionStore", () => {
     });
     observabilityStore.appendRunEvent({
       runId: "run-1",
-      source: "acpx",
+      source: "runner",
       status: "tool_active",
       stage: "tool_call",
       preview: "[ca] tool_call: npm test",
@@ -152,7 +152,7 @@ describe("SessionStore", () => {
       expect.objectContaining({
         runId: "run-1",
         seq: 2,
-        source: "acpx",
+        source: "runner",
         toolName: "npm test",
       }),
     ]);
@@ -195,7 +195,7 @@ describe("SessionStore", () => {
 
     observabilityStore.appendRunEvent({
       runId: "run-merge",
-      source: "acpx",
+      source: "runner",
       status: "running",
       stage: "text",
       preview: "使用",
@@ -203,7 +203,7 @@ describe("SessionStore", () => {
     });
     observabilityStore.appendRunEvent({
       runId: "run-merge",
-      source: "acpx",
+      source: "runner",
       status: "running",
       stage: "text",
       preview: "使用 `using-superpowers` 技能",
@@ -596,5 +596,101 @@ describe("SessionStore", () => {
     expect(tables.map(table => table.name)).toEqual(expect.arrayContaining([
       "codex_project_selections",
     ]));
+  });
+
+  it("migrates historical observability event sources from acpx to runner", () => {
+    const dbPath = path.join(rootDir, "bridge.db");
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE observability_runs (
+        run_id TEXT PRIMARY KEY,
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        project_id TEXT,
+        thread_id TEXT,
+        delivery_chat_id TEXT,
+        delivery_surface_type TEXT,
+        delivery_surface_ref TEXT,
+        session_name TEXT NOT NULL,
+        root_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        latest_preview TEXT NOT NULL,
+        latest_tool TEXT,
+        error_text TEXT,
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT
+      );
+
+      CREATE TABLE observability_run_events (
+        run_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        preview TEXT NOT NULL,
+        tool_name TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (run_id, seq)
+      );
+    `);
+    legacyDb.prepare(`
+      INSERT INTO observability_runs (
+        run_id,
+        channel,
+        peer_id,
+        session_name,
+        root_id,
+        status,
+        stage,
+        latest_preview,
+        started_at,
+        updated_at
+      ) VALUES (
+        'run-legacy',
+        'feishu',
+        'ou_demo',
+        'thread-demo',
+        'main',
+        'done',
+        'done',
+        'done',
+        '2026-04-14T00:00:00.000Z',
+        '2026-04-14T00:00:00.000Z'
+      )
+    `).run();
+    legacyDb.prepare(`
+      INSERT INTO observability_run_events (
+        run_id,
+        seq,
+        source,
+        status,
+        stage,
+        preview,
+        tool_name,
+        created_at
+      ) VALUES (
+        'run-legacy',
+        1,
+        'acpx',
+        'tool_active',
+        'tool_call',
+        '[ca] tool_call: npm test',
+        'npm test',
+        '2026-04-14T00:00:00.000Z'
+      )
+    `).run();
+    legacyDb.close();
+
+    store = new SessionStore(dbPath);
+
+    expect((store as any).listRunEvents("run-legacy")).toEqual([
+      expect.objectContaining({
+        runId: "run-legacy",
+        source: "runner",
+        toolName: "npm test",
+      }),
+    ]);
   });
 });

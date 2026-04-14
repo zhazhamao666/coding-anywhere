@@ -1,150 +1,21 @@
 import { execa } from "execa";
 
 import type {
-  AcpxEvent,
   PlanChoiceOption,
   PlanInteractionDraft,
   PlanTodoItem,
   RunContext,
   RunOutcome,
+  RunnerEvent,
 } from "./types.js";
 
-export function parseAcpxEventLine(line: string): AcpxEvent | undefined {
-  let parsed: any;
-  try {
-    parsed = JSON.parse(line);
-  } catch {
-    return undefined;
-  }
-
-  if (typeof parsed.type === "string") {
-    switch (parsed.type) {
-      case "tool_call":
-        return {
-          type: "tool_call",
-          toolName: parsed.tool_name ?? "unknown",
-          content: parsed.content ?? "",
-        };
-      case "text":
-        return {
-          type: "text",
-          content: parsed.content ?? "",
-        };
-      case "done":
-        return {
-          type: "done",
-          content: parsed.content,
-        };
-      case "error":
-        return {
-          type: "error",
-          content: parsed.content ?? "unknown error",
-        };
-      default:
-        return {
-          type: "waiting",
-          content: parsed.content,
-        };
-    }
-  }
-
-  if (parsed?.error?.message) {
-    return {
-      type: "error",
-      content: parsed.error.message,
-    };
-  }
-
-  if (parsed?.method === "session/update") {
-    const update = parsed?.params?.update;
-    switch (update?.sessionUpdate) {
-      case "agent_message_chunk": {
-        const text =
-          update?.content?.type === "text" ? update.content.text : undefined;
-        if (!text) {
-          return undefined;
-        }
-        return {
-          type: "text",
-          content: text,
-        };
-      }
-      case "tool_call": {
-        const title = update?.title ?? update?.rawInput?.title ?? "unknown";
-        return {
-          type: "tool_call",
-          toolName: title,
-          content: title,
-        };
-      }
-      case "tool_call_update": {
-        if (update?.status !== "failed") {
-          return undefined;
-        }
-
-        return {
-          type: "error",
-          content:
-            update?.rawOutput?.formatted_output ??
-            update?.rawOutput?.stderr ??
-            "tool call failed",
-        };
-      }
-      default:
-        return undefined;
-    }
-  }
-
-  if (parsed?.result?.stopReason) {
-    return {
-      type: "done",
-      content: undefined,
-    };
-  }
-
-  return undefined;
-}
-
-export function coalesceAcpxEvent(event: AcpxEvent, assistantText: string): {
-  event: AcpxEvent;
-  assistantText: string;
-} {
-  switch (event.type) {
-    case "text": {
-      const nextAssistantText = `${assistantText}${event.content}`;
-      return {
-        assistantText: nextAssistantText,
-        event: {
-          ...event,
-          content: nextAssistantText,
-        },
-      };
-    }
-    case "done":
-      return {
-        assistantText,
-        event: {
-          ...event,
-          content: event.content ?? (assistantText || undefined),
-        },
-      };
-    default:
-      return {
-        assistantText,
-        event,
-      };
-  }
-}
-
-export class AcpxRunner {
+export class CodexCliRunner {
   public constructor(
-    private readonly command = "acpx",
-    private readonly agent = "codex",
     private readonly codexCommand = "codex",
   ) {}
 
   public async checkHealth(): Promise<boolean> {
-    const result = await execa(this.command, ["--version"], {
+    const result = await execa(this.codexCommand, ["--version"], {
       reject: false,
     });
 
@@ -169,7 +40,7 @@ export class AcpxRunner {
       prompt: string;
       images?: string[];
     },
-    onEvent?: (event: AcpxEvent) => void,
+    onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome & { threadId: string }> {
     const outcome = await this.runCodexExec(
       withCodexImages(["exec", "--json", "-"], input.images),
@@ -193,90 +64,35 @@ export class AcpxRunner {
     prompt: string,
     optionsOrOnEvent?: {
       images?: string[];
-    } | ((event: AcpxEvent) => void),
-    onEvent?: (event: AcpxEvent) => void,
+    } | ((event: RunnerEvent) => void),
+    onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome> {
     const options = typeof optionsOrOnEvent === "function" ? undefined : optionsOrOnEvent;
     const effectiveOnEvent = typeof optionsOrOnEvent === "function" ? optionsOrOnEvent : onEvent;
 
-    if (context.targetKind === "codex_thread") {
-      return this.runCodexExec(
-        withCodexImages([
-          "exec",
-          "resume",
-          "--json",
-          context.threadId,
-          "-",
-        ], options?.images, 2),
-        context.cwd,
-        prompt,
-        effectiveOnEvent,
-      );
+    if (context.targetKind !== "codex_thread") {
+      throw new Error("CODEX_THREAD_CONTEXT_REQUIRED");
     }
 
-    const child = execa(
-      this.command,
-      [
-        "--format",
-        "json",
-        "--json-strict",
-        this.agent,
-        "prompt",
-        "--session",
-        context.sessionName,
-        "--file",
+    return this.runCodexExec(
+      withCodexImages([
+        "exec",
+        "resume",
+        "--json",
+        context.threadId,
         "-",
-      ],
-          {
-            cwd: context.cwd,
-            input: prompt,
-            reject: false,
-          },
+      ], options?.images, 2),
+      context.cwd,
+      prompt,
+      effectiveOnEvent,
     );
-
-    const events: AcpxEvent[] = [];
-    let buffer = "";
-    let assistantText = "";
-
-    if (child.stdout) {
-      for await (const chunk of child.stdout) {
-        buffer += chunk.toString();
-        const { remainingBuffer, nextAssistantText } = await flushAcpxBuffer({
-          buffer,
-          assistantText,
-          events,
-          onEvent: effectiveOnEvent,
-        });
-        buffer = remainingBuffer;
-        assistantText = nextAssistantText;
-      }
-    }
-
-    const finalFlush = await flushAcpxBuffer({
-      buffer,
-      assistantText,
-      events,
-      onEvent: effectiveOnEvent,
-      flushPartial: true,
-    });
-    assistantText = finalFlush.nextAssistantText;
-
-    const result = await child;
-    if (result.exitCode !== 0 && !events.some(event => event.type === "error")) {
-      throw new Error("RUN_STREAM_FAILED");
-    }
-
-    return {
-      events,
-      exitCode: result.exitCode ?? 1,
-    };
   }
 
   private async runCodexExec(
     args: string[],
     cwd: string,
     prompt: string,
-    onEvent?: (event: AcpxEvent) => void,
+    onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome> {
     const child = execa(
       this.codexCommand,
@@ -288,7 +104,7 @@ export class AcpxRunner {
       },
     );
 
-    const events: AcpxEvent[] = [];
+    const events: RunnerEvent[] = [];
     let buffer = "";
     let assistantText = "";
     let threadId: string | undefined;
@@ -315,7 +131,6 @@ export class AcpxRunner {
       onEvent,
       flushPartial: true,
     });
-    assistantText = finalFlush.nextAssistantText;
     threadId = threadId ?? finalFlush.threadId;
 
     const result = await child;
@@ -352,8 +167,8 @@ function withCodexImages(
   return [...prefixArgs, ...imageArgs, ...trailingArgs];
 }
 
-function coalesceCodexExecEvent(event: AcpxEvent, assistantText: string): {
-  event: AcpxEvent;
+function coalesceCodexExecEvent(event: RunnerEvent, assistantText: string): {
+  event: RunnerEvent;
   assistantText: string;
 } {
   switch (event.type) {
@@ -378,64 +193,11 @@ function coalesceCodexExecEvent(event: AcpxEvent, assistantText: string): {
   }
 }
 
-async function flushAcpxBuffer(input: {
-  buffer: string;
-  assistantText: string;
-  events: AcpxEvent[];
-  onEvent?: (event: AcpxEvent) => void;
-  flushPartial?: boolean;
-}): Promise<{ remainingBuffer: string; nextAssistantText: string }> {
-  let remainingBuffer = input.buffer;
-  let nextAssistantText = input.assistantText;
-
-  while (true) {
-    const newlineIndex = remainingBuffer.indexOf("\n");
-    if (newlineIndex === -1) {
-      break;
-    }
-
-    const line = remainingBuffer.slice(0, newlineIndex).trim();
-    remainingBuffer = remainingBuffer.slice(newlineIndex + 1);
-    if (!line) {
-      continue;
-    }
-
-    const parsedEvent = parseAcpxEventLine(line);
-    if (!parsedEvent) {
-      continue;
-    }
-
-    const coalesced = coalesceAcpxEvent(parsedEvent, nextAssistantText);
-    nextAssistantText = coalesced.assistantText;
-    input.events.push(coalesced.event);
-    await onAcpxEvent(input.onEvent, coalesced.event);
-  }
-
-  if (input.flushPartial) {
-    const tail = remainingBuffer.trim();
-    if (tail) {
-      const parsedEvent = parseAcpxEventLine(tail);
-      if (parsedEvent) {
-        const coalesced = coalesceAcpxEvent(parsedEvent, nextAssistantText);
-        nextAssistantText = coalesced.assistantText;
-        input.events.push(coalesced.event);
-        await onAcpxEvent(input.onEvent, coalesced.event);
-      }
-      remainingBuffer = "";
-    }
-  }
-
-  return {
-    remainingBuffer,
-    nextAssistantText,
-  };
-}
-
 async function flushCodexExecBuffer(input: {
   buffer: string;
   assistantText: string;
-  events: AcpxEvent[];
-  onEvent?: (event: AcpxEvent) => void;
+  events: RunnerEvent[];
+  onEvent?: (event: RunnerEvent) => void;
   flushPartial?: boolean;
 }): Promise<{ remainingBuffer: string; nextAssistantText: string; threadId?: string }> {
   let remainingBuffer = input.buffer;
@@ -464,7 +226,7 @@ async function flushCodexExecBuffer(input: {
       const coalesced = coalesceCodexExecEvent(parsed.event, nextAssistantText);
       nextAssistantText = coalesced.assistantText;
       input.events.push(coalesced.event);
-      await onAcpxEvent(input.onEvent, coalesced.event);
+      await onRunnerEvent(input.onEvent, coalesced.event);
     }
   }
 
@@ -478,7 +240,7 @@ async function flushCodexExecBuffer(input: {
           const coalesced = coalesceCodexExecEvent(parsed.event, nextAssistantText);
           nextAssistantText = coalesced.assistantText;
           input.events.push(coalesced.event);
-          await onAcpxEvent(input.onEvent, coalesced.event);
+          await onRunnerEvent(input.onEvent, coalesced.event);
         }
       }
       remainingBuffer = "";
@@ -492,7 +254,7 @@ async function flushCodexExecBuffer(input: {
   };
 }
 
-function parseCodexExecLine(line: string): { event?: AcpxEvent; threadId?: string } | undefined {
+function parseCodexExecLine(line: string): { event?: RunnerEvent; threadId?: string } | undefined {
   let parsed: any;
   try {
     parsed = JSON.parse(line);
@@ -682,9 +444,9 @@ function stripBridgeDirective(text: string): string {
     .trim();
 }
 
-async function onAcpxEvent(
-  onEvent: ((event: AcpxEvent) => void | Promise<void>) | undefined,
-  event: AcpxEvent,
+async function onRunnerEvent(
+  onEvent: ((event: RunnerEvent) => void | Promise<void>) | undefined,
+  event: RunnerEvent,
 ) {
   if (!onEvent) {
     return;

@@ -1881,6 +1881,7 @@ export class SessionStore {
     this.migrateCodexThreadsTable();
     this.migrateCodexWindowBindingsTable();
     this.migrateObservabilityRunsTable();
+    this.migrateObservabilityEventSources();
     this.dropObsoleteTables();
     this.ensureCodexThreadIndexes();
   }
@@ -2076,6 +2077,14 @@ export class SessionStore {
         ADD COLUMN ${column.name} ${column.definition};
       `);
     }
+  }
+
+  private migrateObservabilityEventSources(): void {
+    this.db.prepare(`
+      UPDATE observability_run_events
+      SET source = 'runner'
+      WHERE source = 'acpx'
+    `).run();
   }
 
   private migrateCodexWindowBindingsTable(): void {

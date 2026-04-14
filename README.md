@@ -98,7 +98,7 @@ npm run start
 - 一个已配置长连接的 Feishu 应用
 - 正确的 `appId`、`appSecret`
 - `config.toml` 里的允许用户列表和 root 配置
-- 本机可用的 Codex / acpx 环境
+- 本机可用的 Codex CLI 环境
 
 补充说明：
 

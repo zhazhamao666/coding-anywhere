@@ -20,15 +20,15 @@ describe("resolveExecutable", () => {
   it("finds a local node_modules bin when PATH does not include the command", () => {
     const binDir = path.join(rootDir, "node_modules", ".bin");
     mkdirSync(binDir, { recursive: true });
-    const acpxPath = path.join(binDir, process.platform === "win32" ? "acpx.cmd" : "acpx");
-    writeFileSync(acpxPath, "@echo off\r\n", "utf8");
+    const codexPath = path.join(binDir, process.platform === "win32" ? "codex.cmd" : "codex");
+    writeFileSync(codexPath, "@echo off\r\n", "utf8");
 
-    const resolved = resolveExecutable("acpx", {
+    const resolved = resolveExecutable("codex", {
       cwd: rootDir,
       pathValue: "",
       isWindows: process.platform === "win32",
     });
 
-    expect(resolved).toBe(acpxPath);
+    expect(resolved).toBe(codexPath);
   });
 });

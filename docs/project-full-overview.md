@@ -105,7 +105,7 @@ Feishu DM / Group Thread
   -> FeishuAdapter
   -> BridgeService
   -> RunWorkerManager
-  -> AcpxRunner
+  -> CodexCliRunner
   -> codex exec worker or codex exec resume worker
   -> Codex
   -> BridgeService
@@ -164,7 +164,7 @@ Browser / script
 职责：
 
 - 初始化 `SessionStore`
-- 初始化 `AcpxRunner`
+- 初始化 `CodexCliRunner`
 - 初始化 `RunWorkerManager`
 - 初始化 `BridgeService`
 - 初始化 `CodexSqliteCatalog`
@@ -278,7 +278,7 @@ run 调度层。
 - 控制全局并发上限
 - 对同一线程或同一 DM 上下文做串行执行
 
-### 5.6 `src/acpx-runner.ts`
+### 5.6 `src/codex-cli-runner.ts`
 
 Codex 执行适配层。
 
@@ -291,7 +291,7 @@ Codex 执行适配层。
 - 将 native `todo_list` 计划事件归一化为 bridge `waiting`
 - 将 native `collab_tool_call` 子代理事件归一化为 bridge `tool_call`
 - 从 assistant 文本中提取 bridge 约定的计划选择指令块，并转成结构化计划交互草稿
-- 兼容解析旧的 `acpx` 事件格式，但正常 prompt 主链路不再依赖 `acpx prompt`
+- 仅承载 Codex CLI 执行语义，不再解析或依赖旧的 `acpx prompt`
 
 ### 5.6.1 `src/codex-sqlite-catalog.ts`
 
@@ -671,12 +671,14 @@ channel + peer_id -> codex_thread_id
 
 - `[server]`
 - `[storage]`
-- `[acpx]`
+- `[codex]`
 - `[scheduler]`
 - `[feishu]`
 - `[root]`
 
 仓库只提交 `config.example.toml` 作为示例模板；真实 `config.toml` 只保留在本地并由 `.gitignore` 忽略。新环境需要先执行 `npm run init:config`，再填写本地配置。
+
+当前 `[codex]` 是正式配置入口；旧 `[acpx]` 仍会被兼容读取并归一化到 `config.codex.command`，但只用于平滑迁移，不再代表当前运行模型。
 
 飞书应用初始化、长连接配置以及 `config.toml` 的字段映射，可参考 [飞书配置说明](./feishu-setup.md)。
 
@@ -859,10 +861,10 @@ channel + peer_id -> codex_thread_id
 5. 需要验证线程续跑时，再运行 `tests/codex-real-resume.test.ts` 并同时设置 `TEST_CODEX_RESUME=1`
 6. resume smoke 会先构建一个隔离的 Codex home，只复制认证和配置文件，不会复用旧的 `session_index.jsonl` 或 `state_*.sqlite`
 7. resume smoke 的真实 token 消耗明显高于 create smoke，应继续保持显式 opt-in，并按需要单独调节预算上限
-8. 桥级集成验证现在覆盖了 `tests/bridge-real-codex.test.ts`，默认通过真实 `BridgeService` + `AcpxRunner` 配合 transcript 夹具回放，不依赖真实 Feishu 或真实 Codex 调用
+8. 桥级集成验证现在覆盖了 `tests/bridge-real-codex.test.ts`，默认通过真实 `BridgeService` + `CodexCliRunner` 配合 transcript 夹具回放，不依赖真实 Feishu 或真实 Codex 调用
 9. `npm run doctor` 现在还会提示真实 Codex smoke 的前提条件，包括 `~/.codex/auth.json` 认证状态，以及这类测试默认是显式 opt-in、带真实调用成本的
 10. 针对 Codex 原生计划行为和子代理行为的扩展测试，会优先使用一次性真实 JSONL 录制生成的 fixture，再回到默认的 transcript 驱动回归，不把这类高成本调用放进常规测试路径
-11. `tests/acpx-runner.test.ts` 现在会直接回放 `plan-mode.jsonl` 与 `sub-agent.jsonl`，校验 native 计划事件和子代理生命周期事件是否被归一化成正确的 runner 事件
+11. `tests/codex-cli-runner.test.ts` 现在会直接回放 `plan-mode.jsonl` 与 `sub-agent.jsonl`，校验 native 计划事件和子代理生命周期事件是否被归一化成正确的 runner 事件
 12. `tests/bridge-real-codex.test.ts` 现在也会用同一批 fixture 校验 bridge 层的等待态、工具调用观测和最终回复，不要求额外真实 Codex 调用
 13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式表单卡、todo list 展示、待回答计划选择题和续跑同一 native thread 的桥接链路
 

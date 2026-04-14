@@ -3,9 +3,9 @@ import path from "node:path";
 
 import type { Logger } from "pino";
 
-import { AcpxRunner } from "./acpx-runner.js";
 import { buildApp } from "./app.js";
 import { BridgeService } from "./bridge-service.js";
+import { CodexCliRunner } from "./codex-cli-runner.js";
 import { CodexSqliteCatalog } from "./codex-sqlite-catalog.js";
 import type { BridgeConfig } from "./config.js";
 import { FeishuAdapter, type FeishuApiClientLike, type FeishuEnvelope } from "./feishu-adapter.js";
@@ -46,11 +46,9 @@ export async function createRuntime(
   store.upsertRoot(config.root);
   store.purgeOldObservabilityEvents();
 
-  const resolvedAcpxCommand =
-    resolveExecutable(config.acpx.command, { cwd: process.cwd() }) ?? config.acpx.command;
   const resolvedCodexCommand =
-    resolveExecutable("codex", { cwd: process.cwd() }) ?? "codex";
-  const runner = new AcpxRunner(resolvedAcpxCommand, config.acpx.agent, resolvedCodexCommand);
+    resolveExecutable(config.codex.command, { cwd: process.cwd() }) ?? config.codex.command;
+  const runner = new CodexCliRunner(resolvedCodexCommand);
   const workerManager = new RunWorkerManager({
     maxConcurrentRuns: config.scheduler.maxConcurrentRuns,
   });

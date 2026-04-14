@@ -26,9 +26,8 @@ describe("createRuntime", () => {
         sqlitePath: path.join(rootDir, "runtime-test.db"),
         logDir: path.join(rootDir, "logs"),
       },
-      acpx: {
-        command: "acpx",
-        agent: "codex",
+      codex: {
+        command: "codex",
       },
       scheduler: {
         maxConcurrentRuns: 2,
@@ -91,9 +90,8 @@ describe("createRuntime", () => {
         sqlitePath: path.join(rootDir, "runtime-image.db"),
         logDir: path.join(rootDir, "logs"),
       },
-      acpx: {
-        command: "acpx",
-        agent: "codex",
+      codex: {
+        command: "codex",
       },
       scheduler: {
         maxConcurrentRuns: 2,
@@ -182,9 +180,8 @@ describe("createRuntime", () => {
         sqlitePath: path.join(rootDir, "runtime-card-action.db"),
         logDir: path.join(rootDir, "logs"),
       },
-      acpx: {
-        command: "acpx",
-        agent: "codex",
+      codex: {
+        command: "codex",
       },
       scheduler: {
         maxConcurrentRuns: 2,
@@ -251,9 +248,8 @@ describe("createRuntime", () => {
         sqlitePath: path.join(rootDir, "runtime-maintenance.db"),
         logDir: path.join(rootDir, "logs"),
       },
-      acpx: {
-        command: "acpx",
-        agent: "codex",
+      codex: {
+        command: "codex",
       },
       scheduler: {
         maxConcurrentRuns: 2,

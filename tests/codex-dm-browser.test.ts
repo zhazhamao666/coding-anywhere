@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BridgeService } from "../src/bridge-service.js";
 import { SessionStore } from "../src/workspace/session-store.js";
-import type { AcpxEvent } from "../src/types.js";
+import type { RunnerEvent } from "../src/types.js";
 
 describe("DM Codex browser", () => {
   let rootDir: string;
@@ -386,7 +386,7 @@ function createCatalogDouble() {
 }
 
 function createRunnerDouble(
-  events: AcpxEvent[] = [
+  events: RunnerEvent[] = [
     { type: "text", content: "测试已经执行完成" },
     { type: "done", content: "测试已经执行完成" },
   ],
@@ -400,7 +400,7 @@ function createRunnerDouble(
     ensureSession: vi.fn(async () => undefined),
     cancel: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
-    submitVerbatim: vi.fn(async (_context, _prompt, onEvent?: (event: AcpxEvent) => void) => {
+    submitVerbatim: vi.fn(async (_context, _prompt, onEvent?: (event: RunnerEvent) => void) => {
       for (const event of events) {
         onEvent?.(event);
       }
