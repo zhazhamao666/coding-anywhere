@@ -90,6 +90,9 @@
 61. runtime 现在额外暴露 `/ops/runtime` 实时调度快照，以及 `/ops/runs/:id/cancel` 运行中/排队任务取消接口
 62. `/ops/ui` 已升级为“概览 + 活跃/排队任务面板 + 历史详情”的组合视图，支持直接取消 live run
 63. `observability_runs` 现在会额外记录 `cancel_requested_at`、`cancel_requested_by`、`cancel_source`，便于还原取消请求来源
+64. runtime 启动时会把上次异常退出后遗留的非终态 run 统一收口为 `error`，避免 `/ops` 长期挂着僵尸 `running`
+65. `/ops/runs` 历史列表改为按最近更新时间倒序展示，不再把更早的非终态 run 固定钉在顶部
+66. `/ca new` 在创建 native thread 前会先校验当前 `cwd` 是否为 Git 仓库；若不是，会直接返回可读错误，而不是笼统的 `RUN_STREAM_FAILED`
 
 ### 2.3 当前仍未打通的部分
 
@@ -183,6 +186,7 @@ Browser / script
 - 装配 `/ops/*`
 - 把 `SessionStore` 的历史观测数据和 `RunWorkerManager` 的实时调度态拼装成统一的 `/ops/overview` / `/ops/runtime`
 - 为 ops 侧取消动作补齐 queued run 的取消元数据落库与事件时间线
+- 启动时把上次服务异常退出后残留的非终态 run 收口为明确终态，避免历史观测与 live runtime 脱节
 - 启动线程空闲回收和待处理图片过期清理定时器
 
 ### 5.1.1 `src/windows-console.ts`
@@ -687,6 +691,13 @@ channel + peer_id -> codex_thread_id
 - `cancelingCount`
 
 `/ops/runtime` 会直接读取这份 live registry；`/ops/overview` 则把 SQLite 历史统计和 live runtime 指标拼装成统一概览。
+
+另外，runtime 每次启动时都会先对 SQLite 中残留的非终态 run 做一次恢复：
+
+- 统一把 `done / error / canceled` 之外的历史 run 收口为 `error`
+- `finished_at` 会补成当前启动时刻
+- 原有 `updated_at` 会保留，因此不会因为恢复动作把老 run 重新顶到历史列表最前面
+- `/ops/runs` 默认也会按 `updated_at DESC` 展示，优先看到最近真正发生过更新的任务
 
 另外，`observability_run_events` 的写入策略已经做了收敛：
 
