@@ -40,6 +40,9 @@ describe("createRuntime", () => {
         allowlist: ["ou_demo"],
         requireGroupMention: false,
         encryptKey: "",
+        reconnectCount: -1,
+        reconnectIntervalSeconds: 120,
+        reconnectNonceSeconds: 30,
       },
       root: {
         id: "main",
@@ -104,6 +107,9 @@ describe("createRuntime", () => {
         allowlist: ["ou_demo"],
         requireGroupMention: false,
         encryptKey: "",
+        reconnectCount: -1,
+        reconnectIntervalSeconds: 120,
+        reconnectNonceSeconds: 30,
       },
       root: {
         id: "main",
@@ -194,6 +200,9 @@ describe("createRuntime", () => {
         allowlist: ["ou_demo"],
         requireGroupMention: false,
         encryptKey: "",
+        reconnectCount: -1,
+        reconnectIntervalSeconds: 120,
+        reconnectNonceSeconds: 30,
       },
       root: {
         id: "main",
@@ -262,6 +271,9 @@ describe("createRuntime", () => {
         allowlist: ["ou_demo"],
         requireGroupMention: false,
         encryptKey: "",
+        reconnectCount: -1,
+        reconnectIntervalSeconds: 120,
+        reconnectNonceSeconds: 30,
       },
       root: {
         id: "main",

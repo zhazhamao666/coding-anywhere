@@ -45,6 +45,9 @@ const RawConfigSchema = z.object({
     allowlist: z.array(z.string()),
     requireGroupMention: z.boolean().default(false),
     encryptKey: z.string().default(""),
+    reconnectCount: z.number().int().default(-1),
+    reconnectIntervalSeconds: z.number().int().positive().default(120),
+    reconnectNonceSeconds: z.number().int().nonnegative().default(30),
   }),
   root: RootSchema,
 });
@@ -74,6 +77,9 @@ const BridgeConfigSchema = z.object({
     allowlist: z.array(z.string()),
     requireGroupMention: z.boolean().default(false),
     encryptKey: z.string().default(""),
+    reconnectCount: z.number().int().default(-1),
+    reconnectIntervalSeconds: z.number().int().positive().default(120),
+    reconnectNonceSeconds: z.number().int().nonnegative().default(30),
   }),
   root: RootSchema,
 });

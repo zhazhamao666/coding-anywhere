@@ -84,6 +84,7 @@
 55. 群主时间线中的 `/ca project list` 现在也会读取 Codex 派生项目列表，标出“已绑定当前群 / 已绑定其他群 / 未绑定”，并允许从未绑定项目行直接把当前群绑定到该项目
 56. Codex 线程列表卡会把 subagent 来源解析为结构化的母 agent / 子 agent 展示，按父线程分组缩进显示 agent 名称、角色、父线程和层级，不再把 Codex raw `source` JSON 原样暴露到飞书卡片里
 57. `FeishuWsClient` 现在会在每次底层长连接真正连上后额外打印 transport connected 日志，并在 socket `close` / `error` 时输出关闭码、关闭原因和结构化错误信息，便于定位 DNS、TLS 或代理隧道层面的出网问题
+58. 飞书长连接的重连次数、重连间隔和首次重连抖动现在都已提升为显式配置项，默认仍保持 SDK 的“无限重试 + 120 秒间隔 + 30 秒随机抖动”
 
 ### 2.3 当前仍未打通的部分
 
@@ -695,6 +696,13 @@ channel + peer_id -> codex_thread_id
   - 为 `true` 时，只有带 mention 的线程消息才会进入 Codex
 - `feishu.encryptKey`
   - 飞书长连接消息或回调启用加密推送时使用的解密密钥
+- `feishu.reconnectCount`
+  - 飞书长连接重试次数
+  - `-1` 表示无限重试
+- `feishu.reconnectIntervalSeconds`
+  - 飞书长连接失败后的基础重连间隔
+- `feishu.reconnectNonceSeconds`
+  - 飞书长连接首次重试前附加的随机抖动上限
 
 ### 11.2 TTL
 

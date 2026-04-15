@@ -77,6 +77,9 @@ export class FeishuWsClient {
       onEnvelope: EnvelopeHandler;
       onCardAction?: CardActionHandler;
       encryptKey?: string;
+      reconnectCount?: number;
+      reconnectIntervalMs?: number;
+      reconnectNonceMs?: number;
       logger?: BaseLoggerLike;
     },
     sdk: FeishuSdkLike = defaultSdk,
@@ -148,6 +151,10 @@ export class FeishuWsClient {
       appSecret: this.dependencies.appSecret,
       loggerLevel: sdk.LoggerLevel.info,
       logger: sdkLogger,
+      autoReconnect: true,
+      reconnectCount: this.dependencies.reconnectCount,
+      reconnectInterval: this.dependencies.reconnectIntervalMs,
+      reconnectNonce: this.dependencies.reconnectNonceMs,
     });
     this.patchWsClientDiagnostics(this.client as WsClientLike & WsClientDiagnosticsLike);
   }

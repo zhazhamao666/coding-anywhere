@@ -227,6 +227,9 @@ function createDefaultWsClient(
         };
       }),
     encryptKey: config.feishu.encryptKey || undefined,
+    reconnectCount: config.feishu.reconnectCount,
+    reconnectIntervalMs: config.feishu.reconnectIntervalSeconds * 1000,
+    reconnectNonceMs: config.feishu.reconnectNonceSeconds * 1000,
     logger,
   });
 }

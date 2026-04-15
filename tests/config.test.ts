@@ -58,6 +58,9 @@ idleTtlHours = 24
 
     expect(config.feishu.allowlist).toEqual(["ou_demo"]);
     expect(config.feishu.websocketUrl).toBe("wss://example.invalid/ws");
+    expect(config.feishu.reconnectCount).toBe(-1);
+    expect(config.feishu.reconnectIntervalSeconds).toBe(120);
+    expect(config.feishu.reconnectNonceSeconds).toBe(30);
     expect(config.root.id).toBe("main");
     expect(config.root.cwd).toBe("D:/repos");
     expect((config as any).codex.command).toBe("codex");
@@ -104,5 +107,52 @@ idleTtlHours = 24
     const config = loadConfig(configPath);
 
     expect((config as any).codex.command).toBe("codex");
+  });
+
+  it("parses explicit feishu websocket reconnect settings", () => {
+    const configPath = path.join(rootDir, "config.toml");
+
+    writeFileSync(
+      configPath,
+      `
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[storage]
+sqlitePath = "data/bridge.db"
+logDir = "logs"
+
+[codex]
+command = "codex"
+
+[feishu]
+appId = "cli_xxx"
+appSecret = "secret"
+websocketUrl = "wss://example.invalid/ws"
+apiBaseUrl = "https://open.feishu.cn/open-apis"
+allowlist = ["ou_demo"]
+reconnectCount = -1
+reconnectIntervalSeconds = 45
+reconnectNonceSeconds = 5
+
+[root]
+id = "main"
+name = "Main Root"
+cwd = "D:/repos"
+repoRoot = "D:/repos"
+branchPolicy = "reuse"
+permissionMode = "workspace-write"
+envAllowlist = ["PATH"]
+idleTtlHours = 24
+`,
+      "utf8",
+    );
+
+    const config = loadConfig(configPath);
+
+    expect(config.feishu.reconnectCount).toBe(-1);
+    expect(config.feishu.reconnectIntervalSeconds).toBe(45);
+    expect(config.feishu.reconnectNonceSeconds).toBe(5);
   });
 });

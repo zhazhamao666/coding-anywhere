@@ -115,6 +115,9 @@ npm run init:config
 - `feishu.appSecret`
 - `feishu.allowlist`
 - `feishu.encryptKey`
+- `feishu.reconnectCount`
+- `feishu.reconnectIntervalSeconds`
+- `feishu.reconnectNonceSeconds`
 - `codex.command`
 - `[root]`
 
@@ -214,12 +217,16 @@ http://127.0.0.1:3100/ops/ui
 - `allowlist`
 - `requireGroupMention`
 - `encryptKey`
+- `reconnectCount`
+- `reconnectIntervalSeconds`
+- `reconnectNonceSeconds`
 
 建议：
 
 - `allowlist` 只放受信任用户
 - 飞书后台的事件与回调订阅方式使用“长连接”
 - 如果飞书后台开启加密推送，就同步填写 `encryptKey`
+- `reconnectCount = -1` 表示无限重试，建议保留默认值
 - 生产环境不要把真实凭据提交进 git
 
 ### `[root]`

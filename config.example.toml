@@ -17,6 +17,9 @@ apiBaseUrl = "https://open.feishu.cn/open-apis"
 allowlist = ["ou_xxx"]
 requireGroupMention = false
 encryptKey = ""
+reconnectCount = -1
+reconnectIntervalSeconds = 120
+reconnectNonceSeconds = 30
 
 [root]
 id = "main"

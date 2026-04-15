@@ -172,6 +172,60 @@ describe("FeishuWsClient", () => {
     expect(close).toHaveBeenCalledWith({ force: true });
   });
 
+  it("passes websocket reconnect options through to the SDK client", async () => {
+    const register = vi.fn().mockReturnThis();
+    const invoke = vi.fn(async () => undefined);
+    const start = vi.fn();
+    const close = vi.fn();
+    let wsClientParams: Record<string, unknown> | undefined;
+
+    class EventDispatcherStub {
+      public register = register;
+      public invoke = invoke;
+    }
+
+    class WSClientStub {
+      public constructor(params: Record<string, unknown>) {
+        wsClientParams = params;
+      }
+
+      public start = start;
+      public close = close;
+    }
+
+    const client = new FeishuWsClient(
+      {
+        appId: "cli_demo",
+        appSecret: "secret_demo",
+        onEnvelope: vi.fn(async () => undefined),
+        reconnectCount: -1,
+        reconnectIntervalMs: 45_000,
+        reconnectNonceMs: 5_000,
+      },
+      {
+        EventDispatcher: EventDispatcherStub,
+        WSClient: WSClientStub,
+        LoggerLevel: {
+          info: 3,
+        },
+      },
+    );
+
+    await client.start();
+
+    expect(wsClientParams).toMatchObject({
+      appId: "cli_demo",
+      appSecret: "secret_demo",
+      autoReconnect: true,
+      reconnectCount: -1,
+      reconnectInterval: 45_000,
+      reconnectNonce: 5_000,
+    });
+
+    await client.stop();
+    expect(close).toHaveBeenCalledWith({ force: true });
+  });
+
   it("falls back to card action handling when the dispatcher reports no card.action.trigger handle", async () => {
     const register = vi.fn().mockReturnThis();
     const invoke = vi.fn(async (data: unknown) => {

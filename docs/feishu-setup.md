@@ -147,6 +147,9 @@ apiBaseUrl = "https://open.feishu.cn/open-apis"
 allowlist = ["ou_xxx"]
 requireGroupMention = false
 encryptKey = ""
+reconnectCount = -1
+reconnectIntervalSeconds = 120
+reconnectNonceSeconds = 30
 ```
 
 字段对应关系：
@@ -158,11 +161,17 @@ encryptKey = ""
 | 当前实际使用人的 `open_id` | `feishu.allowlist` | 是 | `ou_xxx` 只是占位值，必须替换 |
 | 加密密钥 | `feishu.encryptKey` | 按需 | 只有飞书后台启用了加密推送才填 |
 | 群消息是否必须 `@` 机器人 | `feishu.requireGroupMention` | 按需 | 这是项目侧开关，不是飞书后台字段 |
+| 重连次数 | `feishu.reconnectCount` | 否 | `-1` 表示无限重试，建议保留默认值 |
+| 重连间隔 | `feishu.reconnectIntervalSeconds` | 否 | 每次失败后的基础重试间隔，默认 `120` 秒 |
+| 重连抖动 | `feishu.reconnectNonceSeconds` | 否 | 首次重试前附加的随机抖动上限，默认 `30` 秒 |
 
 两个通常不用改的默认值：
 
 - `feishu.websocketUrl = "wss://open.feishu.cn/open-apis/bot/v2/hub"`
 - `feishu.apiBaseUrl = "https://open.feishu.cn/open-apis"`
+- `feishu.reconnectCount = -1`
+- `feishu.reconnectIntervalSeconds = 120`
+- `feishu.reconnectNonceSeconds = 30`
 
 ## 10. 启动前最小检查清单
 
