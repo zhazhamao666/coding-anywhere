@@ -83,6 +83,7 @@
 54. 仓库新增基于 Playwright 的飞书 live auth bootstrap 与 smoke 脚本：首次人工登录一次后，可复用本地持久化浏览器 profile 做真实飞书网页链路验证
 55. 群主时间线中的 `/ca project list` 现在也会读取 Codex 派生项目列表，标出“已绑定当前群 / 已绑定其他群 / 未绑定”，并允许从未绑定项目行直接把当前群绑定到该项目
 56. Codex 线程列表卡会把 subagent 来源解析为结构化的母 agent / 子 agent 展示，按父线程分组缩进显示 agent 名称、角色、父线程和层级，不再把 Codex raw `source` JSON 原样暴露到飞书卡片里
+57. `FeishuWsClient` 现在会在每次底层长连接真正连上后额外打印 transport connected 日志，并在 socket `close` / `error` 时输出关闭码、关闭原因和结构化错误信息，便于定位 DNS、TLS 或代理隧道层面的出网问题
 
 ### 2.3 当前仍未打通的部分
 
@@ -172,6 +173,7 @@ Browser / script
 - 将 `SessionStore` 注入飞书适配层，承接待处理图片资产
 - 装配飞书长连接上的卡片按钮回调分发
 - 由 `FeishuWsClient` 直接归一化 `card.action.trigger` 长连接 payload，并把按钮动作交给 `FeishuCardActionService`
+- 通过 `FeishuWsClient` 对 SDK 底层 WebSocket transport 的 connect / close / error 补充诊断日志，便于排查长连接重连时的 DNS、TLS 和隧道问题
 - 装配 `/ops/*`
 - 启动线程空闲回收和待处理图片过期清理定时器
 
@@ -764,6 +766,7 @@ channel + peer_id -> codex_thread_id
 - 按钮回调通过同一条飞书长连接返回，不需要额外暴露公网回调地址
 - 相同线程不会并发执行两个 run
 - 后台可以看项目、线程和线程对应 run
+- 当飞书长连接发生底层断线或重连时，控制台现在会额外打印 transport connected、socket close code / reason 和结构化 socket error，方便直接区分业务超时与 DNS / TLS / 代理链路故障
 - 运维侧可以先运行 `npm run test:feishu:auth` 完成一次人工登录，然后重复复用持久 profile 跑真实飞书网页版 smoke，而不用每次回归都重新登录
 
 ## 14. 当前限制
@@ -794,7 +797,7 @@ channel + peer_id -> codex_thread_id
 6. 飞书 DM 发 `test`
 7. 确认 DM 中先出现流式状态卡；run 完成后，卡片收口为摘要卡，完整 assistant 正文以下方单独消息展示
 8. 打开 `/ops/ui`
-9. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志
+9. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志；如长连接发生抖动，还应能看到 `feishu ws transport connected`、`feishu ws socket closed: code=...; reason=...` 和 `feishu ws socket error` 这类诊断日志
 10. 飞书 DM 先发一张图片，再补一条文字说明，确认 bridge 会先回复“已收到图片”，随后下一条文本 run 会消费该图片
 
 ### 15.2 群线程回归

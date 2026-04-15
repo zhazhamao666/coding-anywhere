@@ -21,10 +21,10 @@ interface NormalizedCardActionEvent {
 }
 
 interface BaseLoggerLike {
-  info?: (message: string) => void;
-  warn?: (message: string) => void;
-  error?: (payload: unknown, message?: string) => void;
-  debug?: (message: string) => void;
+  info?: (...args: unknown[]) => void;
+  warn?: (...args: unknown[]) => void;
+  error?: (...args: unknown[]) => void;
+  debug?: (...args: unknown[]) => void;
 }
 
 interface EventDispatcherLike {
@@ -35,6 +35,17 @@ interface EventDispatcherLike {
 interface WsClientLike {
   start(params: { eventDispatcher: { invoke(data: unknown, params?: { needCheck?: boolean }): Promise<unknown> } }): Promise<void>;
   close(params?: { force?: boolean }): void;
+}
+
+interface WsSocketLike {
+  on?: (event: string, handler: (...args: unknown[]) => void) => unknown;
+}
+
+interface WsClientDiagnosticsLike {
+  communicate?: () => void;
+  wsConfig?: {
+    getWSInstance?: () => WsSocketLike | null;
+  };
 }
 
 interface FeishuSdkLike {
@@ -56,6 +67,8 @@ export class FeishuWsClient {
     invoke(data: unknown, params?: { needCheck?: boolean }): Promise<unknown>;
   };
   private readonly client: WsClientLike;
+  private readonly instrumentedSockets = new WeakSet<object>();
+  private transportConnectCount = 0;
 
   public constructor(
     private readonly dependencies: {
@@ -136,6 +149,7 @@ export class FeishuWsClient {
       loggerLevel: sdk.LoggerLevel.info,
       logger: sdkLogger,
     });
+    this.patchWsClientDiagnostics(this.client as WsClientLike & WsClientDiagnosticsLike);
   }
 
   public async start(): Promise<void> {
@@ -147,6 +161,61 @@ export class FeishuWsClient {
   public async stop(): Promise<void> {
     this.client.close({
       force: true,
+    });
+  }
+
+  private patchWsClientDiagnostics(client: WsClientLike & WsClientDiagnosticsLike): void {
+    if (typeof client.communicate !== "function") {
+      return;
+    }
+
+    const originalCommunicate = client.communicate.bind(client);
+    client.communicate = () => {
+      originalCommunicate();
+      this.attachWsSocketDiagnostics(client);
+    };
+  }
+
+  private attachWsSocketDiagnostics(client: WsClientDiagnosticsLike): void {
+    const wsInstance = client.wsConfig?.getWSInstance?.();
+    if (!wsInstance || typeof wsInstance !== "object") {
+      return;
+    }
+
+    const socketIdentity = wsInstance as object;
+    if (this.instrumentedSockets.has(socketIdentity)) {
+      return;
+    }
+    this.instrumentedSockets.add(socketIdentity);
+
+    this.transportConnectCount += 1;
+    const reconnectCount = this.transportConnectCount - 1;
+    this.dependencies.logger?.info?.(
+      reconnectCount > 0
+        ? `feishu ws transport connected (reconnect #${reconnectCount})`
+        : "feishu ws transport connected",
+    );
+
+    if (typeof wsInstance.on !== "function") {
+      return;
+    }
+
+    wsInstance.on("close", (code: unknown, reason: unknown) => {
+      this.dependencies.logger?.warn?.(formatWsCloseMessage(code, reason));
+    });
+    wsInstance.on("error", (error: unknown) => {
+      const serializedError = serializeErrorLike(error);
+      if (serializedError) {
+        this.dependencies.logger?.error?.(
+          {
+            err: serializedError,
+          },
+          "feishu ws socket error",
+        );
+        return;
+      }
+
+      this.dependencies.logger?.error?.(`feishu ws socket error: ${String(error)}`);
     });
   }
 }
@@ -326,6 +395,88 @@ function describeResultShape(result: unknown): string {
       ? (readNested(rawCard, ["body", "elements"]) as unknown[]).length
       : 0;
   return `keys=${Object.keys(candidate).sort().join(",")};title=${title};elements=${elements}`;
+}
+
+function formatWsCloseMessage(code: unknown, reason: unknown): string {
+  const details: string[] = [];
+
+  const normalizedCode =
+    typeof code === "number" || typeof code === "string"
+      ? String(code)
+      : undefined;
+  if (normalizedCode && normalizedCode.length > 0) {
+    details.push(`code=${normalizedCode}`);
+  }
+
+  const normalizedReason = decodeWsCloseReason(reason);
+  if (normalizedReason) {
+    details.push(`reason=${normalizedReason}`);
+  }
+
+  return details.length > 0
+    ? `feishu ws socket closed: ${details.join("; ")}`
+    : "feishu ws socket closed";
+}
+
+function decodeWsCloseReason(reason: unknown): string | undefined {
+  if (typeof reason === "string" && reason.length > 0) {
+    return reason;
+  }
+
+  if (reason instanceof Uint8Array && reason.byteLength > 0) {
+    const decoded = Buffer.from(reason).toString("utf8").trim();
+    return decoded.length > 0 ? decoded : undefined;
+  }
+
+  return undefined;
+}
+
+function serializeErrorLike(error: unknown): Record<string, unknown> | undefined {
+  if (error instanceof Error) {
+    const errorRecord = error as Error & Record<string, unknown>;
+    const serialized: Record<string, unknown> = {
+      name: error.name,
+      message: error.message,
+    };
+    if (error.stack) {
+      serialized.stack = error.stack;
+    }
+
+    const extraKeys = [
+      "code",
+      "errno",
+      "syscall",
+      "hostname",
+      "host",
+      "address",
+      "port",
+    ];
+    for (const key of extraKeys) {
+      const value = errorRecord[key];
+      if (value !== undefined) {
+        serialized[key] = value;
+      }
+    }
+
+    const cause = (error as { cause?: unknown }).cause;
+    if (cause !== undefined) {
+      serialized.cause = serializeErrorLike(cause) ?? cause;
+    }
+    return serialized;
+  }
+
+  if (error && typeof error === "object") {
+    const candidate = error as Record<string, unknown>;
+    return Object.keys(candidate).length > 0 ? { ...candidate } : undefined;
+  }
+
+  if (typeof error === "string" && error.length > 0) {
+    return {
+      message: error,
+    };
+  }
+
+  return undefined;
 }
 
 export function createSdkLogger(logger?: BaseLoggerLike) {

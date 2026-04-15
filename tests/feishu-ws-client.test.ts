@@ -425,4 +425,154 @@ describe("FeishuWsClient", () => {
     await client.stop();
     expect(close).toHaveBeenCalledWith({ force: true });
   });
+
+  it("logs websocket transport connect and close diagnostics", async () => {
+    const register = vi.fn().mockReturnThis();
+    const invoke = vi.fn(async () => undefined);
+    const close = vi.fn();
+    const baseLogger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    const socketHandlers: Record<string, (...args: unknown[]) => void> = {};
+    const socket = {
+      on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        socketHandlers[event] = handler;
+        return socket;
+      }),
+    };
+
+    class EventDispatcherStub {
+      public register = register;
+      public invoke = invoke;
+    }
+
+    class WSClientStub {
+      public static lastInstance: WSClientStub | undefined;
+      public readonly wsConfig = {
+        getWSInstance: () => socket,
+      };
+      public communicate = vi.fn();
+      public start = vi.fn();
+      public close = close;
+
+      public constructor() {
+        WSClientStub.lastInstance = this;
+      }
+    }
+
+    const client = new FeishuWsClient(
+      {
+        appId: "cli_demo",
+        appSecret: "secret_demo",
+        onEnvelope: vi.fn(async () => undefined),
+        logger: baseLogger,
+      },
+      {
+        EventDispatcher: EventDispatcherStub,
+        WSClient: WSClientStub,
+        LoggerLevel: {
+          info: 3,
+        },
+      },
+    );
+
+    await client.start();
+    WSClientStub.lastInstance?.communicate();
+
+    expect(baseLogger.info).toHaveBeenCalledWith("feishu ws transport connected");
+
+    socketHandlers.close?.(1006, Buffer.from("network reset", "utf8"));
+
+    expect(baseLogger.warn).toHaveBeenCalledWith(
+      "feishu ws socket closed: code=1006; reason=network reset",
+    );
+
+    await client.stop();
+    expect(close).toHaveBeenCalledWith({ force: true });
+  });
+
+  it("logs websocket socket errors with structured diagnostics", async () => {
+    const register = vi.fn().mockReturnThis();
+    const invoke = vi.fn(async () => undefined);
+    const close = vi.fn();
+    const baseLogger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    const socketHandlers: Record<string, (...args: unknown[]) => void> = {};
+    const socket = {
+      on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        socketHandlers[event] = handler;
+        return socket;
+      }),
+    };
+
+    class EventDispatcherStub {
+      public register = register;
+      public invoke = invoke;
+    }
+
+    class WSClientStub {
+      public static lastInstance: WSClientStub | undefined;
+      public readonly wsConfig = {
+        getWSInstance: () => socket,
+      };
+      public communicate = vi.fn();
+      public start = vi.fn();
+      public close = close;
+
+      public constructor() {
+        WSClientStub.lastInstance = this;
+      }
+    }
+
+    const client = new FeishuWsClient(
+      {
+        appId: "cli_demo",
+        appSecret: "secret_demo",
+        onEnvelope: vi.fn(async () => undefined),
+        logger: baseLogger,
+      },
+      {
+        EventDispatcher: EventDispatcherStub,
+        WSClient: WSClientStub,
+        LoggerLevel: {
+          info: 3,
+        },
+      },
+    );
+
+    await client.start();
+    WSClientStub.lastInstance?.communicate();
+
+    const error = Object.assign(
+      new Error("Client network socket disconnected before secure TLS connection was established"),
+      {
+        code: "ECONNRESET",
+        host: "open.feishu.cn",
+      },
+    );
+
+    socketHandlers.error?.(error);
+
+    expect(baseLogger.error).toHaveBeenCalledWith(
+      {
+        err: expect.objectContaining({
+          name: "Error",
+          message: "Client network socket disconnected before secure TLS connection was established",
+          code: "ECONNRESET",
+          host: "open.feishu.cn",
+        }),
+      },
+      "feishu ws socket error",
+    );
+
+    await client.stop();
+    expect(close).toHaveBeenCalledWith({ force: true });
+  });
 });
