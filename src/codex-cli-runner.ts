@@ -1,5 +1,6 @@
 import { execa } from "execa";
 
+import { RunCanceledError } from "./run-cancel-error.js";
 import type {
   PlanChoiceOption,
   PlanInteractionDraft,
@@ -10,6 +11,13 @@ import type {
 } from "./types.js";
 
 export class CodexCliRunner {
+  private readonly activeExecutions = new Map<string, {
+    cancelRequested: boolean;
+    child: {
+      kill?: (...args: any[]) => boolean;
+    };
+  }>();
+
   public constructor(
     private readonly codexCommand = "codex",
   ) {}
@@ -27,7 +35,13 @@ export class CodexCliRunner {
   }
 
   public async cancel(context: RunContext): Promise<void> {
-    void context;
+    const execution = this.activeExecutions.get(buildExecutionKey(context));
+    if (execution) {
+      execution.cancelRequested = true;
+      execution.child.kill?.("SIGTERM", {
+        forceKillAfterTimeout: false,
+      });
+    }
   }
 
   public async close(context: RunContext): Promise<void> {
@@ -39,6 +53,7 @@ export class CodexCliRunner {
       cwd: string;
       prompt: string;
       images?: string[];
+      sessionName?: string;
     },
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome & { threadId: string }> {
@@ -46,6 +61,7 @@ export class CodexCliRunner {
       withCodexImages(["exec", "--json", "-"], input.images),
       input.cwd,
       input.prompt,
+      input.sessionName ? `session:${input.sessionName}` : undefined,
       onEvent,
     );
 
@@ -84,6 +100,7 @@ export class CodexCliRunner {
       ], options?.images, 2),
       context.cwd,
       prompt,
+      buildExecutionKey(context),
       effectiveOnEvent,
     );
   }
@@ -92,6 +109,7 @@ export class CodexCliRunner {
     args: string[],
     cwd: string,
     prompt: string,
+    executionKey: string | undefined,
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome> {
     const child = execa(
@@ -103,6 +121,12 @@ export class CodexCliRunner {
         reject: false,
       },
     );
+    if (executionKey) {
+      this.activeExecutions.set(executionKey, {
+        cancelRequested: false,
+        child,
+      });
+    }
 
     const events: RunnerEvent[] = [];
     let buffer = "";
@@ -133,17 +157,35 @@ export class CodexCliRunner {
     });
     threadId = threadId ?? finalFlush.threadId;
 
-    const result = await child;
-    if (result.exitCode !== 0 && !events.some(event => event.type === "error")) {
-      throw new Error("RUN_STREAM_FAILED");
-    }
+    try {
+      const result = await child;
+      const execution = executionKey ? this.activeExecutions.get(executionKey) : undefined;
+      if (execution?.cancelRequested) {
+        throw new RunCanceledError();
+      }
+      if (result.exitCode !== 0 && !events.some(event => event.type === "error")) {
+        throw new Error("RUN_STREAM_FAILED");
+      }
 
-    return {
-      events,
-      exitCode: result.exitCode ?? 1,
-      threadId,
-    };
+      return {
+        events,
+        exitCode: result.exitCode ?? 1,
+        threadId,
+      };
+    } finally {
+      if (executionKey) {
+        this.activeExecutions.delete(executionKey);
+      }
+    }
   }
+}
+
+function buildExecutionKey(context: RunContext): string {
+  if (context.targetKind === "codex_thread") {
+    return `thread:${context.threadId}`;
+  }
+
+  return `session:${context.sessionName}`;
 }
 
 function withCodexImages(

@@ -13,4 +13,17 @@ export class ThreadRunGuard {
   public release(threadId: string): void {
     this.activeThreads.delete(threadId);
   }
+
+  public replace(currentThreadId: string, nextThreadId: string): boolean {
+    if (currentThreadId === nextThreadId) {
+      return true;
+    }
+    if (this.activeThreads.has(nextThreadId)) {
+      return false;
+    }
+
+    this.activeThreads.delete(currentThreadId);
+    this.activeThreads.add(nextThreadId);
+    return true;
+  }
 }

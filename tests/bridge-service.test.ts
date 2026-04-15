@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BridgeService } from "../src/bridge-service.js";
+import { RunWorkerManager } from "../src/run-worker-manager.js";
 import type { CodexCatalogThread, ProgressCardState, RunnerEvent } from "../src/types.js";
 import { SessionStore } from "../src/workspace/session-store.js";
 
@@ -34,7 +35,7 @@ describe("BridgeService", () => {
     rmSync(rootDir, { recursive: true, force: true });
   });
 
-  it("returns status for the current CA session without exposing projects", async () => {
+  it("returns an idle status card for the current CA session", async () => {
     store.bindThread({
       channel: "feishu",
       peerId: "ou_demo",
@@ -52,10 +53,121 @@ describe("BridgeService", () => {
       text: "/ca status",
     });
 
-    expect(replies).toEqual([
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      kind: "card",
+    });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("运行状态");
+    expect(cardText).toContain("当前没有运行中的任务");
+    expect(cardText).toContain("codex-main");
+  });
+
+  it("shows the current live run for the same surface and stops it on /ca stop", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-current",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-current",
+      title: "follow-up",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+
+    let rejectRun: ((error: Error) => void) | undefined;
+    const runner = {
+      createThread: vi.fn(async () => ({
+        exitCode: 0,
+        events: [],
+        threadId: "thread-current",
+      })),
+      ensureSession: vi.fn(async () => undefined),
+      cancel: vi.fn(async () => {
+        rejectRun?.(new Error("RUN_CANCELED"));
+      }),
+      close: vi.fn(async () => undefined),
+      submitVerbatim: vi.fn(async (
+        _context,
+        _prompt,
+        optionsOrOnEvent?: { images?: string[] } | ((event: RunnerEvent) => void),
+        maybeOnEvent?: (event: RunnerEvent) => void,
+      ) => {
+        const onEvent = typeof optionsOrOnEvent === "function"
+          ? optionsOrOnEvent
+          : maybeOnEvent;
+        onEvent?.({ type: "text", content: "still working" });
+        return await new Promise<never>((_resolve, reject) => {
+          rejectRun = reject as (error: Error) => void;
+        });
+      }),
+    };
+    const workerManager = new RunWorkerManager({ maxConcurrentRuns: 1 });
+    const service = new BridgeService({
+      store,
+      runner,
+      workerManager,
+    });
+
+    const runPromise = service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "继续处理这个线程",
+    });
+
+    await vi.waitFor(() => {
+      expect(workerManager.getRuntimeSnapshot().activeCount).toBe(1);
+    });
+
+    const statusReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "/ca status",
+    });
+
+    expect(statusReplies).toHaveLength(1);
+    expect(statusReplies[0]).toMatchObject({
+      kind: "card",
+    });
+    const statusCardText = JSON.stringify((statusReplies[0] as { card: Record<string, unknown> }).card);
+    expect(statusCardText).toContain("run-");
+    expect(statusCardText).toContain("still working");
+    expect(statusCardText).toContain("处理中");
+
+    const stopReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "/ca stop",
+    });
+
+    expect(stopReplies).toEqual([
       {
         kind: "system",
-        text: "[ca] root=main session=codex-main status=idle",
+        text: "[ca] stop requested for current run",
+      },
+    ]);
+    expect(runner.cancel).toHaveBeenCalledTimes(1);
+    await expect(runPromise).resolves.toEqual([
+      {
+        kind: "system",
+        text: "[ca] run canceled",
       },
     ]);
   });
@@ -159,9 +271,10 @@ describe("BridgeService", () => {
     expect(cardText).toContain("chat=oc_chat_alpha");
     expect(cardText).not.toContain("当前项目");
     expect(cardText).toContain("项目列表");
-    expect(cardText).toContain("会话状态");
+    expect(cardText).toContain("运行状态");
     expect(cardText).toContain("当前会话");
     expect(cardText).toContain("新会话");
+    expect(cardText).toContain("停止任务");
     expect(cardText).toContain("计划模式");
     expect(cardText).not.toContain("DM 快捷命令");
   });
@@ -947,7 +1060,8 @@ describe("BridgeService", () => {
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
     expect(cardText).toContain("CA Hub");
     expect(cardText).toContain("\"command\":\"/ca\"");
-    expect(cardText).toContain("会话状态");
+    expect(cardText).toContain("运行状态");
+    expect(cardText).toContain("停止任务");
     expect(cardText).not.toContain("DM 快捷命令");
   });
 

@@ -125,8 +125,13 @@ describe("SessionStore", () => {
 
     expect(observabilityStore.getOverview()).toMatchObject({
       activeRuns: 0,
+      queuedRuns: 0,
+      cancelingRuns: 0,
       totalRuns: 1,
       failedRuns24h: 0,
+      longestActiveMs: 0,
+      longestQueuedMs: 0,
+      latestCancel: null,
     });
     expect(observabilityStore.listRuns({ limit: 10 })).toEqual([
       expect.objectContaining({
@@ -134,12 +139,16 @@ describe("SessionStore", () => {
         status: "done",
         stage: "done",
         latestTool: "npm test",
+        cancelRequestedAt: null,
+        cancelRequestedBy: null,
+        cancelSource: null,
       }),
     ]);
     expect(observabilityStore.getRun("run-1")).toMatchObject({
       runId: "run-1",
       peerId: "ou_demo",
       sessionName: "codex-main",
+      cancelRequestedAt: null,
       finishedAt: expect.any(String),
     });
     expect(observabilityStore.listRunEvents("run-1")).toEqual([
@@ -216,6 +225,95 @@ describe("SessionStore", () => {
         seq: 1,
         stage: "text",
         preview: "使用 `using-superpowers` 技能",
+      }),
+    ]);
+  });
+
+  it("persists cancellation metadata and filters runs by project, thread and delivery target", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    store.upsertRoot({
+      id: "main",
+      name: "Main Root",
+      cwd: path.join(rootDir, "repos"),
+      repoRoot: path.join(rootDir, "repos"),
+      branchPolicy: "reuse",
+      permissionMode: "workspace-write",
+      envAllowlist: ["PATH"],
+      idleTtlHours: 24,
+    });
+
+    const observabilityStore = store as any;
+    observabilityStore.createRun({
+      runId: "run-cancel",
+      channel: "feishu",
+      peerId: "ou_demo",
+      projectId: "proj-a",
+      threadId: "thread-a",
+      deliveryChatId: "oc_chat_a",
+      deliverySurfaceType: "thread",
+      deliverySurfaceRef: "omt_a",
+      sessionName: "thread-a",
+      rootId: "main",
+      status: "running",
+      stage: "text",
+      latestPreview: "still working",
+    });
+    observabilityStore.markRunCancelRequested({
+      runId: "run-cancel",
+      requestedBy: "ou_demo",
+      source: "feishu",
+      requestedAt: "2026-04-15T10:00:00.000Z",
+    });
+    observabilityStore.appendRunEvent({
+      runId: "run-cancel",
+      source: "system",
+      status: "canceling",
+      stage: "canceling",
+      preview: "[ca] cancel requested",
+    });
+    observabilityStore.completeRun({
+      runId: "run-cancel",
+      status: "canceled",
+      stage: "canceled",
+      latestPreview: "[ca] run canceled",
+    });
+
+    observabilityStore.createRun({
+      runId: "run-other",
+      channel: "feishu",
+      peerId: "ou_other",
+      projectId: "proj-b",
+      threadId: "thread-b",
+      deliveryChatId: "oc_chat_b",
+      deliverySurfaceType: "thread",
+      deliverySurfaceRef: "omt_b",
+      sessionName: "thread-b",
+      rootId: "main",
+      status: "done",
+      stage: "done",
+      latestPreview: "done",
+    });
+
+    expect(observabilityStore.getRun("run-cancel")).toMatchObject({
+      runId: "run-cancel",
+      status: "canceled",
+      cancelRequestedAt: "2026-04-15T10:00:00.000Z",
+      cancelRequestedBy: "ou_demo",
+      cancelSource: "feishu",
+    });
+    expect(observabilityStore.getOverview()).toMatchObject({
+      latestCancel: expect.stringContaining("ou_demo"),
+    });
+    expect(observabilityStore.listRuns({
+      projectId: "proj-a",
+      threadId: "thread-a",
+      deliveryChatId: "oc_chat_a",
+      activeOnly: false,
+      limit: 10,
+    })).toEqual([
+      expect.objectContaining({
+        runId: "run-cancel",
       }),
     ]);
   });

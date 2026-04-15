@@ -267,6 +267,8 @@ function formatStatusLabel(status: ProgressStatus): string {
       return "已接收";
     case "preparing":
       return "准备中";
+    case "canceling":
+      return "停止中";
     case "running":
       return "处理中";
     case "tool_active":

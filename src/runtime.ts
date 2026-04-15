@@ -88,11 +88,30 @@ export async function createRuntime(
   const wsClient =
     overrides?.createWsClient?.(config, adapter, cardActionService, overrides?.logger) ??
     createDefaultWsClient(config, adapter, cardActionService, overrides?.logger);
+  const getRuntimeSnapshot = () => workerManager.getRuntimeSnapshot();
 
   const app = buildApp({
     readinessProbe: async () => runner.checkHealth(),
     observability: {
-      getOverview: async () => store.getOverview(),
+      getOverview: async () => {
+        const overview = store.getOverview();
+        const runtimeSnapshot = getRuntimeSnapshot();
+
+        return {
+          ...overview,
+          activeRuns: runtimeSnapshot.activeCount,
+          queuedRuns: runtimeSnapshot.queuedCount,
+          cancelingRuns: runtimeSnapshot.cancelingCount,
+          longestActiveMs: runtimeSnapshot.activeRuns.reduce(
+            (maxMs, run) => Math.max(maxMs, run.elapsedMs),
+            0,
+          ),
+          longestQueuedMs: runtimeSnapshot.queuedRuns.reduce(
+            (maxMs, run) => Math.max(maxMs, run.waitMs),
+            0,
+          ),
+        };
+      },
       listRuns: async filters => store.listRuns(filters),
       getRun: async runId => store.getRun(runId),
       listRunEvents: async runId => store.listRunEvents(runId),
@@ -101,6 +120,30 @@ export async function createRuntime(
       listProjectThreads: async projectId => store.listProjectThreads(projectId),
       getThread: async threadId => store.getThread(threadId),
       listThreadRuns: async threadId => store.listThreadRuns(threadId),
+      getRuntimeSnapshot,
+      cancelRun: async runId => {
+        const runtimeSnapshot = getRuntimeSnapshot();
+        const queuedRun = runtimeSnapshot.queuedRuns.find(run => run.runId === runId);
+        if (queuedRun) {
+          store.markRunCancelRequested({
+            runId,
+            requestedBy: "ops",
+            source: "ops",
+          });
+          store.appendRunEvent({
+            runId,
+            source: "system",
+            status: "canceling",
+            stage: "canceling",
+            preview: "[ca] cancel requested",
+          });
+        }
+
+        return workerManager.cancelRun(runId, {
+          requestedBy: "ops",
+          source: "ops",
+        });
+      },
     },
   });
 

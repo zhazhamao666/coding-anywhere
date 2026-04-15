@@ -561,6 +561,9 @@ export class SessionStore {
         latest_preview,
         latest_tool,
         error_text,
+        cancel_requested_at,
+        cancel_requested_by,
+        cancel_source,
         started_at,
         updated_at,
         finished_at
@@ -615,6 +618,9 @@ export class SessionStore {
         latest_preview,
         latest_tool,
         error_text,
+        cancel_requested_at,
+        cancel_requested_by,
+        cancel_source,
         started_at,
         updated_at,
         finished_at
@@ -634,6 +640,9 @@ export class SessionStore {
         @latestPreview,
         @latestTool,
         @errorText,
+        NULL,
+        NULL,
+        NULL,
         @startedAt,
         @updatedAt,
         NULL
@@ -788,6 +797,29 @@ export class SessionStore {
     })();
   }
 
+  public markRunCancelRequested(input: {
+    runId: string;
+    requestedBy?: string | null;
+    source: "feishu" | "ops";
+    requestedAt?: string;
+  }): void {
+    const requestedAt = input.requestedAt ?? new Date().toISOString();
+
+    this.db.prepare(`
+      UPDATE observability_runs
+      SET
+        cancel_requested_at = @requestedAt,
+        cancel_requested_by = @requestedBy,
+        cancel_source = @source,
+        updated_at = @requestedAt
+      WHERE run_id = @runId
+    `).run({
+      ...input,
+      requestedAt,
+      requestedBy: input.requestedBy ?? null,
+    });
+  }
+
   public completeRun(input: {
     runId: string;
     status: ProgressStatus;
@@ -845,6 +877,14 @@ export class SessionStore {
           LIMIT 1
         ) AS latest_error,
         (
+          SELECT
+            COALESCE(cancel_requested_by, cancel_source, 'unknown') || ' @ ' || cancel_requested_at
+          FROM observability_runs
+          WHERE cancel_requested_at IS NOT NULL
+          ORDER BY cancel_requested_at DESC
+          LIMIT 1
+        ) AS latest_cancel,
+        (
           SELECT updated_at
           FROM observability_runs
           ORDER BY updated_at DESC
@@ -856,15 +896,21 @@ export class SessionStore {
       completed_runs_24h: number;
       failed_runs_24h: number;
       latest_error: string | null;
+      latest_cancel: string | null;
       updated_at: string | null;
     };
 
     return {
       activeRuns: row.active_runs,
+      queuedRuns: 0,
+      cancelingRuns: 0,
       totalRuns: row.total_runs,
       completedRuns24h: row.completed_runs_24h,
       failedRuns24h: row.failed_runs_24h,
+      longestActiveMs: 0,
+      longestQueuedMs: 0,
       latestError: row.latest_error,
+      latestCancel: row.latest_cancel,
       updatedAt: row.updated_at,
     };
   }
@@ -886,6 +932,25 @@ export class SessionStore {
     if (filters.sessionName) {
       whereParts.push("session_name = @sessionName");
       params.sessionName = filters.sessionName;
+    }
+
+    if (filters.projectId) {
+      whereParts.push("project_id = @projectId");
+      params.projectId = filters.projectId;
+    }
+
+    if (filters.threadId) {
+      whereParts.push("thread_id = @threadId");
+      params.threadId = filters.threadId;
+    }
+
+    if (filters.deliveryChatId) {
+      whereParts.push("delivery_chat_id = @deliveryChatId");
+      params.deliveryChatId = filters.deliveryChatId;
+    }
+
+    if (filters.activeOnly) {
+      whereParts.push("status NOT IN ('done', 'error', 'canceled')");
     }
 
     params.limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
@@ -911,6 +976,9 @@ export class SessionStore {
         latest_preview,
         latest_tool,
         error_text,
+        cancel_requested_at,
+        cancel_requested_by,
+        cancel_source,
         started_at,
         updated_at,
         finished_at
@@ -943,6 +1011,9 @@ export class SessionStore {
         latest_preview,
         latest_tool,
         error_text,
+        cancel_requested_at,
+        cancel_requested_by,
+        cancel_source,
         started_at,
         updated_at,
         finished_at
@@ -1781,6 +1852,9 @@ export class SessionStore {
         latest_preview TEXT NOT NULL,
         latest_tool TEXT,
         error_text TEXT,
+        cancel_requested_at TEXT,
+        cancel_requested_by TEXT,
+        cancel_source TEXT,
         started_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         finished_at TEXT
@@ -1881,6 +1955,7 @@ export class SessionStore {
     this.migrateCodexThreadsTable();
     this.migrateCodexWindowBindingsTable();
     this.migrateObservabilityRunsTable();
+    this.ensureObservabilityIndexes();
     this.migrateObservabilityEventSources();
     this.dropObsoleteTables();
     this.ensureCodexThreadIndexes();
@@ -2065,6 +2140,9 @@ export class SessionStore {
       { name: "delivery_chat_id", definition: "TEXT" },
       { name: "delivery_surface_type", definition: "TEXT" },
       { name: "delivery_surface_ref", definition: "TEXT" },
+      { name: "cancel_requested_at", definition: "TEXT" },
+      { name: "cancel_requested_by", definition: "TEXT" },
+      { name: "cancel_source", definition: "TEXT" },
     ];
 
     for (const column of requiredColumns) {
@@ -2085,6 +2163,13 @@ export class SessionStore {
       SET source = 'runner'
       WHERE source = 'acpx'
     `).run();
+  }
+
+  private ensureObservabilityIndexes(): void {
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_observability_runs_cancel_requested_at
+      ON observability_runs(cancel_requested_at DESC);
+    `);
   }
 
   private migrateCodexWindowBindingsTable(): void {
@@ -2177,6 +2262,9 @@ interface RunRow {
   latest_preview: string;
   latest_tool: string | null;
   error_text: string | null;
+  cancel_requested_at: string | null;
+  cancel_requested_by: string | null;
+  cancel_source: "feishu" | "ops" | null;
   started_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -2366,6 +2454,9 @@ function rowToRun(row: RunRow): ObservabilityRun {
     latestPreview: row.latest_preview,
     latestTool: row.latest_tool,
     errorText: row.error_text,
+    cancelRequestedAt: row.cancel_requested_at,
+    cancelRequestedBy: row.cancel_requested_by,
+    cancelSource: row.cancel_source,
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     finishedAt: row.finished_at,

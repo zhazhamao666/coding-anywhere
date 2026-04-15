@@ -11,6 +11,8 @@ import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import type { ProjectThreadService } from "./project-thread-service.js";
 import { createProgressCardState, reduceProgressEvent } from "./progress-relay.js";
+import { isRunCanceledError } from "./run-cancel-error.js";
+import type { RunControl, RunDescriptor } from "./run-worker-manager.js";
 import type {
   BridgeAssetRecord,
   BridgeMessageInput,
@@ -23,6 +25,7 @@ import type {
   PendingPlanInteractionRecord,
   RootProfile,
   ProgressCardState,
+  RuntimeRunSnapshot,
   RunContext,
   RunOutcome,
   RunnerEvent,
@@ -35,6 +38,7 @@ interface BridgeRunner {
       cwd: string;
       prompt: string;
       images?: string[];
+      sessionName?: string;
     },
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome & { threadId: string }>;
@@ -65,7 +69,32 @@ interface ResolvedContext {
 }
 
 interface RunWorkerManagerLike {
-  schedule<T>(concurrencyKey: string, worker: () => Promise<T>): Promise<T>;
+  schedule<T>(descriptor: RunDescriptor, worker: (control: RunControl) => Promise<T>): Promise<T>;
+  updateRunProgress(runId: string, input: {
+    status: ProgressCardState["status"];
+    stage: ProgressCardState["stage"];
+    latestPreview: string;
+    latestTool?: string | null;
+  }): void;
+  rebindRun(runId: string, input: {
+    concurrencyKey?: string;
+    projectId?: string | null;
+    threadId?: string | null;
+    deliveryChatId?: string | null;
+    deliverySurfaceType?: "thread" | null;
+    deliverySurfaceRef?: string | null;
+    sessionName?: string;
+  }): void;
+  getCurrentRun(concurrencyKey: string): RuntimeRunSnapshot | undefined;
+  cancelRun(runId: string, options?: {
+    requestedBy?: string | null;
+    source?: "feishu" | "ops";
+  }): Promise<{
+    accepted: boolean;
+    runId: string;
+    newStatus: ProgressCardState["status"];
+    message: string;
+  }>;
 }
 
 interface CodexCatalogLike {
@@ -120,6 +149,7 @@ export class BridgeService {
       deliverySurfaceType: resolved.deliverySurfaceType,
       deliverySurfaceRef: resolved.deliverySurfaceRef,
     });
+    const startedAtIso = new Date(currentProgress.startedAt).toISOString();
 
     const emitSnapshot = async (
       snapshot: ProgressCardState,
@@ -136,6 +166,12 @@ export class BridgeService {
         preview: currentProgress.preview,
         toolName,
         coalesceSimilar,
+      });
+      this.dependencies.workerManager?.updateRunProgress(currentProgress.runId, {
+        status: currentProgress.status,
+        stage: currentProgress.stage,
+        latestPreview: currentProgress.preview,
+        latestTool: toolName ?? currentProgress.latestTool ?? null,
       });
       await options?.onProgress?.(currentProgress);
     };
@@ -154,29 +190,35 @@ export class BridgeService {
       await emitSnapshot(snapshot, "bridge");
     };
 
-    const executeRun = async (): Promise<BridgeReply[]> => {
+    this.dependencies.store.createRun({
+      runId: currentProgress.runId,
+      channel: input.channel,
+      peerId: input.peerId,
+      projectId: resolved.projectId,
+      threadId: resolved.threadId,
+      deliveryChatId: resolved.deliveryChatId,
+      deliverySurfaceType: resolved.deliverySurfaceType,
+      deliverySurfaceRef: resolved.deliverySurfaceRef,
+      sessionName: resolved.sessionName,
+      rootId: resolved.root.id,
+      status: currentProgress.status,
+      stage: currentProgress.stage,
+      latestPreview: currentProgress.preview,
+      startedAt: startedAtIso,
+      updatedAt: startedAtIso,
+    });
+
+    await emitLifecycle("received", "[ca] received", resolved.sessionName);
+    let currentThreadId = resolved.threadId;
+
+    const executeRun = async (control?: RunControl): Promise<BridgeReply[]> => {
       let activeResolved = resolved;
       let consumedAssets: BridgeAssetRecord[] = [];
       let sawRunnerEvent = false;
 
-      this.dependencies.store.createRun({
-        runId: currentProgress.runId,
-        channel: input.channel,
-        peerId: input.peerId,
-        projectId: activeResolved.projectId,
-        threadId: activeResolved.threadId,
-        deliveryChatId: activeResolved.deliveryChatId,
-        deliverySurfaceType: activeResolved.deliverySurfaceType,
-        deliverySurfaceRef: activeResolved.deliverySurfaceRef,
-        sessionName: activeResolved.sessionName,
-        rootId: activeResolved.root.id,
-        status: currentProgress.status,
-        stage: currentProgress.stage,
-        latestPreview: currentProgress.preview,
-      });
-
       if (activeResolved.context.targetKind === "new_codex_thread") {
         activeResolved = await this.materializeNativeContext(input, activeResolved, routed.prompt);
+        currentThreadId = activeResolved.threadId;
         currentProgress = {
           ...currentProgress,
           sessionName: activeResolved.sessionName,
@@ -190,6 +232,15 @@ export class BridgeService {
           deliverySurfaceType: activeResolved.deliverySurfaceType,
           deliverySurfaceRef: activeResolved.deliverySurfaceRef,
         });
+        this.dependencies.workerManager?.rebindRun(currentProgress.runId, {
+          concurrencyKey: activeResolved.concurrencyKey,
+          projectId: activeResolved.projectId,
+          threadId: activeResolved.threadId,
+          deliveryChatId: activeResolved.deliveryChatId,
+          deliverySurfaceType: activeResolved.deliverySurfaceType,
+          deliverySurfaceRef: activeResolved.deliverySurfaceRef,
+          sessionName: activeResolved.sessionName,
+        });
       }
 
       if (activeResolved.threadId) {
@@ -200,7 +251,23 @@ export class BridgeService {
         });
       }
 
-      await emitLifecycle("received", "[ca] received", activeResolved.sessionName);
+      control?.setOnCancelRequested(async cancelRequest => {
+        this.dependencies.store.markRunCancelRequested({
+          runId: currentProgress.runId,
+          requestedBy: cancelRequest.requestedBy ?? null,
+          source: cancelRequest.source ?? "ops",
+          requestedAt: cancelRequest.requestedAt,
+        });
+        const cancelingSnapshot: ProgressCardState = {
+          ...currentProgress,
+          status: "canceling",
+          stage: "canceling",
+          preview: "[ca] cancel requested",
+          elapsedMs: Date.now() - currentProgress.startedAt,
+        };
+        await emitSnapshot(cancelingSnapshot, "system");
+      });
+
       await emitLifecycle("resolving_context", "[ca] resolving context", activeResolved.sessionName);
       await emitLifecycle("ensuring_session", "[ca] ensuring session", activeResolved.sessionName);
       await this.dependencies.runner.ensureSession(activeResolved.context);
@@ -262,6 +329,9 @@ export class BridgeService {
         const imagePaths = consumedAssets
           .filter(asset => asset.resourceType === "image")
           .map(asset => asset.localPath);
+        control?.setCanceler(async () => {
+          await this.dependencies.runner.cancel(activeResolved.context);
+        });
         outcome = imagePaths.length > 0
           ? await this.dependencies.runner.submitVerbatim(
               activeResolved.context,
@@ -335,10 +405,41 @@ export class BridgeService {
       return finalOutput.replies;
     };
 
-    const executeWithErrorHandling = async (): Promise<BridgeReply[]> => {
+    const executeWithErrorHandling = async (control?: RunControl): Promise<BridgeReply[]> => {
       try {
-        return await executeRun();
+        return await executeRun(control);
       } catch (error) {
+        if (isRunCanceledError(error)) {
+          const canceledSnapshot: ProgressCardState = {
+            ...currentProgress,
+            status: "canceled",
+            stage: "canceled",
+            preview: "[ca] run canceled",
+            elapsedMs: Date.now() - currentProgress.startedAt,
+          };
+          await emitSnapshot(canceledSnapshot, "system");
+          this.dependencies.store.completeRun({
+            runId: currentProgress.runId,
+            status: "canceled",
+            stage: "canceled",
+            latestPreview: canceledSnapshot.preview,
+            latestTool: canceledSnapshot.latestTool ?? null,
+          });
+
+          if (currentThreadId) {
+            this.dependencies.store.updateCodexThreadState({
+              threadId: currentThreadId,
+              status: "warm",
+              lastRunId: currentProgress.runId,
+            });
+          }
+
+          return [{
+            kind: "system",
+            text: "[ca] run canceled",
+          }];
+        }
+
         const errorText = normalizeRunError(error);
         if (
           currentProgress.status !== "error" ||
@@ -360,9 +461,9 @@ export class BridgeService {
           errorText,
         });
 
-        if (resolved.threadId) {
+        if (currentThreadId) {
           this.dependencies.store.updateCodexThreadState({
-            threadId: resolved.threadId,
+            threadId: currentThreadId,
             status: "warm",
             lastRunId: currentProgress.runId,
           });
@@ -376,7 +477,51 @@ export class BridgeService {
       return executeWithErrorHandling();
     }
 
-    return this.dependencies.workerManager.schedule(resolved.concurrencyKey, executeWithErrorHandling);
+    const runDescriptor: RunDescriptor = {
+      runId: currentProgress.runId,
+      concurrencyKey: resolved.concurrencyKey,
+      channel: input.channel,
+      peerId: input.peerId,
+      projectId: resolved.projectId,
+      threadId: resolved.threadId,
+      deliveryChatId: resolved.deliveryChatId,
+      deliverySurfaceType: resolved.deliverySurfaceType,
+      deliverySurfaceRef: resolved.deliverySurfaceRef,
+      sessionName: resolved.sessionName,
+      rootId: resolved.root.id,
+      status: currentProgress.status,
+      stage: currentProgress.stage,
+      latestPreview: currentProgress.preview,
+      startedAt: startedAtIso,
+    };
+
+    try {
+      return await this.dependencies.workerManager.schedule(runDescriptor, executeWithErrorHandling);
+    } catch (error) {
+      if (isRunCanceledError(error)) {
+        const canceledSnapshot: ProgressCardState = {
+          ...currentProgress,
+          status: "canceled",
+          stage: "canceled",
+          preview: "[ca] run canceled",
+          elapsedMs: Date.now() - currentProgress.startedAt,
+        };
+        await emitSnapshot(canceledSnapshot, "system");
+        this.dependencies.store.completeRun({
+          runId: currentProgress.runId,
+          status: "canceled",
+          stage: "canceled",
+          latestPreview: canceledSnapshot.preview,
+          latestTool: canceledSnapshot.latestTool ?? null,
+        });
+        return [{
+          kind: "system",
+          text: "[ca] run canceled",
+        }];
+      }
+
+      throw error;
+    }
   }
 
   public getPendingPlanInteraction(interactionId: string): PendingPlanInteractionRecord | undefined {
@@ -455,15 +600,11 @@ export class BridgeService {
       case "hub":
         return this.handleHubCommand(input);
       case "status": {
-        const root = this.dependencies.store.getRoot();
         const resolved = this.tryResolveContext(input);
-
-        return [
-          {
-            kind: "system",
-            text: `[ca] root=${root?.id ?? "unconfigured"} session=${resolved?.sessionName ?? "none"} status=idle`,
-          },
-        ];
+        const currentRun = resolved
+          ? this.dependencies.workerManager?.getCurrentRun(resolved.concurrencyKey)
+          : undefined;
+        return [this.buildRunStatusCardReply(input, resolved, currentRun)];
       }
       case "new": {
         const resolved = this.resolveContext(input);
@@ -495,7 +636,44 @@ export class BridgeService {
         return [{ kind: "system", text: `[ca] thread switched to ${created.threadId}` }];
       }
       case "stop": {
-        return [{ kind: "system", text: "[ca] stop unavailable for native Codex threads" }];
+        const resolved = this.tryResolveContext(input);
+        if (!resolved || !this.dependencies.workerManager) {
+          return [{ kind: "system", text: "[ca] current run not found" }];
+        }
+
+        const currentRun = this.dependencies.workerManager.getCurrentRun(resolved.concurrencyKey);
+        if (!currentRun) {
+          return [{ kind: "system", text: "[ca] current run not found" }];
+        }
+        if (currentRun.status === "queued") {
+          this.dependencies.store.markRunCancelRequested({
+            runId: currentRun.runId,
+            requestedBy: input.peerId,
+            source: "feishu",
+          });
+          this.dependencies.store.appendRunEvent({
+            runId: currentRun.runId,
+            source: "system",
+            status: "canceling",
+            stage: "canceling",
+            preview: "[ca] cancel requested",
+          });
+        }
+
+        const result = await this.dependencies.workerManager.cancelRun(currentRun.runId, {
+          requestedBy: input.peerId,
+          source: "feishu",
+        });
+        if (!result.accepted) {
+          return [{ kind: "system", text: "[ca] current run already finished" }];
+        }
+
+        return [{
+          kind: "system",
+          text: result.newStatus === "canceled"
+            ? "[ca] current run canceled"
+            : "[ca] stop requested for current run",
+        }];
       }
       case "session": {
         const codexSelection = this.lookupDmCodexSelection(input);
@@ -512,7 +690,7 @@ export class BridgeService {
         }
 
         const resolved = this.resolveContext(input);
-        return [{ kind: "system", text: `[ca] session=${resolved.sessionName}` }];
+        return [this.buildResolvedSessionCardReply(input, resolved)];
       }
       case "logs": {
         const resolved = this.resolveContext(input);
@@ -587,12 +765,16 @@ export class BridgeService {
             label: "当前会话",
             value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
           },
+          {
+            label: "运行状态",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
+          },
         {
           label: "新会话",
           value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
         },
         {
-          label: "停止",
+          label: "停止任务",
           type: "danger",
           value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} stop`),
         },
@@ -678,9 +860,18 @@ export class BridgeService {
               label: "当前会话",
               value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
             },
+            {
+              label: "运行状态",
+              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
+            },
           {
             label: "新会话",
             value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
+          },
+          {
+            label: "停止任务",
+            type: "danger",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} stop`),
           },
         );
       } else {
@@ -707,7 +898,7 @@ export class BridgeService {
         }
           actions.push(
             {
-              label: "会话状态",
+              label: "运行状态",
               value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
             },
             {
@@ -721,6 +912,11 @@ export class BridgeService {
             {
               label: "计划模式",
               value: this.buildPlanActionValue(actionContext),
+            },
+            {
+              label: "停止任务",
+              type: "danger",
+              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} stop`),
             },
             {
               label: "项目列表",
@@ -1735,6 +1931,15 @@ export class BridgeService {
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
           {
+            label: "运行状态",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} status`),
+          },
+          {
+            label: "停止任务",
+            type: "danger",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} stop`),
+          },
+          {
             label: "新会话",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
           },
@@ -1842,6 +2047,183 @@ export class BridgeService {
         ],
       }),
     };
+  }
+
+  private buildResolvedSessionCardReply(
+    input: BridgeMessageInput,
+    resolved: ResolvedContext,
+  ): BridgeReply {
+    const currentRun = this.dependencies.workerManager?.getCurrentRun(resolved.concurrencyKey);
+    const contextItems = this.buildContextSummaryItems(input, resolved, currentRun);
+
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: "当前会话",
+        summaryLines: [
+          "**视图**：当前会话",
+          `**Root**：${resolved.root.id}`,
+          `**Session**：${currentRun?.sessionName ?? resolved.sessionName}`,
+          `**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`,
+        ],
+        sections: [
+          currentRun
+            ? {
+                title: "当前运行",
+                items: [
+                  `runId：${currentRun.runId}`,
+                  `状态：${formatRuntimeStatusLabel(currentRun.status)} / ${formatRuntimeStageLabel(currentRun.stage)}`,
+                  `已运行：${formatRuntimeDuration(currentRun.elapsedMs)}`,
+                  `最近工具：${currentRun.latestTool ?? "无"}`,
+                  `摘要：${currentRun.latestPreview}`,
+                ],
+              }
+            : {
+                title: "当前会话",
+                items: ["当前没有运行中的任务。"],
+              },
+          {
+            title: "当前上下文",
+            items: contextItems.length > 0 ? contextItems : ["当前上下文暂不可用。"],
+          },
+        ],
+        actions: [
+          {
+            label: "导航",
+            type: "primary",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
+          },
+          {
+            label: "运行状态",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} status`),
+          },
+          {
+            label: "停止任务",
+            type: "danger",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} stop`),
+          },
+          {
+            label: "新会话",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
+          },
+        ],
+      }),
+    };
+  }
+
+  private buildRunStatusCardReply(
+    input: BridgeMessageInput,
+    resolved?: ResolvedContext,
+    currentRun?: RuntimeRunSnapshot,
+  ): BridgeReply {
+    const summaryLines = ["**视图**：运行状态"];
+    if (resolved?.root.id) {
+      summaryLines.push(`**Root**：${resolved.root.id}`);
+    }
+    if (currentRun?.sessionName ?? resolved?.sessionName) {
+      summaryLines.push(`**Session**：${currentRun?.sessionName ?? resolved?.sessionName}`);
+    }
+    summaryLines.push(`**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`);
+
+    const contextItems = resolved
+      ? this.buildContextSummaryItems(input, resolved, currentRun)
+      : [];
+    const sections: Array<{
+      title: string;
+      items: string[];
+      monospace?: boolean;
+    }> = [
+      currentRun
+        ? {
+            title: "当前运行",
+            items: [
+              `runId：${currentRun.runId}`,
+              `状态：${formatRuntimeStatusLabel(currentRun.status)} / ${formatRuntimeStageLabel(currentRun.stage)}`,
+              `已运行：${formatRuntimeDuration(currentRun.elapsedMs)}`,
+              `等待：${formatRuntimeDuration(currentRun.waitMs)}`,
+              `最近工具：${currentRun.latestTool ?? "无"}`,
+              `摘要：${currentRun.latestPreview}`,
+            ],
+          }
+        : {
+            title: "当前没有运行中的任务",
+            items: ["可以直接发送普通消息开始新的任务。"],
+          },
+    ];
+
+    if (contextItems.length > 0) {
+      sections.push({
+        title: "当前上下文",
+        items: contextItems,
+      });
+    }
+
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: "运行状态",
+        summaryLines,
+        sections,
+        actions: [
+          {
+            label: "导航",
+            type: "primary",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
+          },
+          {
+            label: "当前会话",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} session`),
+          },
+          {
+            label: "停止任务",
+            type: "danger",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} stop`),
+          },
+        ],
+      }),
+    };
+  }
+
+  private buildContextSummaryItems(
+    input: BridgeMessageInput,
+    resolved: ResolvedContext,
+    currentRun?: RuntimeRunSnapshot,
+  ): string[] {
+    const items: string[] = [];
+    if (this.isDmContext(input)) {
+      const codexSelection = this.lookupDmCodexSelection(input);
+      if (codexSelection) {
+        items.push(`项目：${codexSelection.project.displayName}`);
+        items.push(`线程：${formatCurrentThreadLabel(codexSelection.thread.title, codexSelection.thread.threadId)}`);
+      } else {
+        const selectedProject = this.lookupDmSelectedProject(input);
+        if (selectedProject) {
+          items.push(`项目：${selectedProject.displayName}`);
+          items.push("线程：未选择");
+        }
+      }
+    } else if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
+      const thread = this.dependencies.store.getCodexThreadBySurface(input.chatId, input.surfaceRef);
+      if (thread) {
+        const project = this.dependencies.store.getProject(thread.projectId);
+        items.push(`项目：${project?.name ?? thread.projectId}`);
+        items.push(`线程：${formatCurrentThreadLabel(thread.title, thread.threadId)}`);
+      }
+    } else if (input.chatId) {
+      const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
+      if (projectChat) {
+        const project = this.dependencies.store.getProject(projectChat.projectId);
+        items.push(`项目：${project?.name ?? projectChat.projectId}`);
+      }
+    }
+
+    const deliveryChatId = currentRun?.deliveryChatId ?? resolved.deliveryChatId;
+    const deliverySurfaceRef = currentRun?.deliverySurfaceRef ?? resolved.deliverySurfaceRef;
+    if (deliveryChatId || deliverySurfaceRef) {
+      items.push(`投递：chat=${deliveryChatId ?? "-"} · surface=${deliverySurfaceRef ?? "-"}`);
+    }
+
+    return items;
   }
 
   private buildCodexThreadSwitchedCardReply(
@@ -2439,6 +2821,75 @@ function findFinalAssistantText(events: RunnerEvent[]): string {
 
 function isTerminalProgress(progress: ProgressCardState): boolean {
   return progress.status === "done" || progress.status === "error" || progress.status === "canceled";
+}
+
+function formatRuntimeStatusLabel(status: RuntimeRunSnapshot["status"]): string {
+  switch (status) {
+    case "queued":
+      return "已接收";
+    case "preparing":
+      return "准备中";
+    case "canceling":
+      return "停止中";
+    case "running":
+      return "处理中";
+    case "tool_active":
+      return "工具执行中";
+    case "waiting":
+      return "等待中";
+    case "done":
+      return "已完成";
+    case "error":
+      return "失败";
+    case "canceled":
+      return "已停止";
+  }
+}
+
+function formatRuntimeStageLabel(stage: RuntimeRunSnapshot["stage"]): string {
+  switch (stage) {
+    case "received":
+      return "已接收";
+    case "resolving_context":
+      return "解析上下文";
+    case "ensuring_session":
+      return "准备会话";
+    case "session_ready":
+      return "会话已就绪";
+    case "submitting_prompt":
+      return "提交请求";
+    case "waiting_first_event":
+      return "等待首个响应";
+    case "canceling":
+      return "停止中";
+    case "tool_call":
+      return "工具调用";
+    case "text":
+      return "文本响应";
+    case "waiting":
+      return "等待中";
+    case "done":
+      return "已完成";
+    case "error":
+      return "失败";
+    case "canceled":
+      return "已停止";
+  }
+}
+
+function formatRuntimeDuration(elapsedMs: number): string {
+  if (elapsedMs < 1000) {
+    return `${elapsedMs}ms`;
+  }
+
+  const seconds = elapsedMs / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
 }
 
 function normalizeRunError(error: unknown): string {

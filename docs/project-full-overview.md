@@ -65,7 +65,7 @@
 36. DM 中切换到某个 Codex 原生线程后，切换成功卡片会附带“最后 1 条 user 消息 + 最后 4 条 assistant 消息”的原文预览，便于快速恢复上下文
 37. 长任务在飞书中的终态展示调整为“摘要卡 + 完整正文消息”：状态卡收口时只保留终态摘要与“查看下方消息”的提示，完整 assistant 正文仍单独作为普通消息 / 线程回复发送，避免同一份结果在卡片和消息中重复完整展示
 38. `/ca new` 不再重置 CA session，而是创建并切换到新的 native Codex thread
-39. `/ca stop` 对 native thread 明确返回不可用，而不是继续假装映射到 `acpx cancel`
+39. `/ca stop` 现在会按当前 DM / 已注册飞书线程 surface 查找 live run：排队中的 run 直接取消并收口为 `canceled`，运行中的 run 会先进入 `canceling` 再终态收口
 40. `thread list-current` 在已绑定项目群中会直接列出当前项目对应的 Codex native thread
 41. `/ca thread switch <threadId>` 现在不仅可用于 DM，也可用于已注册飞书线程重绑当前 surface，或在项目群中创建一个绑定到选中 native thread 的新飞书话题
 42. DM 与已注册飞书线程的导航卡现在提供一次性“计划模式”按钮，点击后会打开 JSON 2.0 表单卡，并把输入包装成 `/plan ...` 送入当前 native Codex thread
@@ -85,6 +85,11 @@
 56. Codex 线程列表卡会把 subagent 来源解析为结构化的母 agent / 子 agent 展示，按父线程分组缩进显示 agent 名称、角色、父线程和层级，不再把 Codex raw `source` JSON 原样暴露到飞书卡片里
 57. `FeishuWsClient` 现在会在每次底层长连接真正连上后额外打印 transport connected 日志，并在 socket `close` / `error` 时输出关闭码、关闭原因和结构化错误信息，便于定位 DNS、TLS 或代理隧道层面的出网问题
 58. 飞书长连接的重连次数、重连间隔和首次重连抖动现在都已提升为显式配置项，默认仍保持 SDK 的“无限重试 + 120 秒间隔 + 30 秒随机抖动”
+59. `/ca status` 现在会返回结构化“运行状态”卡：若当前 surface 有 live run，则展示 `runId`、状态/阶段、耗时、最近工具、最新摘要和投递上下文；若没有，则返回空闲态并保留当前上下文摘要
+60. `/ca` 导航卡与“当前会话”卡现在都补上了“运行状态”和“停止任务”按钮，继续复用同一条 `/ca` 卡片回调重放链路
+61. runtime 现在额外暴露 `/ops/runtime` 实时调度快照，以及 `/ops/runs/:id/cancel` 运行中/排队任务取消接口
+62. `/ops/ui` 已升级为“概览 + 活跃/排队任务面板 + 历史详情”的组合视图，支持直接取消 live run
+63. `observability_runs` 现在会额外记录 `cancel_requested_at`、`cancel_requested_by`、`cancel_source`，便于还原取消请求来源
 
 ### 2.3 当前仍未打通的部分
 
@@ -176,6 +181,8 @@ Browser / script
 - 由 `FeishuWsClient` 直接归一化 `card.action.trigger` 长连接 payload，并把按钮动作交给 `FeishuCardActionService`
 - 通过 `FeishuWsClient` 对 SDK 底层 WebSocket transport 的 connect / close / error 补充诊断日志，便于排查长连接重连时的 DNS、TLS 和隧道问题
 - 装配 `/ops/*`
+- 把 `SessionStore` 的历史观测数据和 `RunWorkerManager` 的实时调度态拼装成统一的 `/ops/overview` / `/ops/runtime`
+- 为 ops 侧取消动作补齐 queued run 的取消元数据落库与事件时间线
 - 启动线程空闲回收和待处理图片过期清理定时器
 
 ### 5.1.1 `src/windows-console.ts`
@@ -238,6 +245,8 @@ Windows 启动前清理模块。
 - root 上下文封装
 - 同 surface 待处理图片的消费与 prompt 附件清单封装
 - run 生命周期组织
+- 当前 surface live run 的状态查询与停止
+- 运行中 run 的取消请求、取消中态回写和最终收口
 - 线程状态更新
 - 观测数据写入
 - 计划交互的持久化与续跑编排
@@ -490,17 +499,21 @@ Feishu DM / Group Thread image
 - DM 中 `/ca new` 会创建新的 native thread 并切换当前窗口
 - 如果 DM 当前没有 native thread 绑定但已经选中了项目，`/ca new` 与下一条普通 prompt 都会优先使用该项目的 `cwd`
 - 已注册线程中的 `/ca new` 会创建新的 native thread 并重绑当前 Feishu thread surface
-- `/ca stop` 对 native thread 统一返回不可用
+- `/ca status` 会优先读取当前 surface 的 live run；有任务时返回结构化运行状态卡，空闲时返回当前上下文摘要卡
+- `/ca stop` 只作用于当前 surface 的 live run，不暴露任意 `runId`
+  - 没有 live run：返回“当前没有运行中的任务”
+  - queued：直接取消排队项并收口为 `canceled`
+  - preparing / running / tool_active / waiting：先进入 `canceling`，随后终态收口为 `canceled`
 - `/ca` 会按上下文返回不同内容，`/ca hub` 复用同一条路径：
   - DM（未绑定 native thread）：root、未绑定状态、Codex 项目概览
   - DM（已绑定 native thread）：当前项目路径、当前线程、当前 thread_id
   - 已绑定项目群：当前项目信息、最近线程摘要和项目级按钮入口
   - 已注册线程：当前线程信息、同项目线程摘要和线程级按钮入口
 - `/ca` 的按钮会按上下文变化：
-  - DM：`导航`、`会话状态`、`当前会话`、`新会话`、`项目列表`
-  - 已切到 Codex 原生线程的 DM：`导航`、`项目列表`、`当前项目`、`线程列表`、`当前会话`、`新会话`
+  - DM：`导航`、`运行状态`、`当前会话`、`新会话`、`计划模式`、`停止任务`、`项目列表`
+  - 已切到 Codex 原生线程的 DM：`导航`、`项目列表`、`当前项目`、`线程列表`、`计划模式`、`当前会话`、`运行状态`、`新会话`、`停止任务`
   - 已绑定项目群：`导航`、`当前项目`、`线程列表`、`项目列表`
-  - 已注册线程：`导航`、`当前项目`、`线程列表`、`当前会话`、`新会话`、`停止`
+  - 已注册线程：`导航`、`当前项目`、`线程列表`、`计划模式`、`当前会话`、`运行状态`、`新会话`、`停止任务`
 - `/ca help` 与未知 `/ca` 子命令会复用同一张导航卡
 - `/ca project list` 会返回项目列表卡片
 - `/ca project current` 会返回当前项目摘要卡片；在 DM 中若当前没有 native thread 绑定，则会回退到当前所选项目
@@ -508,6 +521,7 @@ Feishu DM / Group Thread image
 - 线程列表卡会汇总“线程数 / 母 agent / 子 agent”，父线程显示来源和分支，子线程以缩进行跟随父线程显示，并标出 agent 名称、角色、父线程引用和层级；父线程不在当前列表时会显示父线程 ID 和“不在当前列表”
 - DM 中 `/ca thread switch <threadId>` 成功后会返回线程切换确认卡，并附带“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
 - DM 中已切到 Codex 原生线程后，`/ca session` 会返回当前会话卡片，并附带同一套“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
+- 其它 surface 上的 `/ca session` 也会回到结构化“当前会话”卡，展示当前上下文与 live run 摘要
 - `/ca thread create*` 成功后会返回线程摘要卡片
 - DM 中的项目列表卡和线程列表卡现在带行级按钮：项目列表可“查看线程”“切换项目”，线程列表可“切换到此线程”
 - 群主时间线中的项目列表卡也带行级按钮：未绑定项目可“绑定到本群”，已绑定当前群可进入“当前项目”，已绑定其他群只展示状态，避免误转绑
@@ -659,13 +673,26 @@ channel + peer_id -> codex_thread_id
 - `delivery_chat_id`
 - `delivery_surface_type`
 - `delivery_surface_ref`
+- `cancel_requested_at`
+- `cancel_requested_by`
+- `cancel_source`
 
 因此后台已经不再只是“看 session”，而是能看到这条 run 属于哪个项目、哪个线程、最终该投递回哪里。
+
+另外，实时调度态不落 SQLite，而是由 `RunWorkerManager` 在内存中维护：
+
+- `activeRuns`
+- `queuedRuns`
+- `locks`
+- `cancelingCount`
+
+`/ops/runtime` 会直接读取这份 live registry；`/ops/overview` 则把 SQLite 历史统计和 live runtime 指标拼装成统一概览。
 
 另外，`observability_run_events` 的写入策略已经做了收敛：
 
 - 生命周期、工具调用、终态仍按阶段保留事件
 - 连续的流式 `text` / `waiting` 更新会按“相邻同阶段事件”合并
+- 取消请求会先落一条 `canceling` 阶段事件，再由终态更新收口为 `canceled` 或 `error`
 - 因此 `/ops/ui` 和 `/ops/runs/:id` 看到的是更可读的阶段时间线，而不是每个 chunk 一条记录
 
 ## 11. 配置结构
@@ -732,8 +759,10 @@ channel + peer_id -> codex_thread_id
 当前 `/ops/*` 已支持：
 
 - `/ops/overview`
+- `/ops/runtime`
 - `/ops/runs`
 - `/ops/runs/:id`
+- `/ops/runs/:id/cancel`
 - `/ops/sessions`
 - `/ops/projects`
 - `/ops/projects/:id/threads`
@@ -743,7 +772,10 @@ channel + peer_id -> codex_thread_id
 
 说明：
 
-- `/ops/ui` 当前仍以 run 视角为主
+- `/ops/overview` 会额外展示 live `activeRuns / queuedRuns / cancelingRuns` 以及最长活跃/排队时长
+- `/ops/runtime` 直接返回实时调度态，包括 active / queued runs、当前锁占用和每个 live run 的关键上下文
+- `/ops/runs/:id/cancel` 允许 ops 侧按 `runId` 取消 live run；本期只支持 cancel，不支持 retry
+- `/ops/ui` 左侧会同时展示活跃任务、排队任务、历史 run 列表和会话快照，任务详情侧会显示取消元数据与完整时间线
 - 项目与线程的新视图目前主要通过 JSON 接口提供
 
 ## 13. 用户可感知的行为变化
@@ -760,6 +792,8 @@ channel + peer_id -> codex_thread_id
 - 可以通过结构化列表卡快速浏览项目和线程
 - 在 DM 中切到某个 Codex 原生线程后，可以直接看到该线程“最后 1 条 user + 最后 4 条 assistant”消息的原文预览
 - 在 DM 中切到某个 Codex 原生线程后，点击“当前会话”也可以继续看到同一份最近对话预览
+- 可以在 DM 或已注册飞书线程里直接点击“运行状态”，看到当前 surface 的 live run、耗时、最近工具和摘要；没有 live run 时也能看到空闲态上下文摘要
+- 可以在 DM 或已注册飞书线程里直接点击“停止任务”或发送 `/ca stop`，请求停止当前 surface 上正在执行或排队的任务
 - 可以通过摘要卡快速确认当前项目和新建线程结果
 - 普通对话 run 完成后，不会再在终态卡和普通消息里重复完整展示同一份 assistant 正文；卡片保留摘要，完整正文以下方消息为准
 - 输入未知子命令时也能自动回到导航卡
@@ -784,6 +818,7 @@ channel + peer_id -> codex_thread_id
 - 没有完整 DM Hub
 - 还不能自动创建飞书项目群，只能先绑定已有群；当前群可以通过 `/ca project bind-current` 或项目列表卡片按钮完成绑定
 - CA 不提供精确跳转到指定飞书话题的能力
+- `/ops/ui` 仍然主要围绕 run 控制与历史详情展开，项目/线程管理页仍以 JSON drill-down 为主，没有做成完整多页后台
 - 卡片按钮目前除了导航命令外，只额外覆盖桥接式计划模式的表单提交与单选题续跑，不是通用的任意参数命令表单平台
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
 - 普通对话 run 的终态投递策略当前固定为“摘要卡 + 完整正文消息”，尚未开放配置；如后续确有分场景需求，可再扩展为可配置策略，但当前记为低优先级后续计划
@@ -802,11 +837,12 @@ channel + peer_id -> codex_thread_id
 3. 飞书 DM 发 `/ca`
 4. 点击导航卡按钮验证回调
 5. 飞书 DM 发 `/ca status`
-6. 飞书 DM 发 `test`
-7. 确认 DM 中先出现流式状态卡；run 完成后，卡片收口为摘要卡，完整 assistant 正文以下方单独消息展示
-8. 打开 `/ops/ui`
-9. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志；如长连接发生抖动，还应能看到 `feishu ws transport connected`、`feishu ws socket closed: code=...; reason=...` 和 `feishu ws socket error` 这类诊断日志
-10. 飞书 DM 先发一张图片，再补一条文字说明，确认 bridge 会先回复“已收到图片”，随后下一条文本 run 会消费该图片
+6. 飞书 DM 发一个足够长的任务，再次点击“运行状态”，确认卡片能展示 `runId`、状态、耗时、最近工具与摘要
+7. 在任务仍未结束时发送 `/ca stop`，确认 run 会先进入 `canceling`，随后收口为 `canceled`
+8. 打开 `/ops/runtime` 与 `/ops/ui`，确认 active / queued 面板、取消按钮和 run 时间线一致
+9. 再发一个普通任务，确认 DM 中先出现流式状态卡；run 完成后，卡片收口为摘要卡，完整 assistant 正文以下方单独消息展示
+10. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志；如长连接发生抖动，还应能看到 `feishu ws transport connected`、`feishu ws socket closed: code=...; reason=...` 和 `feishu ws socket error` 这类诊断日志
+11. 飞书 DM 先发一张图片，再补一条文字说明，确认 bridge 会先回复“已收到图片”，随后下一条文本 run 会消费该图片
 
 ### 15.2 群线程回归
 

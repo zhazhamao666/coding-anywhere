@@ -8,6 +8,7 @@ import type {
   ObservabilityRun,
   ObservabilityRunEvent,
   ObservabilityThreadSummary,
+  RuntimeSnapshot,
   SessionSnapshot,
 } from "./types.js";
 
@@ -21,6 +22,18 @@ interface ObservabilityProvider {
   listProjectThreads?(projectId: string): Promise<ObservabilityThreadSummary[]> | ObservabilityThreadSummary[];
   getThread?(threadId: string): Promise<ObservabilityThreadSummary | undefined> | ObservabilityThreadSummary | undefined;
   listThreadRuns?(threadId: string): Promise<ObservabilityRun[]> | ObservabilityRun[];
+  getRuntimeSnapshot?(): Promise<RuntimeSnapshot> | RuntimeSnapshot;
+  cancelRun?(runId: string): Promise<{
+    accepted: boolean;
+    runId: string;
+    newStatus: string;
+    message: string;
+  }> | {
+    accepted: boolean;
+    runId: string;
+    newStatus: string;
+    message: string;
+  };
 }
 
 export function buildApp(options?: {
@@ -54,6 +67,10 @@ export function buildApp(options?: {
         status?: ListRunsFilters["status"];
         peer_id?: string;
         session_name?: string;
+        project_id?: string;
+        thread_id?: string;
+        delivery_chat_id?: string;
+        active_only?: string;
         limit?: string;
       };
 
@@ -61,6 +78,10 @@ export function buildApp(options?: {
         status: query.status,
         peerId: query.peer_id,
         sessionName: query.session_name,
+        projectId: query.project_id,
+        threadId: query.thread_id,
+        deliveryChatId: query.delivery_chat_id,
+        activeOnly: query.active_only === "1" || query.active_only === "true",
         limit: query.limit ? Number(query.limit) : undefined,
       });
     });
@@ -81,6 +102,17 @@ export function buildApp(options?: {
       };
     });
     app.get("/ops/sessions", async () => observability.listSessionSnapshots());
+    if (observability.getRuntimeSnapshot) {
+      app.get("/ops/runtime", async () => observability.getRuntimeSnapshot?.());
+    }
+    if (observability.cancelRun) {
+      app.post("/ops/runs/:id/cancel", async request => {
+        const params = request.params as {
+          id: string;
+        };
+        return observability.cancelRun?.(params.id);
+      });
+    }
     if (observability.listProjects) {
       app.get("/ops/projects", async () => observability.listProjects?.() ?? []);
     }
@@ -277,6 +309,11 @@ function buildOpsUiHtml(): string {
         color: var(--warn);
       }
 
+      .badge.canceling {
+        background: #fef3d8;
+        color: #8a5300;
+      }
+
       .muted-line {
         font-size: 13px;
         color: var(--muted);
@@ -350,7 +387,7 @@ function buildOpsUiHtml(): string {
     <main>
       <div>
         <h1>Backend Observability</h1>
-        <p class="subtle">任务级后台观测页面，核心数据来源于 <code>/ops/overview</code>、<code>/ops/runs</code>、<code>/ops/runs/:id</code>、<code>/ops/sessions</code>，项目与线程补充视图可通过 <code>/ops/projects</code> 与 <code>/ops/threads/:id</code> 获取。</p>
+        <p class="subtle">任务级后台观测页面，核心数据来源于 <code>/ops/overview</code>、<code>/ops/runtime</code>、<code>/ops/runs</code>、<code>/ops/runs/:id</code>、<code>/ops/sessions</code>，项目与线程补充视图可通过 <code>/ops/projects</code> 与 <code>/ops/threads/:id</code> 获取。</p>
       </div>
 
       <section class="overview" id="overview"></section>
@@ -359,12 +396,14 @@ function buildOpsUiHtml(): string {
         <div class="panel">
           <header>
             <div>
-              <h2>最近任务</h2>
-              <div class="subtle" id="runs-meta">加载中...</div>
+              <h2>运行中 / 排队任务</h2>
+              <div class="subtle" id="runtime-meta">加载中...</div>
             </div>
             <button id="refresh" type="button">刷新</button>
           </header>
           <div class="panel-body">
+            <div class="runs" id="runtime"></div>
+            <div class="subtle" id="history-meta"></div>
             <div class="runs" id="runs"></div>
             <div class="sessions" id="sessions"></div>
           </div>
@@ -390,6 +429,7 @@ function buildOpsUiHtml(): string {
       function statusBadgeClass(status) {
         if (status === "error") return "badge error";
         if (status === "tool_active") return "badge tool_active";
+        if (status === "canceling") return "badge canceling";
         return "badge";
       }
 
@@ -411,13 +451,15 @@ function buildOpsUiHtml(): string {
       }
 
       async function refreshDashboard() {
-        const [overview, runs, sessions] = await Promise.all([
+        const [overview, runtime, runs, sessions] = await Promise.all([
           loadJson("/ops/overview"),
+          loadJson("/ops/runtime"),
           loadJson("/ops/runs?limit=50"),
           loadJson("/ops/sessions"),
         ]);
 
         renderOverview(overview);
+        renderRuntime(runtime);
         renderRuns(runs);
         renderSessions(sessions);
 
@@ -435,10 +477,15 @@ function buildOpsUiHtml(): string {
       function renderOverview(overview) {
         document.getElementById("overview").innerHTML = [
           ["活跃任务", overview.activeRuns],
+          ["排队任务", overview.queuedRuns],
+          ["取消中", overview.cancelingRuns],
           ["总任务数", overview.totalRuns],
           ["24h 完成", overview.completedRuns24h],
           ["24h 失败", overview.failedRuns24h],
+          ["最长活跃(ms)", overview.longestActiveMs],
+          ["最长排队(ms)", overview.longestQueuedMs],
           ["最近错误", overview.latestError || "无"],
+          ["最近取消", overview.latestCancel || "无"],
           ["最近更新", overview.updatedAt || "无"],
         ].map(([label, value]) => \`
           <article class="card">
@@ -448,9 +495,59 @@ function buildOpsUiHtml(): string {
         \`).join("");
       }
 
+      function renderRuntime(runtime) {
+        const activeMarkup = runtime.activeRuns.map(run => \`
+          <article class="run">
+            <div class="run-top">
+              <span class="\${statusBadgeClass(run.status)}">\${escapeHtml(run.status)} / \${escapeHtml(run.stage)}</span>
+              <div>
+                <div><strong>\${escapeHtml(run.peerId)}</strong> <span class="subtle">via</span> <code>\${escapeHtml(run.sessionName)}</code></div>
+                <div class="muted-line">project=\${escapeHtml(run.projectId || "-")} | thread=\${escapeHtml(run.threadId || "-")}</div>
+                <div class="muted-line">\${escapeHtml(run.latestPreview)}</div>
+              </div>
+            </div>
+            <div class="muted-line">run=\${escapeHtml(run.runId)} | elapsed=\${escapeHtml(run.elapsedMs)}ms | wait=\${escapeHtml(run.waitMs)}ms</div>
+            <div class="muted-line">
+              \${run.cancelable ? \`<button type="button" class="cancel-run" data-run-id="\${escapeHtml(run.runId)}">取消</button>\` : '<span class="subtle">不可取消</span>'}
+            </div>
+          </article>
+        \`).join("");
+        const queuedMarkup = runtime.queuedRuns.map(run => \`
+          <article class="run">
+            <div class="run-top">
+              <span class="\${statusBadgeClass(run.status)}">\${escapeHtml(run.status)} / \${escapeHtml(run.stage)}</span>
+              <div>
+                <div><strong>\${escapeHtml(run.peerId)}</strong> <span class="subtle">queued</span> <code>\${escapeHtml(run.sessionName)}</code></div>
+                <div class="muted-line">project=\${escapeHtml(run.projectId || "-")} | thread=\${escapeHtml(run.threadId || "-")}</div>
+                <div class="muted-line">\${escapeHtml(run.latestPreview)}</div>
+              </div>
+            </div>
+            <div class="muted-line">run=\${escapeHtml(run.runId)} | wait=\${escapeHtml(run.waitMs)}ms</div>
+            <div class="muted-line">
+              \${run.cancelable ? \`<button type="button" class="cancel-run" data-run-id="\${escapeHtml(run.runId)}">取消</button>\` : '<span class="subtle">不可取消</span>'}
+            </div>
+          </article>
+        \`).join("");
+
+        document.getElementById("runtime-meta").textContent =
+          "活跃 " + runtime.activeCount + " / 排队 " + runtime.queuedCount + " / 锁 " + runtime.locks.length;
+        document.getElementById("runtime").innerHTML =
+          '<h2>活跃任务</h2>' + (activeMarkup || '<p class="subtle">暂无活跃任务。</p>') +
+          '<h2>排队任务</h2>' + (queuedMarkup || '<p class="subtle">暂无排队任务。</p>');
+
+        for (const element of document.querySelectorAll(".cancel-run")) {
+          element.addEventListener("click", async event => {
+            event.stopPropagation();
+            const runId = element.getAttribute("data-run-id");
+            if (!runId) return;
+            await cancelRun(runId);
+          });
+        }
+      }
+
       function renderRuns(runs) {
-        document.getElementById("runs-meta").textContent = "共 " + runs.length + " 条，默认按活跃优先";
-        document.getElementById("runs").innerHTML = runs.map(run => \`
+        document.getElementById("history-meta").textContent = "历史任务共 " + runs.length + " 条，默认按活跃优先";
+        document.getElementById("runs").innerHTML = '<h2>历史任务</h2>' + runs.map(run => \`
           <article class="run \${state.selectedRunId === run.runId ? "active" : ""}" data-run-id="\${escapeHtml(run.runId)}">
             <div class="run-top">
               <span class="\${statusBadgeClass(run.status)}">\${escapeHtml(run.status)} / \${escapeHtml(run.stage)}</span>
@@ -492,6 +589,17 @@ function buildOpsUiHtml(): string {
         renderRunDetail(payload.run, payload.events);
       }
 
+      async function cancelRun(runId) {
+        const response = await fetch("/ops/runs/" + encodeURIComponent(runId) + "/cancel", {
+          method: "POST",
+          headers: { accept: "application/json" },
+        });
+        if (!response.ok) {
+          throw new Error("cancel failed: " + response.status);
+        }
+        await refreshDashboard();
+      }
+
       function renderRunDetail(run, events) {
         document.getElementById("detail-meta").textContent = run.runId + " | " + run.updatedAt;
         document.getElementById("detail").innerHTML = \`
@@ -505,6 +613,8 @@ function buildOpsUiHtml(): string {
             <div class="kv"><label>最近工具</label><div><code>\${escapeHtml(run.latestTool || "-")}</code></div></div>
             <div class="kv"><label>投递 Chat</label><div><code>\${escapeHtml(run.deliveryChatId || "-")}</code></div></div>
             <div class="kv"><label>投递 Surface</label><div><code>\${escapeHtml(run.deliverySurfaceType || "-")} / \${escapeHtml(run.deliverySurfaceRef || "-")}</code></div></div>
+            <div class="kv"><label>取消请求</label><div>\${escapeHtml(run.cancelRequestedAt || "-")}</div></div>
+            <div class="kv"><label>取消来源</label><div><code>\${escapeHtml(run.cancelRequestedBy || run.cancelSource || "-")}</code></div></div>
             <div class="kv"><label>结束时间</label><div>\${escapeHtml(run.finishedAt || "-")}</div></div>
           </div>
           <div class="kv" style="margin-bottom: 16px;">

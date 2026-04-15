@@ -228,6 +228,7 @@ export type BridgeInput =
 export type ProgressStatus =
   | "queued"
   | "preparing"
+  | "canceling"
   | "running"
   | "tool_active"
   | "waiting"
@@ -245,6 +246,7 @@ export type BridgeLifecycleStage =
 
 export type ProgressStage =
   | BridgeLifecycleStage
+  | "canceling"
   | "tool_call"
   | "text"
   | "waiting"
@@ -301,6 +303,9 @@ export interface ObservabilityRun {
   latestPreview: string;
   latestTool: string | null;
   errorText: string | null;
+  cancelRequestedAt: string | null;
+  cancelRequestedBy: string | null;
+  cancelSource: "feishu" | "ops" | null;
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -353,10 +358,15 @@ export interface ObservabilityRunEvent {
 
 export interface ObservabilityOverview {
   activeRuns: number;
+  queuedRuns: number;
+  cancelingRuns: number;
   totalRuns: number;
   completedRuns24h: number;
   failedRuns24h: number;
+  longestActiveMs: number;
+  longestQueuedMs: number;
   latestError: string | null;
+  latestCancel: string | null;
   updatedAt: string | null;
 }
 
@@ -374,7 +384,47 @@ export interface ListRunsFilters {
   status?: ProgressStatus;
   peerId?: string;
   sessionName?: string;
+  projectId?: string;
+  threadId?: string;
+  deliveryChatId?: string;
+  activeOnly?: boolean;
   limit?: number;
+}
+
+export interface RuntimeRunSnapshot {
+  runId: string;
+  concurrencyKey: string;
+  channel: string;
+  peerId: string;
+  projectId: string | null;
+  threadId: string | null;
+  deliveryChatId: string | null;
+  deliverySurfaceType: "thread" | null;
+  deliverySurfaceRef: string | null;
+  sessionName: string;
+  rootId: string;
+  status: ProgressStatus;
+  stage: ProgressStage;
+  latestPreview: string;
+  latestTool: string | null;
+  startedAt: string;
+  waitMs: number;
+  elapsedMs: number;
+  cancelable: boolean;
+}
+
+export interface ActiveRunSnapshot extends RuntimeRunSnapshot {}
+
+export interface QueueRunSnapshot extends RuntimeRunSnapshot {}
+
+export interface RuntimeSnapshot {
+  maxConcurrentRuns: number;
+  activeCount: number;
+  queuedCount: number;
+  cancelingCount: number;
+  locks: string[];
+  activeRuns: ActiveRunSnapshot[];
+  queuedRuns: QueueRunSnapshot[];
 }
 
 export type RunContext =

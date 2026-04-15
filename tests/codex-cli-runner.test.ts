@@ -121,6 +121,48 @@ describe("CodexCliRunner", () => {
     expect(execaMock).not.toHaveBeenCalled();
   });
 
+  it("cancels an active native run by killing the tracked child process", async () => {
+    let resolveChild: ((value: { exitCode: number | undefined; signal?: string }) => void) | undefined;
+    const child = Object.assign(
+      new Promise<{ exitCode: number | undefined; signal?: string }>(resolve => {
+        resolveChild = resolve;
+      }),
+      {
+        stdout: Readable.from([]),
+        kill: vi.fn(() => {
+          resolveChild?.({
+            exitCode: undefined,
+            signal: "SIGTERM",
+          });
+          return true;
+        }),
+      },
+    );
+    execaMock.mockReturnValue(child);
+
+    const runner = new CodexCliRunner("codex");
+    const runPromise = runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "test",
+    );
+
+    await Promise.resolve();
+    await runner.cancel({
+      targetKind: "codex_thread",
+      threadId: "thread-demo",
+      sessionName: "thread-demo",
+      cwd: "D:/repo",
+    });
+
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    await expect(runPromise).rejects.toThrow("RUN_CANCELED");
+  });
+
   it("resumes an existing native thread and preserves streamed text chunks", async () => {
     const child = createChunkedChildFromFixture(
       "resume-thread.jsonl",
