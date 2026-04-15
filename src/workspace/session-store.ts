@@ -853,6 +853,29 @@ export class SessionStore {
     });
   }
 
+  public recoverInterruptedRuns(input?: {
+    recoveredAt?: string;
+    errorText?: string;
+  }): number {
+    const recoveredAt = input?.recoveredAt ?? new Date().toISOString();
+    const errorText = input?.errorText ?? "[ca] run interrupted because the service restarted";
+    const result = this.db.prepare(`
+      UPDATE observability_runs
+      SET
+        status = 'error',
+        stage = 'error',
+        latest_preview = @errorText,
+        error_text = @errorText,
+        finished_at = COALESCE(finished_at, @recoveredAt)
+      WHERE status NOT IN ('done', 'error', 'canceled')
+    `).run({
+      recoveredAt,
+      errorText,
+    });
+
+    return result.changes;
+  }
+
   public getOverview(): ObservabilityOverview {
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const row = this.db.prepare(`
@@ -985,8 +1008,8 @@ export class SessionStore {
       FROM observability_runs
       ${whereClause}
       ORDER BY
-        CASE WHEN status IN ('done', 'error', 'canceled') THEN 1 ELSE 0 END,
-        updated_at DESC
+        updated_at DESC,
+        run_id DESC
       LIMIT @limit
     `).all(params) as RunRow[];
 

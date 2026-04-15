@@ -57,6 +57,7 @@ export class CodexCliRunner {
     },
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome & { threadId: string }> {
+    await this.ensureCreateThreadWorkspace(input.cwd);
     const outcome = await this.runCodexExec(
       withCodexImages(["exec", "--json", "-"], input.images),
       input.cwd,
@@ -164,7 +165,7 @@ export class CodexCliRunner {
         throw new RunCanceledError();
       }
       if (result.exitCode !== 0 && !events.some(event => event.type === "error")) {
-        throw new Error("RUN_STREAM_FAILED");
+        throw new Error(extractCodexExecFailure(result.stderr) ?? "RUN_STREAM_FAILED");
       }
 
       return {
@@ -177,6 +178,22 @@ export class CodexCliRunner {
         this.activeExecutions.delete(executionKey);
       }
     }
+  }
+
+  private async ensureCreateThreadWorkspace(cwd: string): Promise<void> {
+    const result = await execa("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      reject: false,
+    });
+
+    if (result.exitCode === 0) {
+      return;
+    }
+
+    const detail = extractGitRepositoryError(result.stderr);
+    throw new Error(detail
+      ? `当前路径不是 Git 仓库：${cwd}。${detail}`
+      : `当前路径不是 Git 仓库：${cwd}。请先切到一个 Codex 项目目录，再新建会话。`);
   }
 }
 
@@ -495,4 +512,30 @@ async function onRunnerEvent(
   }
 
   await onEvent(event);
+}
+
+function extractCodexExecFailure(stderr: unknown): string | undefined {
+  if (typeof stderr !== "string") {
+    return undefined;
+  }
+
+  const normalized = stderr
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line.length > 0);
+
+  return normalized[0];
+}
+
+function extractGitRepositoryError(stderr: unknown): string | undefined {
+  const message = extractCodexExecFailure(stderr);
+  if (!message) {
+    return undefined;
+  }
+
+  if (message.includes("not a git repository")) {
+    return "请先切到一个 Codex 项目目录，再新建会话。";
+  }
+
+  return message;
 }

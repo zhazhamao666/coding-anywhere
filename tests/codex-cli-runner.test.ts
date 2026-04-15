@@ -45,8 +45,13 @@ describe("CodexCliRunner", () => {
   });
 
   it("creates a native thread through codex exec and returns the thread id", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
     const child = createChildFromFixture("create-thread.jsonl", 0);
-    execaMock.mockReturnValue(child);
+    execaMock.mockReturnValueOnce(child);
 
     const runner = new CodexCliRunner("codex");
     const seenEvents: unknown[] = [];
@@ -61,7 +66,17 @@ describe("CodexCliRunner", () => {
       },
     );
 
-    expect(execaMock).toHaveBeenCalledWith(
+    expect(execaMock).toHaveBeenNthCalledWith(
+      1,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      {
+        cwd: "D:/repo",
+        reject: false,
+      },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      2,
       "codex",
       ["exec", "--json", "-"],
       {
@@ -83,8 +98,13 @@ describe("CodexCliRunner", () => {
   });
 
   it("forwards staged images to codex exec when creating a native thread", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
     const child = createChildFromFixture("create-thread.jsonl", 0);
-    execaMock.mockReturnValue(child);
+    execaMock.mockReturnValueOnce(child);
 
     const runner = new CodexCliRunner("codex");
 
@@ -97,7 +117,17 @@ describe("CodexCliRunner", () => {
       ],
     });
 
-    expect(execaMock).toHaveBeenCalledWith(
+    expect(execaMock).toHaveBeenNthCalledWith(
+      1,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      {
+        cwd: "D:/repo",
+        reject: false,
+      },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      2,
       "codex",
       ["exec", "--json", "-i", "D:/assets/one.png", "-i", "D:/assets/two.png", "-"],
       {
@@ -106,6 +136,23 @@ describe("CodexCliRunner", () => {
         reject: false,
       },
     );
+  });
+
+  it("fails createThread early with a readable error when cwd is not a git repository", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 128,
+      stdout: "",
+      stderr: "fatal: not a git repository (or any of the parent directories): .git",
+    });
+
+    const runner = new CodexCliRunner("codex");
+
+    await expect(runner.createThread({
+      cwd: "D:/not-a-repo",
+      prompt: "Initialize a bridge thread.",
+    })).rejects.toThrow("当前路径不是 Git 仓库");
+
+    expect(execaMock).toHaveBeenCalledTimes(1);
   });
 
   it("treats close as a no-op for native-only execution", async () => {
@@ -295,6 +342,31 @@ describe("CodexCliRunner", () => {
       { type: "error", content: "npm ERR! Test failed" },
       { type: "done", content: undefined },
     ]);
+  });
+
+  it("surfaces stderr when codex exits non-zero without a structured error event", async () => {
+    const child = Object.assign(
+      Promise.resolve({
+        exitCode: 1,
+        stderr: "fatal: model profile missing",
+      }),
+      {
+        stdout: Readable.from([]),
+      },
+    );
+    execaMock.mockReturnValue(child);
+
+    const runner = new CodexCliRunner("codex");
+
+    await expect(runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "test",
+    )).rejects.toThrow("fatal: model profile missing");
   });
 
   it("surfaces native plan-mode todo items as waiting progress and still completes", async () => {

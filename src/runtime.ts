@@ -45,6 +45,7 @@ export async function createRuntime(
   const store = new SessionStore(config.storage.sqlitePath);
   store.upsertRoot(config.root);
   store.purgeOldObservabilityEvents();
+  store.recoverInterruptedRuns();
 
   const resolvedCodexCommand =
     resolveExecutable(config.codex.command, { cwd: process.cwd() }) ?? config.codex.command;

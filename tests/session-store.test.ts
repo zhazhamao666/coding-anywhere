@@ -318,6 +318,98 @@ describe("SessionStore", () => {
     ]);
   });
 
+  it("recovers non-terminal runs into a stable terminal state without reordering history", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    const observabilityStore = store as any;
+    observabilityStore.createRun({
+      runId: "run-stale",
+      channel: "feishu",
+      peerId: "ou_demo",
+      sessionName: "codex-main",
+      rootId: "main",
+      status: "running",
+      stage: "text",
+      latestPreview: "still working",
+      startedAt: "2026-04-15T09:00:00.000Z",
+      updatedAt: "2026-04-15T09:10:00.000Z",
+    });
+    observabilityStore.createRun({
+      runId: "run-fresh",
+      channel: "feishu",
+      peerId: "ou_demo",
+      sessionName: "codex-main",
+      rootId: "main",
+      status: "done",
+      stage: "done",
+      latestPreview: "finished",
+      startedAt: "2026-04-15T09:30:00.000Z",
+      updatedAt: "2026-04-15T09:40:00.000Z",
+    });
+
+    expect(observabilityStore.recoverInterruptedRuns({
+      recoveredAt: "2026-04-15T10:00:00.000Z",
+    })).toBe(1);
+
+    expect(observabilityStore.getRun("run-stale")).toMatchObject({
+      runId: "run-stale",
+      status: "error",
+      stage: "error",
+      latestPreview: "[ca] run interrupted because the service restarted",
+      errorText: "[ca] run interrupted because the service restarted",
+      updatedAt: "2026-04-15T09:10:00.000Z",
+      finishedAt: "2026-04-15T10:00:00.000Z",
+    });
+    expect(observabilityStore.listRuns({ limit: 10 })).toEqual([
+      expect.objectContaining({
+        runId: "run-fresh",
+      }),
+      expect.objectContaining({
+        runId: "run-stale",
+        status: "error",
+      }),
+    ]);
+  });
+
+  it("lists historical runs by recency instead of pinning non-terminal runs first", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    const observabilityStore = store as any;
+    observabilityStore.createRun({
+      runId: "run-old-live",
+      channel: "feishu",
+      peerId: "ou_demo",
+      sessionName: "codex-main",
+      rootId: "main",
+      status: "running",
+      stage: "text",
+      latestPreview: "still working",
+      startedAt: "2026-04-15T09:00:00.000Z",
+      updatedAt: "2026-04-15T09:10:00.000Z",
+    });
+    observabilityStore.createRun({
+      runId: "run-newer-done",
+      channel: "feishu",
+      peerId: "ou_demo",
+      sessionName: "codex-main",
+      rootId: "main",
+      status: "done",
+      stage: "done",
+      latestPreview: "finished",
+      startedAt: "2026-04-15T09:30:00.000Z",
+      updatedAt: "2026-04-15T09:40:00.000Z",
+    });
+
+    expect(observabilityStore.listRuns({ limit: 10 })).toEqual([
+      expect.objectContaining({
+        runId: "run-newer-done",
+      }),
+      expect.objectContaining({
+        runId: "run-old-live",
+      }),
+    ]);
+  });
+
   it("persists and resolves pending bridge-managed plan interactions per surface", () => {
     store = new SessionStore(path.join(rootDir, "bridge.db"));
 

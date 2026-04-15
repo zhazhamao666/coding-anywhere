@@ -179,6 +179,98 @@ describe("createRuntime", () => {
     }
   });
 
+  it("recovers lingering non-terminal runs when the runtime boots", async () => {
+    const sqlitePath = path.join(rootDir, "runtime-recovery.db");
+    const seedStore = (await import("../src/workspace/session-store.js")).SessionStore;
+    const seeded = new seedStore(sqlitePath);
+    seeded.createRun({
+      runId: "run-stale",
+      channel: "feishu",
+      peerId: "ou_demo",
+      sessionName: "codex-main",
+      rootId: "main",
+      status: "running",
+      stage: "text",
+      latestPreview: "still working",
+      startedAt: "2026-04-15T09:00:00.000Z",
+      updatedAt: "2026-04-15T09:10:00.000Z",
+    });
+    seeded.close();
+
+    const config: BridgeConfig = {
+      server: { port: 3000, host: "127.0.0.1" },
+      storage: {
+        sqlitePath,
+        logDir: path.join(rootDir, "logs"),
+      },
+      codex: {
+        command: "codex",
+      },
+      scheduler: {
+        maxConcurrentRuns: 2,
+      },
+      feishu: {
+        appId: "cli_xxx",
+        appSecret: "secret",
+        websocketUrl: "wss://example.invalid/ws",
+        apiBaseUrl: "https://open.feishu.cn/open-apis",
+        allowlist: ["ou_demo"],
+        requireGroupMention: false,
+        encryptKey: "",
+        reconnectCount: -1,
+        reconnectIntervalSeconds: 120,
+        reconnectNonceSeconds: 30,
+      },
+      root: {
+        id: "main",
+        name: "Main Root",
+        cwd: "D:/repos",
+        repoRoot: "D:/repos",
+        branchPolicy: "reuse",
+        permissionMode: "workspace-write",
+        envAllowlist: ["PATH"],
+        idleTtlHours: 24,
+      },
+    };
+
+    const runtime = await createRuntime(config, {
+      createApiClient: (): FeishuApiClientLike => ({
+        sendTextMessage: vi.fn(async () => "msg-1"),
+        sendTextMessageToChat: vi.fn(async () => ({ messageId: "msg-chat-1", threadId: "omt-1" })),
+        replyTextMessage: vi.fn(async () => "msg-reply-1"),
+        updateTextMessage: vi.fn(async () => undefined),
+        sendInteractiveCard: vi.fn(async () => "msg-card-1"),
+        replyInteractiveCard: vi.fn(async () => "msg-reply-card-1"),
+        updateInteractiveCard: vi.fn(async () => undefined),
+        createCardEntity: vi.fn(async () => "card-1"),
+        sendCardKitMessage: vi.fn(async () => "msg-cardkit-1"),
+        streamCardElement: vi.fn(async () => undefined),
+        setCardStreamingMode: vi.fn(async () => undefined),
+        updateCardKitCard: vi.fn(async () => undefined),
+      }),
+      createWsClient: () => ({
+        start: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+      }),
+    });
+
+    try {
+      expect((runtime.store as any).getRun("run-stale")).toMatchObject({
+        runId: "run-stale",
+        status: "error",
+        stage: "error",
+        latestPreview: "[ca] run interrupted because the service restarted",
+        updatedAt: "2026-04-15T09:10:00.000Z",
+        finishedAt: expect.any(String),
+      });
+      expect((runtime.store as any).getOverview()).toMatchObject({
+        activeRuns: 0,
+      });
+    } finally {
+      runtime.store.close();
+    }
+  });
+
   it("injects the api client into the card action service so async card commands can patch results", async () => {
     const config: BridgeConfig = {
       server: { port: 3000, host: "127.0.0.1" },
