@@ -31,6 +31,24 @@ describe("feishu card builder", () => {
     expect(JSON.stringify(card)).toContain("main");
   });
 
+  it("adds a stop button to non-terminal streaming cards with the current surface context", () => {
+    const card = buildBridgeCard(createState({
+      status: "running",
+      stage: "text",
+      preview: "我先继续整理当前待办。",
+      deliveryChatId: "oc_chat_current",
+      deliverySurfaceType: "thread",
+      deliverySurfaceRef: "omt_current",
+    }));
+
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain("停止任务");
+    expect(serialized).toContain("\"command\":\"/ca stop\"");
+    expect(serialized).toContain("\"chatId\":\"oc_chat_current\"");
+    expect(serialized).toContain("\"surfaceType\":\"thread\"");
+    expect(serialized).toContain("\"surfaceRef\":\"omt_current\"");
+  });
+
   it("builds a streaming shell card with the CardKit streaming element id", () => {
     const card = buildStreamingShellCard("思考中");
     const serialized = JSON.stringify(card);

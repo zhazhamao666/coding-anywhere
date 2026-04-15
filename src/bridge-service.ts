@@ -601,9 +601,7 @@ export class BridgeService {
         return this.handleHubCommand(input);
       case "status": {
         const resolved = this.tryResolveContext(input);
-        const currentRun = resolved
-          ? this.dependencies.workerManager?.getCurrentRun(resolved.concurrencyKey)
-          : undefined;
+        const currentRun = this.findCurrentRunForResolved(resolved);
         return [this.buildRunStatusCardReply(input, resolved, currentRun)];
       }
       case "new": {
@@ -641,7 +639,7 @@ export class BridgeService {
           return [{ kind: "system", text: "[ca] current run not found" }];
         }
 
-        const currentRun = this.dependencies.workerManager.getCurrentRun(resolved.concurrencyKey);
+        const currentRun = this.findCurrentRunForResolved(resolved);
         if (!currentRun) {
           return [{ kind: "system", text: "[ca] current run not found" }];
         }
@@ -735,10 +733,18 @@ export class BridgeService {
         throw new Error("PROJECT_NOT_REGISTERED");
       }
 
-      summaryLines.push(`**当前项目**：${project.projectId}`);
+      const currentRun = this.findCurrentRunByThreadId(thread.threadId);
+
+      summaryLines.push(`**当前项目**：${project.name}`);
       summaryLines.push(`**当前线程**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`);
-      summaryLines.push(`**Session**：${thread.sessionName}`);
+      summaryLines.push(`线程 ID：${thread.threadId}`);
       summaryLines.push(`**线程状态**：${thread.status ?? "provisioned"}`);
+      if (currentRun) {
+        sections.push({
+          title: "当前运行",
+          items: this.buildCurrentRunItems(currentRun),
+        });
+      }
       const siblingThreads = this.dependencies.store.listProjectThreads(project.projectId).slice(0, 5);
       if (siblingThreads.length > 0) {
         sections.push({
@@ -769,16 +775,12 @@ export class BridgeService {
             label: "运行状态",
             value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
           },
-        {
-          label: "新会话",
-          value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
-        },
-        {
-          label: "停止任务",
-          type: "danger",
-          value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} stop`),
-        },
-      );
+          {
+            label: "新会话",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
+          },
+        );
+      this.maybePushStopAction(actions, actionContext, currentRun);
     } else if (input.chatId) {
       const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
 
@@ -830,6 +832,7 @@ export class BridgeService {
       const codexSelection = this.lookupDmCodexSelection(input);
 
       if (codexSelection) {
+        const currentRun = this.findCurrentRunByThreadId(codexSelection.thread.threadId, `codex-thread:${codexSelection.thread.threadId}`);
         summaryLines.push(`**当前项目**：${codexSelection.project.displayName}`);
         summaryLines.push(`**项目路径**：${codexSelection.project.cwd}`);
         summaryLines.push(
@@ -838,45 +841,60 @@ export class BridgeService {
             codexSelection.thread.threadId,
           )}`,
         );
-        summaryLines.push(`**Session**：${codexSelection.thread.threadId}`);
-          actions.push(
-            {
-              label: "项目列表",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
-            },
-            {
-              label: "当前项目",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
-            },
-            {
-              label: "线程列表",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-            },
-            {
-              label: "计划模式",
-              value: this.buildPlanActionValue(actionContext),
-            },
-            {
-              label: "当前会话",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
-            },
-            {
-              label: "运行状态",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
-            },
+        summaryLines.push(`线程 ID：${codexSelection.thread.threadId}`);
+        if (currentRun) {
+          sections.push({
+            title: "当前运行",
+            items: this.buildCurrentRunItems(currentRun),
+          });
+        }
+        actions.push(
+          {
+            label: "项目列表",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
+          },
+          {
+            label: "当前项目",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
+          },
+          {
+            label: "线程列表",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+          {
+            label: "计划模式",
+            value: this.buildPlanActionValue(actionContext),
+          },
+          {
+            label: "当前会话",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
+          },
+          {
+            label: "运行状态",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
+          },
           {
             label: "新会话",
             value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
           },
-          {
-            label: "停止任务",
-            type: "danger",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} stop`),
-          },
         );
+        this.maybePushStopAction(actions, actionContext, currentRun);
       } else {
-        const binding = this.dependencies.store.getBinding(input.channel, input.peerId);
-        summaryLines.push(`**当前会话**：${binding?.sessionName ?? buildSessionName(root.id)}`);
+        const resolved = this.tryResolveContext(input);
+        const currentRun = this.findCurrentRunForResolved(resolved);
+        const selectedProject = this.lookupDmSelectedProject(input);
+
+        summaryLines.push(`**当前上下文**：${selectedProject ? "已选择项目，未绑定线程" : "未选择项目和线程"}`);
+        if (selectedProject) {
+          summaryLines.push(`**已选项目**：${selectedProject.displayName}`);
+          summaryLines.push(`**项目路径**：${selectedProject.cwd}`);
+        }
+        if (currentRun) {
+          sections.push({
+            title: "当前运行",
+            items: this.buildCurrentRunItems(currentRun),
+          });
+        }
         const catalogProjects = this.dependencies.codexCatalog?.listProjects().slice(0, 8) ?? [];
         if (catalogProjects.length > 0) {
           sections.push({
@@ -914,15 +932,11 @@ export class BridgeService {
               value: this.buildPlanActionValue(actionContext),
             },
             {
-              label: "停止任务",
-              type: "danger",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} stop`),
-            },
-            {
               label: "项目列表",
               value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
             },
         );
+        this.maybePushStopAction(actions, actionContext, currentRun);
       }
     }
 
@@ -1453,6 +1467,10 @@ export class BridgeService {
             label: "线程列表",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
+          {
+            label: "新会话",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
+          },
         ],
       }),
     };
@@ -1714,10 +1732,9 @@ export class BridgeService {
         title: "线程已创建",
         summaryLines: [
           "**视图**：线程已创建",
-          `**项目**：${input.projectId}`,
-          `**线程**：${input.threadId}`,
-          `**标题**：${input.title}`,
-          `**Session**：${input.sessionName}`,
+          `**当前项目**：${input.projectId}`,
+          `**当前线程**：${formatCurrentThreadLabel(input.title, input.threadId)}`,
+          `线程 ID：${input.threadId}`,
           `**群聊**：${input.chatId}`,
           `**状态**：${input.status ?? "provisioned"}`,
         ],
@@ -1740,6 +1757,10 @@ export class BridgeService {
           {
             label: "线程列表",
             value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+          {
+            label: "新会话",
+            value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} new`),
           },
         ],
       }),
@@ -1801,6 +1822,10 @@ export class BridgeService {
             label: "项目列表",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project list`),
           },
+          {
+            label: "新会话",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
+          },
         ],
       }),
     };
@@ -1852,6 +1877,10 @@ export class BridgeService {
           {
             label: "项目列表",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project list`),
+          },
+          {
+            label: "新会话",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
           },
         ],
       }),
@@ -1935,11 +1964,6 @@ export class BridgeService {
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} status`),
           },
           {
-            label: "停止任务",
-            type: "danger",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} stop`),
-          },
-          {
             label: "新会话",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
           },
@@ -1955,12 +1979,13 @@ export class BridgeService {
   ): BridgeReply {
     const nextStepItems = currentThread
       ? [
-          `已记录项目切换：${project.displayName}`,
-          `当前仍绑定线程：${formatCurrentThreadLabel(currentThread.title, currentThread.threadId)}`,
-          "下一条普通消息仍会进入当前线程；如需在新项目下开始，请点击“新会话”或先切换线程。",
+          `当前项目：${project.displayName}`,
+          `当前线程：${formatCurrentThreadLabel(currentThread.title, currentThread.threadId)}`,
+          `线程 ID：${currentThread.threadId}`,
+          "下一条普通消息仍会进入当前线程；要在这个项目里开始新上下文，请点击“新会话”或先切换线程。",
         ]
       : [
-          `已记录项目切换：${project.displayName}`,
+          `当前项目：${project.displayName}`,
           "下一条普通消息会在该项目下创建新会话。",
         ];
 
@@ -2004,9 +2029,55 @@ export class BridgeService {
     thread: CodexCatalogThread,
     recentConversation: CodexCatalogConversationItem[],
   ): BridgeReply {
+    const currentRun = this.findCurrentRunByThreadId(thread.threadId, `codex-thread:${thread.threadId}`);
+    const actionContext = this.buildCardActionContext(input);
     const conversationItems = recentConversation.length > 0
       ? recentConversation.map(item => `${item.role === "user" ? "用户" : "助手"}：${item.text}`)
       : ["暂未读取到可展示的最近对话。"];
+
+    const sections: Array<{
+      title: string;
+      items: string[];
+      monospace?: boolean;
+    }> = [];
+    if (currentRun) {
+      sections.push({
+        title: "当前运行",
+        items: this.buildCurrentRunItems(currentRun),
+      });
+    }
+    sections.push({
+      title: "最近对话",
+      items: conversationItems,
+    });
+    const actions: Array<{
+      label: string;
+      value: Record<string, unknown>;
+      type?: "default" | "primary" | "danger";
+    }> = [
+      {
+        label: "导航",
+        type: "primary",
+        value: this.buildCardActionValue(actionContext, BRIDGE_COMMAND_PREFIX),
+      },
+      {
+        label: "当前项目",
+        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
+      },
+      {
+        label: "线程列表",
+        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+      },
+      {
+        label: "运行状态",
+        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
+      },
+      {
+        label: "新会话",
+        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
+      },
+    ];
+    this.maybePushStopAction(actions, actionContext, currentRun);
 
     return {
       kind: "card",
@@ -2014,37 +2085,14 @@ export class BridgeService {
         title: "当前会话",
         summaryLines: [
           "**视图**：当前会话",
-          `**项目**：${project.displayName}`,
+          `**当前项目**：${project.displayName}`,
           `**路径**：${project.cwd}`,
-          `**线程**：${thread.threadId}`,
-          `**标题**：${thread.title}`,
-          `**Session**：${thread.threadId}`,
+          `**当前线程**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`,
+          `线程 ID：${thread.threadId}`,
+          `**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`,
         ],
-        sections: [
-          {
-            title: "最近对话",
-            items: conversationItems,
-          },
-        ],
-        actions: [
-          {
-            label: "导航",
-            type: "primary",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
-          },
-          {
-            label: "当前项目",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
-          },
-          {
-            label: "线程列表",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-          },
-          {
-            label: "新会话",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
-          },
-        ],
+        sections,
+        actions,
       }),
     };
   }
@@ -2053,30 +2101,46 @@ export class BridgeService {
     input: BridgeMessageInput,
     resolved: ResolvedContext,
   ): BridgeReply {
-    const currentRun = this.dependencies.workerManager?.getCurrentRun(resolved.concurrencyKey);
+    const currentRun = this.findCurrentRunForResolved(resolved);
     const contextItems = this.buildContextSummaryItems(input, resolved, currentRun);
+    const actionContext = this.buildCardActionContext(input);
+    const summaryLines = [
+      "**视图**：当前会话",
+      `**Root**：${resolved.root.id}`,
+      `**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`,
+    ];
+    summaryLines.push(...this.buildContextSummaryLines(input, resolved, currentRun));
+    const actions: Array<{
+      label: string;
+      value: Record<string, unknown>;
+      type?: "default" | "primary" | "danger";
+    }> = [
+      {
+        label: "导航",
+        type: "primary",
+        value: this.buildCardActionValue(actionContext, BRIDGE_COMMAND_PREFIX),
+      },
+      {
+        label: "运行状态",
+        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
+      },
+      {
+        label: "新会话",
+        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
+      },
+    ];
+    this.maybePushStopAction(actions, actionContext, currentRun);
 
     return {
       kind: "card",
       card: buildBridgeHubCard({
         title: "当前会话",
-        summaryLines: [
-          "**视图**：当前会话",
-          `**Root**：${resolved.root.id}`,
-          `**Session**：${currentRun?.sessionName ?? resolved.sessionName}`,
-          `**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`,
-        ],
+        summaryLines,
         sections: [
           currentRun
             ? {
                 title: "当前运行",
-                items: [
-                  `runId：${currentRun.runId}`,
-                  `状态：${formatRuntimeStatusLabel(currentRun.status)} / ${formatRuntimeStageLabel(currentRun.stage)}`,
-                  `已运行：${formatRuntimeDuration(currentRun.elapsedMs)}`,
-                  `最近工具：${currentRun.latestTool ?? "无"}`,
-                  `摘要：${currentRun.latestPreview}`,
-                ],
+                items: this.buildCurrentRunItems(currentRun),
               }
             : {
                 title: "当前会话",
@@ -2087,26 +2151,7 @@ export class BridgeService {
             items: contextItems.length > 0 ? contextItems : ["当前上下文暂不可用。"],
           },
         ],
-        actions: [
-          {
-            label: "导航",
-            type: "primary",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
-          },
-          {
-            label: "运行状态",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} status`),
-          },
-          {
-            label: "停止任务",
-            type: "danger",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} stop`),
-          },
-          {
-            label: "新会话",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
-          },
-        ],
+        actions,
       }),
     };
   }
@@ -2116,12 +2161,13 @@ export class BridgeService {
     resolved?: ResolvedContext,
     currentRun?: RuntimeRunSnapshot,
   ): BridgeReply {
+    const actionContext = this.buildCardActionContext(input);
     const summaryLines = ["**视图**：运行状态"];
     if (resolved?.root.id) {
       summaryLines.push(`**Root**：${resolved.root.id}`);
     }
-    if (currentRun?.sessionName ?? resolved?.sessionName) {
-      summaryLines.push(`**Session**：${currentRun?.sessionName ?? resolved?.sessionName}`);
+    if (resolved) {
+      summaryLines.push(...this.buildContextSummaryLines(input, resolved, currentRun));
     }
     summaryLines.push(`**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`);
 
@@ -2136,14 +2182,7 @@ export class BridgeService {
       currentRun
         ? {
             title: "当前运行",
-            items: [
-              `runId：${currentRun.runId}`,
-              `状态：${formatRuntimeStatusLabel(currentRun.status)} / ${formatRuntimeStageLabel(currentRun.stage)}`,
-              `已运行：${formatRuntimeDuration(currentRun.elapsedMs)}`,
-              `等待：${formatRuntimeDuration(currentRun.waitMs)}`,
-              `最近工具：${currentRun.latestTool ?? "无"}`,
-              `摘要：${currentRun.latestPreview}`,
-            ],
+            items: this.buildCurrentRunItems(currentRun, true),
           }
         : {
             title: "当前没有运行中的任务",
@@ -2157,6 +2196,22 @@ export class BridgeService {
         items: contextItems,
       });
     }
+    const actions: Array<{
+      label: string;
+      value: Record<string, unknown>;
+      type?: "default" | "primary" | "danger";
+    }> = [
+      {
+        label: "导航",
+        type: "primary",
+        value: this.buildCardActionValue(actionContext, BRIDGE_COMMAND_PREFIX),
+      },
+      {
+        label: "当前会话",
+        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
+      },
+    ];
+    this.maybePushStopAction(actions, actionContext, currentRun);
 
     return {
       kind: "card",
@@ -2164,22 +2219,7 @@ export class BridgeService {
         title: "运行状态",
         summaryLines,
         sections,
-        actions: [
-          {
-            label: "导航",
-            type: "primary",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
-          },
-          {
-            label: "当前会话",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} session`),
-          },
-          {
-            label: "停止任务",
-            type: "danger",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} stop`),
-          },
-        ],
+        actions,
       }),
     };
   }
@@ -2189,38 +2229,27 @@ export class BridgeService {
     resolved: ResolvedContext,
     currentRun?: RuntimeRunSnapshot,
   ): string[] {
+    const context = this.resolveReadableContext(input, resolved, currentRun);
     const items: string[] = [];
-    if (this.isDmContext(input)) {
-      const codexSelection = this.lookupDmCodexSelection(input);
-      if (codexSelection) {
-        items.push(`项目：${codexSelection.project.displayName}`);
-        items.push(`线程：${formatCurrentThreadLabel(codexSelection.thread.title, codexSelection.thread.threadId)}`);
-      } else {
-        const selectedProject = this.lookupDmSelectedProject(input);
-        if (selectedProject) {
-          items.push(`项目：${selectedProject.displayName}`);
-          items.push("线程：未选择");
-        }
-      }
-    } else if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
-      const thread = this.dependencies.store.getCodexThreadBySurface(input.chatId, input.surfaceRef);
-      if (thread) {
-        const project = this.dependencies.store.getProject(thread.projectId);
-        items.push(`项目：${project?.name ?? thread.projectId}`);
-        items.push(`线程：${formatCurrentThreadLabel(thread.title, thread.threadId)}`);
-      }
-    } else if (input.chatId) {
-      const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
-      if (projectChat) {
-        const project = this.dependencies.store.getProject(projectChat.projectId);
-        items.push(`项目：${project?.name ?? projectChat.projectId}`);
-      }
+    if (context.projectLabel) {
+      items.push(`当前项目：${context.projectLabel}`);
     }
-
-    const deliveryChatId = currentRun?.deliveryChatId ?? resolved.deliveryChatId;
-    const deliverySurfaceRef = currentRun?.deliverySurfaceRef ?? resolved.deliverySurfaceRef;
-    if (deliveryChatId || deliverySurfaceRef) {
-      items.push(`投递：chat=${deliveryChatId ?? "-"} · surface=${deliverySurfaceRef ?? "-"}`);
+    if (context.threadLabel) {
+      items.push(`当前线程：${context.threadLabel}`);
+    } else if (this.isDmContext(input)) {
+      items.push("当前线程：未选择");
+    }
+    if (context.threadId) {
+      items.push(`线程 ID：${context.threadId}`);
+    }
+    if (context.deliveryLabel) {
+      items.push(`投递位置：${context.deliveryLabel}`);
+    }
+    if (context.deliveryChatId) {
+      items.push(`群聊 ID：${context.deliveryChatId}`);
+    }
+    if (context.deliverySurfaceRef) {
+      items.push(`话题 ID：${context.deliverySurfaceRef}`);
     }
 
     return items;
@@ -2242,11 +2271,10 @@ export class BridgeService {
         title: "线程已切换",
         summaryLines: [
           "**视图**：线程已切换",
-          `**项目**：${project.displayName}`,
+          `**当前项目**：${project.displayName}`,
           `**路径**：${project.cwd}`,
-          `**线程**：${thread.threadId}`,
-          `**标题**：${thread.title}`,
-          `**Session**：${thread.threadId}`,
+          `**当前线程**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`,
+          `线程 ID：${thread.threadId}`,
         ],
         sections: [
           {
@@ -2318,6 +2346,184 @@ export class BridgeService {
           },
         ],
       }),
+    };
+  }
+
+  private findCurrentRunForResolved(resolved?: ResolvedContext): RuntimeRunSnapshot | undefined {
+    if (!resolved) {
+      return undefined;
+    }
+
+    return this.findCurrentRunByCandidates(
+      resolved.concurrencyKey,
+      resolved.threadId,
+      resolved.threadId ? `codex-thread:${resolved.threadId}` : undefined,
+    );
+  }
+
+  private findCurrentRunByThreadId(
+    threadId?: string | null,
+    concurrencyKey?: string,
+  ): RuntimeRunSnapshot | undefined {
+    if (!threadId && !concurrencyKey) {
+      return undefined;
+    }
+
+    return this.findCurrentRunByCandidates(
+      concurrencyKey,
+      threadId,
+      threadId ? `codex-thread:${threadId}` : undefined,
+    );
+  }
+
+  private findCurrentRunByCandidates(
+    ...candidates: Array<string | null | undefined>
+  ): RuntimeRunSnapshot | undefined {
+    if (!this.dependencies.workerManager) {
+      return undefined;
+    }
+
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      const normalized = candidate?.trim();
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      const run = this.dependencies.workerManager.getCurrentRun(normalized);
+      if (run) {
+        return run;
+      }
+    }
+
+    return undefined;
+  }
+
+  private buildCurrentRunItems(
+    currentRun: RuntimeRunSnapshot,
+    includeWait = false,
+  ): string[] {
+    const items = [
+      `runId：${currentRun.runId}`,
+      `状态：${formatRuntimeStatusLabel(currentRun.status)} / ${formatRuntimeStageLabel(currentRun.stage)}`,
+      `已运行：${formatRuntimeDuration(currentRun.elapsedMs)}`,
+    ];
+
+    if (includeWait) {
+      items.push(`等待：${formatRuntimeDuration(currentRun.waitMs)}`);
+    }
+
+    items.push(`最近工具：${currentRun.latestTool ?? "无"}`);
+    items.push(`摘要：${currentRun.latestPreview}`);
+    return items;
+  }
+
+  private maybePushStopAction(
+    actions: Array<{
+      label: string;
+      value: Record<string, unknown>;
+      type?: "default" | "primary" | "danger";
+    }>,
+    context: {
+      chatId?: string;
+      surfaceType?: "thread";
+      surfaceRef?: string;
+    },
+    currentRun?: RuntimeRunSnapshot,
+  ): void {
+    if (!currentRun) {
+      return;
+    }
+
+    actions.push({
+      label: "停止任务",
+      type: "danger",
+      value: this.buildCardActionValue(context, `${BRIDGE_COMMAND_PREFIX} stop`),
+    });
+  }
+
+  private buildContextSummaryLines(
+    input: BridgeMessageInput,
+    resolved: ResolvedContext,
+    currentRun?: RuntimeRunSnapshot,
+  ): string[] {
+    const context = this.resolveReadableContext(input, resolved, currentRun);
+    const lines: string[] = [];
+
+    if (context.projectLabel) {
+      lines.push(`**当前项目**：${context.projectLabel}`);
+    }
+    if (context.threadLabel) {
+      lines.push(`**当前线程**：${context.threadLabel}`);
+    } else if (this.isDmContext(input)) {
+      lines.push("**当前线程**：未选择");
+    }
+    if (context.threadId) {
+      lines.push(`线程 ID：${context.threadId}`);
+    }
+
+    return lines;
+  }
+
+  private resolveReadableContext(
+    input: BridgeMessageInput,
+    resolved?: ResolvedContext,
+    currentRun?: RuntimeRunSnapshot,
+  ): {
+    projectLabel?: string;
+    threadLabel?: string;
+    threadId?: string | null;
+    deliveryLabel?: string;
+    deliveryChatId?: string | null;
+    deliverySurfaceRef?: string | null;
+  } {
+    let projectLabel: string | undefined;
+    let threadLabel: string | undefined;
+    let threadId: string | null | undefined = currentRun?.threadId ?? resolved?.threadId ?? null;
+
+    if (this.isDmContext(input)) {
+      const codexSelection = this.lookupDmCodexSelection(input);
+      if (codexSelection) {
+        projectLabel = codexSelection.project.displayName;
+        threadLabel = formatCurrentThreadLabel(codexSelection.thread.title, codexSelection.thread.threadId);
+        threadId = codexSelection.thread.threadId;
+      } else {
+        const selectedProject = this.lookupDmSelectedProject(input);
+        if (selectedProject) {
+          projectLabel = selectedProject.displayName;
+        }
+      }
+    } else if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
+      const thread = this.dependencies.store.getCodexThreadBySurface(input.chatId, input.surfaceRef);
+      if (thread) {
+        const project = this.dependencies.store.getProject(thread.projectId);
+        projectLabel = project?.name ?? thread.projectId;
+        threadLabel = formatCurrentThreadLabel(thread.title, thread.threadId);
+        threadId = thread.threadId;
+      }
+    } else if (input.chatId) {
+      const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
+      if (projectChat) {
+        const project = this.dependencies.store.getProject(projectChat.projectId);
+        projectLabel = project?.name ?? projectChat.projectId;
+      }
+    }
+
+    const deliveryChatId = currentRun?.deliveryChatId ?? resolved?.deliveryChatId ?? input.chatId ?? null;
+    const deliverySurfaceRef = currentRun?.deliverySurfaceRef ?? resolved?.deliverySurfaceRef ?? input.surfaceRef ?? null;
+    const deliveryLabel = deliverySurfaceRef
+      ? "当前飞书线程"
+      : deliveryChatId
+        ? "当前群聊"
+        : "当前私聊";
+
+    return {
+      projectLabel,
+      threadLabel,
+      threadId,
+      deliveryLabel,
+      deliveryChatId,
+      deliverySurfaceRef,
     };
   }
 

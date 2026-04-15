@@ -269,6 +269,15 @@ export class FeishuAdapter {
         continue;
       }
 
+      if (reply.kind === "assistant") {
+        await this.replyAssistant({
+          peerId,
+          anchorMessageId,
+          text: reply.text,
+        });
+        continue;
+      }
+
       if (reply.kind === "image") {
         await this.replyImage({
           peerId,
@@ -378,6 +387,28 @@ export class FeishuAdapter {
     }
 
     await this.dependencies.apiClient.sendTextMessage(input.peerId, input.text);
+  }
+
+  private async replyAssistant(input: {
+    peerId: string;
+    anchorMessageId?: string;
+    text: string;
+  }): Promise<void> {
+    const markdownCard = buildAssistantMarkdownCard(input.text);
+    if (markdownCard) {
+      await this.replyCard({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        card: markdownCard,
+      });
+      return;
+    }
+
+    await this.replyText({
+      peerId: input.peerId,
+      anchorMessageId: input.anchorMessageId,
+      text: normalizeAssistantPlainText(input.text),
+    });
   }
 
   private async replyCard(input: {
@@ -490,6 +521,98 @@ function formatImageFallbackText(reply: Extract<BridgeReply, { kind: "image" }>)
     : "图片结果已生成。";
 }
 
+function buildAssistantMarkdownCard(text: string): Record<string, unknown> | undefined {
+  if (!shouldRenderAssistantAsMarkdownCard(text)) {
+    return undefined;
+  }
+
+  const normalized = text.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const card = {
+    schema: "2.0",
+    config: {
+      wide_screen_mode: true,
+      update_multi: true,
+      summary: {
+        content: buildAssistantSummary(normalized),
+      },
+    },
+    header: {
+      title: {
+        tag: "plain_text",
+        content: "完整回复",
+      },
+      template: "blue",
+    },
+    body: {
+      elements: [
+        {
+          tag: "markdown",
+          content: normalized,
+        },
+      ],
+    },
+  } satisfies Record<string, unknown>;
+
+  return Buffer.byteLength(JSON.stringify(card), "utf8") <= FEISHU_INTERACTIVE_CARD_MAX_BYTES
+    ? card
+    : undefined;
+}
+
+function shouldRenderAssistantAsMarkdownCard(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized.length <= 120 && !containsMarkdownSyntax(normalized)) {
+    return false;
+  }
+
+  return containsMarkdownSyntax(normalized) || normalized.includes("\n");
+}
+
+function containsMarkdownSyntax(text: string): boolean {
+  return /(^|\n)\s*[-*]\s+/.test(text) ||
+    /(^|\n)\s*\d+\.\s+/.test(text) ||
+    /(^|\n)\s*>/.test(text) ||
+    /(^|\n)\s*#{1,6}\s+/.test(text) ||
+    /```/.test(text) ||
+    /\*\*[^*]+\*\*/.test(text) ||
+    /`[^`]+`/.test(text) ||
+    /\[[^\]]+\]\([^)]+\)/.test(text) ||
+    /\|.+\|/.test(text);
+}
+
+function buildAssistantSummary(text: string): string {
+  const firstLine = text
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(Boolean) ?? "完整回复";
+  return firstLine.slice(0, 120);
+}
+
+function normalizeAssistantPlainText(text: string): string {
+  const normalized = text.trim();
+  if (!normalized) {
+    return text;
+  }
+
+  return normalized
+    .replace(/```([\s\S]*?)```/g, (_match, code: string) => code.trim())
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/(^|\n)\s*#{1,6}\s+/g, "$1")
+    .replace(/(^|\n)\s*[-*]\s+/g, "$1• ")
+    .replace(/(^|\n)\s*\d+\.\s+/g, (_match, prefix: string) => `${prefix}1. `)
+    .trim();
+}
+
 function parseFeishuTextContent(content?: string): { text?: string; hasMention: boolean } {
   if (!content) {
     return {
@@ -511,6 +634,8 @@ function parseFeishuTextContent(content?: string): { text?: string; hasMention: 
     };
   }
 }
+
+const FEISHU_INTERACTIVE_CARD_MAX_BYTES = 30 * 1024;
 
 function parseFeishuImageContent(content?: string): string | undefined {
   if (!content) {

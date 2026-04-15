@@ -32,7 +32,7 @@ export function buildStreamingCardMarkdown(state: ProgressCardState): string {
   ];
 
   if (state.sessionName) {
-    lines.push(`**Session**：${state.sessionName}`);
+    lines.push(`**当前会话**：${state.sessionName}`);
   }
   if (state.latestTool) {
     lines.push(`**最近工具**：${state.latestTool}`);
@@ -103,6 +103,32 @@ export function buildBridgeCard(state: ProgressCardState): Record<string, unknow
             : []),
         ],
       })),
+    });
+  }
+
+  if (!isTerminalStatus(state.status)) {
+    elements.push({
+      tag: "hr",
+    });
+    elements.push({
+      tag: "column_set",
+      flex_mode: "flow",
+      background_style: "default",
+      columns: [{
+        tag: "column",
+        width: "auto",
+        weight: 1,
+        vertical_align: "top",
+        elements: [{
+          tag: "button",
+          text: {
+            tag: "plain_text",
+            content: "停止任务",
+          },
+          type: "danger",
+          value: buildStopActionValue(state),
+        }],
+      }],
     });
   }
 
@@ -345,4 +371,13 @@ function buildTodoMarkdown(items: PlanTodoItem[]): string {
     "**计划清单**",
     ...items.map(item => `- ${item.completed ? "[x]" : "[ ]"} ${item.text}`),
   ].join("\n");
+}
+
+function buildStopActionValue(state: ProgressCardState): Record<string, unknown> {
+  return {
+    command: "/ca stop",
+    chatId: state.deliveryChatId ?? undefined,
+    surfaceType: state.deliverySurfaceType ?? undefined,
+    surfaceRef: state.deliverySurfaceRef ?? undefined,
+  };
 }

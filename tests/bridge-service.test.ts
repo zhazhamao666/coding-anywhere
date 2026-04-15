@@ -57,10 +57,12 @@ describe("BridgeService", () => {
     expect(replies[0]).toMatchObject({
       kind: "card",
     });
-    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    const card = (replies[0] as { card: Record<string, unknown> }).card;
+    const cardText = JSON.stringify(card);
     expect(cardText).toContain("运行状态");
     expect(cardText).toContain("当前没有运行中的任务");
-    expect(cardText).toContain("codex-main");
+    expect(readCardSummaryMarkdown(card)).not.toContain("Session");
+    expect(cardText).not.toContain("停止任务");
   });
 
   it("shows the current live run for the same surface and stops it on /ca stop", async () => {
@@ -143,10 +145,41 @@ describe("BridgeService", () => {
     expect(statusReplies[0]).toMatchObject({
       kind: "card",
     });
-    const statusCardText = JSON.stringify((statusReplies[0] as { card: Record<string, unknown> }).card);
+    const statusCard = (statusReplies[0] as { card: Record<string, unknown> }).card;
+    const statusCardText = JSON.stringify(statusCard);
     expect(statusCardText).toContain("run-");
     expect(statusCardText).toContain("still working");
     expect(statusCardText).toContain("处理中");
+    expect(statusCardText).toContain("停止任务");
+    expect(readCardSummaryMarkdown(statusCard)).toContain("当前线程");
+    expect(readCardSummaryMarkdown(statusCard)).not.toContain("Session");
+
+    const hubReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "/ca",
+    });
+    const hubCard = (hubReplies[0] as { card: Record<string, unknown> }).card;
+    const hubCardText = JSON.stringify(hubCard);
+    expect(hubCardText).toContain("当前运行");
+    expect(hubCardText).toContain("停止任务");
+    expect(hubCardText).toContain("still working");
+
+    const sessionReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "/ca session",
+    });
+    const sessionCard = (sessionReplies[0] as { card: Record<string, unknown> }).card;
+    expect(JSON.stringify(sessionCard)).toContain("停止任务");
+    expect(readCardSummaryMarkdown(sessionCard)).toContain("当前线程");
+    expect(readCardSummaryMarkdown(sessionCard)).not.toContain("Session");
 
     const stopReplies = await service.handleMessage({
       channel: "feishu",
@@ -274,7 +307,7 @@ describe("BridgeService", () => {
     expect(cardText).toContain("运行状态");
     expect(cardText).toContain("当前会话");
     expect(cardText).toContain("新会话");
-    expect(cardText).toContain("停止任务");
+    expect(cardText).not.toContain("停止任务");
     expect(cardText).toContain("计划模式");
     expect(cardText).not.toContain("DM 快捷命令");
   });
@@ -343,9 +376,11 @@ describe("BridgeService", () => {
     expect(replies[0]).toMatchObject({
       kind: "card",
     });
-    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    const card = (replies[0] as { card: Record<string, unknown> }).card;
+    const cardText = JSON.stringify(card);
     expect(cardText).toContain("**当前线程**：native follow-up");
-    expect(cardText).toContain("**Session**：thread-native-current");
+    expect(readCardSummaryMarkdown(card)).not.toContain("Session");
+    expect(cardText).toContain("线程 ID：thread-native-current");
     expect(cardText).not.toContain("**当前线程**：thread-native-current · native follow-up");
   });
 
@@ -387,9 +422,11 @@ describe("BridgeService", () => {
     expect(replies[0]).toMatchObject({
       kind: "card",
     });
-    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    const card = (replies[0] as { card: Record<string, unknown> }).card;
+    const cardText = JSON.stringify(card);
     expect(cardText).toContain("**当前线程**：follow-up");
-    expect(cardText).toContain("**Session**：codex-proj-current-thread-current");
+    expect(readCardSummaryMarkdown(card)).not.toContain("Session");
+    expect(cardText).toContain("线程 ID：thread-current");
     expect(cardText).not.toContain("**当前线程**：thread-current · follow-up");
   });
 
@@ -1061,7 +1098,7 @@ describe("BridgeService", () => {
     expect(cardText).toContain("CA Hub");
     expect(cardText).toContain("\"command\":\"/ca\"");
     expect(cardText).toContain("运行状态");
-    expect(cardText).toContain("停止任务");
+    expect(cardText).not.toContain("停止任务");
     expect(cardText).not.toContain("DM 快捷命令");
   });
 
@@ -1715,6 +1752,71 @@ describe("BridgeService", () => {
     expect(cardText).toContain("coding-anywhere");
     expect(cardText).toContain("thread-native-current");
     expect(cardText).toContain("follow-up");
+    expect(cardText).toContain("新会话");
+  });
+
+  it("uses direct project-switch copy instead of recorded-state wording", async () => {
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-native-current",
+    });
+
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: {
+        listProjects: vi.fn(() => [{
+          projectKey: "proj-native",
+          cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+          displayName: "coding-anywhere",
+          threadCount: 1,
+          activeThreadCount: 1,
+          lastUpdatedAt: "2026-03-30T00:00:00.000Z",
+          gitBranch: "main",
+        }]),
+        getProject: vi.fn(() => ({
+          projectKey: "proj-native",
+          cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+          displayName: "coding-anywhere",
+          threadCount: 1,
+          activeThreadCount: 1,
+          lastUpdatedAt: "2026-03-30T00:00:00.000Z",
+          gitBranch: "main",
+        })),
+        listThreads: vi.fn(() => []),
+        getThread: vi.fn((threadId: string) => threadId === "thread-native-current"
+          ? {
+              threadId: "thread-native-current",
+              projectKey: "proj-native",
+              cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+              displayName: "coding-anywhere",
+              title: "native follow-up",
+              source: "vscode",
+              archived: false,
+              updatedAt: "2026-03-30T00:00:00.000Z",
+              createdAt: "2026-03-29T00:00:00.000Z",
+              gitBranch: "main",
+              cliVersion: "0.116.0",
+              rolloutPath: "D:/rollout",
+            }
+          : undefined),
+        listRecentConversation: vi.fn(() => []),
+      },
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project switch proj-native",
+    });
+
+    const card = (replies[0] as { card: Record<string, unknown> }).card;
+    const cardText = JSON.stringify(card);
+    expect(cardText).toContain("当前项目已切换");
+    expect(cardText).toContain("当前项目：coding-anywhere");
+    expect(cardText).toContain("当前线程：native follow-up");
+    expect(cardText).not.toContain("已记录项目切换");
   });
 
   it("renders Codex subagent threads under their parent without leaking raw source JSON", async () => {
@@ -2200,4 +2302,10 @@ function createRunnerDouble(
       };
     }),
   };
+}
+
+function readCardSummaryMarkdown(card: Record<string, unknown>): string {
+  const body = card.body as { elements?: Array<Record<string, unknown>> } | undefined;
+  const summary = body?.elements?.find(element => element.tag === "markdown");
+  return typeof summary?.content === "string" ? summary.content : "";
 }

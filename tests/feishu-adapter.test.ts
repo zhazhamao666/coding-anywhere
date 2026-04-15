@@ -337,6 +337,110 @@ describe("FeishuAdapter", () => {
     expect(apiClient.replyImageMessage).not.toHaveBeenCalled();
   });
 
+  it("renders markdown-heavy assistant replies as interactive cards instead of raw text", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [{
+        kind: "assistant",
+        text: [
+          "**明确待办**",
+          "- 清理工作区里未提交的两个本地文件",
+          "- 清理历史产物目录里遗留的旧包",
+        ].join("\n"),
+      } satisfies BridgeReply]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-assistant-card-1",
+      },
+      event: {
+        message: {
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "请总结当前待办" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(apiClient.sendInteractiveCard).toHaveBeenCalledWith(
+      "ou_demo",
+      expect.objectContaining({
+        schema: "2.0",
+        header: expect.objectContaining({
+          title: expect.objectContaining({
+            content: "完整回复",
+          }),
+        }),
+        body: expect.objectContaining({
+          elements: expect.arrayContaining([
+            expect.objectContaining({
+              tag: "markdown",
+              content: expect.stringContaining("**明确待办**"),
+            }),
+          ]),
+        }),
+      }),
+    );
+    expect(apiClient.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("falls back to cleaned plain text when assistant markdown is too large for an interactive card", async () => {
+    const oversizedMarkdown = `**明确待办**\n${"- 继续整理这条超长任务说明。\n".repeat(2_500)}`;
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [{
+        kind: "assistant",
+        text: oversizedMarkdown,
+      } satisfies BridgeReply]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-assistant-fallback-1",
+      },
+      event: {
+        message: {
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "请返回完整回复" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(apiClient.sendInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+      "ou_demo",
+      expect.not.stringContaining("**明确待办**"),
+    );
+    expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+      "ou_demo",
+      expect.stringContaining("• 继续整理这条超长任务说明。"),
+    );
+  });
+
   it("sends action cards as standard interactive messages", async () => {
     const hubCard = {
       schema: "2.0",
