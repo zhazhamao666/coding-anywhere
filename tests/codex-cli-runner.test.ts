@@ -138,21 +138,42 @@ describe("CodexCliRunner", () => {
     );
   });
 
-  it("fails createThread early with a readable error when cwd is not a git repository", async () => {
+  it("automatically skips git repo check when creating a native thread outside a git repository", async () => {
     execaMock.mockResolvedValueOnce({
       exitCode: 128,
       stdout: "",
       stderr: "fatal: not a git repository (or any of the parent directories): .git",
     });
+    const child = createChildFromFixture("create-thread.jsonl", 0);
+    execaMock.mockReturnValueOnce(child);
 
     const runner = new CodexCliRunner("codex");
 
-    await expect(runner.createThread({
+    const outcome = await runner.createThread({
       cwd: "D:/not-a-repo",
       prompt: "Initialize a bridge thread.",
-    })).rejects.toThrow("当前路径不是 Git 仓库");
+    });
 
-    expect(execaMock).toHaveBeenCalledTimes(1);
+    expect(execaMock).toHaveBeenNthCalledWith(
+      1,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      {
+        cwd: "D:/not-a-repo",
+        reject: false,
+      },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      2,
+      "codex",
+      ["exec", "--json", "--skip-git-repo-check", "-"],
+      {
+        cwd: "D:/not-a-repo",
+        input: "Initialize a bridge thread.",
+        reject: false,
+      },
+    );
+    expect(outcome.threadId).toBe("019d34e0-254e-70f1-9dd5-097fb862d391");
   });
 
   it("treats close as a no-op for native-only execution", async () => {
@@ -185,7 +206,12 @@ describe("CodexCliRunner", () => {
         }),
       },
     );
-    execaMock.mockReturnValue(child);
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
+    execaMock.mockReturnValueOnce(child);
 
     const runner = new CodexCliRunner("codex");
     const runPromise = runner.submitVerbatim(
@@ -199,6 +225,7 @@ describe("CodexCliRunner", () => {
     );
 
     await Promise.resolve();
+    await Promise.resolve();
     await runner.cancel({
       targetKind: "codex_thread",
       threadId: "thread-demo",
@@ -211,6 +238,11 @@ describe("CodexCliRunner", () => {
   });
 
   it("resumes an existing native thread and preserves streamed text chunks", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
     const child = createChunkedChildFromFixture(
       "resume-thread.jsonl",
       0,
@@ -234,7 +266,17 @@ describe("CodexCliRunner", () => {
       },
     );
 
-    expect(execaMock).toHaveBeenCalledWith(
+    expect(execaMock).toHaveBeenNthCalledWith(
+      1,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      {
+        cwd: "D:/repo",
+        reject: false,
+      },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      2,
       "codex",
       [
         "exec",
@@ -269,7 +311,61 @@ describe("CodexCliRunner", () => {
     ]);
   });
 
+  it("automatically skips git repo check when resuming a native thread outside a git repository", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 128,
+      stdout: "",
+      stderr: "fatal: not a git repository (or any of the parent directories): .git",
+    });
+    const child = createChildFromFixture("resume-thread.jsonl", 0);
+    execaMock.mockReturnValueOnce(child);
+
+    const runner = new CodexCliRunner("codex");
+
+    await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/not-a-repo",
+      },
+      "test",
+    );
+
+    expect(execaMock).toHaveBeenNthCalledWith(
+      1,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      {
+        cwd: "D:/not-a-repo",
+        reject: false,
+      },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      2,
+      "codex",
+      [
+        "exec",
+        "resume",
+        "--json",
+        "--skip-git-repo-check",
+        "thread-demo",
+        "-",
+      ],
+      {
+        cwd: "D:/not-a-repo",
+        input: "test",
+        reject: false,
+      },
+    );
+  });
+
   it("forwards staged images to codex exec resume", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
     const child = createChildFromFixture("resume-thread.jsonl", 0);
     execaMock.mockReturnValue(child);
 
@@ -291,7 +387,17 @@ describe("CodexCliRunner", () => {
       },
     );
 
-    expect(execaMock).toHaveBeenCalledWith(
+    expect(execaMock).toHaveBeenNthCalledWith(
+      1,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      {
+        cwd: "D:/repo",
+        reject: false,
+      },
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      2,
       "codex",
       [
         "exec",
@@ -313,6 +419,11 @@ describe("CodexCliRunner", () => {
   });
 
   it("reports a failed command execution as an error and still completes the turn", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
     const child = createChildFromFixture("command-failure.jsonl", 1);
     execaMock.mockReturnValue(child);
 
@@ -345,6 +456,11 @@ describe("CodexCliRunner", () => {
   });
 
   it("surfaces stderr when codex exits non-zero without a structured error event", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
     const child = Object.assign(
       Promise.resolve({
         exitCode: 1,
@@ -370,6 +486,11 @@ describe("CodexCliRunner", () => {
   });
 
   it("surfaces native plan-mode todo items as waiting progress and still completes", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
     const child = createChildFromFixture("plan-mode.jsonl", 0);
     execaMock.mockReturnValue(child);
 
@@ -417,6 +538,11 @@ describe("CodexCliRunner", () => {
   });
 
   it("surfaces native sub-agent lifecycle calls without losing the final delegated answer", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
     const child = createChildFromFixture("sub-agent.jsonl", 0);
     execaMock.mockReturnValue(child);
 
@@ -462,6 +588,11 @@ describe("CodexCliRunner", () => {
   });
 
   it("extracts bridge-managed plan-choice directives from native assistant text", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
     const child = createChildFromFixture("plan-choice.jsonl", 0);
     execaMock.mockReturnValue(child);
 

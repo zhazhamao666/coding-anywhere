@@ -57,9 +57,13 @@ export class CodexCliRunner {
     },
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome & { threadId: string }> {
-    await this.ensureCreateThreadWorkspace(input.cwd);
+    const args = await this.resolveWorkspaceArgs(
+      ["exec", "--json", "-"],
+      input.cwd,
+      1,
+    );
     const outcome = await this.runCodexExec(
-      withCodexImages(["exec", "--json", "-"], input.images),
+      withCodexImages(args, input.images),
       input.cwd,
       input.prompt,
       input.sessionName ? `session:${input.sessionName}` : undefined,
@@ -91,14 +95,20 @@ export class CodexCliRunner {
       throw new Error("CODEX_THREAD_CONTEXT_REQUIRED");
     }
 
-    return this.runCodexExec(
-      withCodexImages([
+    const args = await this.resolveWorkspaceArgs(
+      [
         "exec",
         "resume",
         "--json",
         context.threadId,
         "-",
-      ], options?.images, 2),
+      ],
+      context.cwd,
+      2,
+    );
+
+    return this.runCodexExec(
+      withCodexImages(args, options?.images, 2),
       context.cwd,
       prompt,
       buildExecutionKey(context),
@@ -180,20 +190,29 @@ export class CodexCliRunner {
     }
   }
 
-  private async ensureCreateThreadWorkspace(cwd: string): Promise<void> {
+  private async resolveWorkspaceArgs(
+    args: string[],
+    cwd: string,
+    trailingArgsCount: number,
+  ): Promise<string[]> {
+    if (args.includes("--skip-git-repo-check")) {
+      return args;
+    }
+
     const result = await execa("git", ["rev-parse", "--show-toplevel"], {
       cwd,
       reject: false,
     });
 
     if (result.exitCode === 0) {
-      return;
+      return args;
     }
 
-    const detail = extractGitRepositoryError(result.stderr);
-    throw new Error(detail
-      ? `当前路径不是 Git 仓库：${cwd}。${detail}`
-      : `当前路径不是 Git 仓库：${cwd}。请先切到一个 Codex 项目目录，再新建会话。`);
+    if (isNotGitRepositoryError(result.stderr)) {
+      return insertArgsBeforeTrailing(args, ["--skip-git-repo-check"], trailingArgsCount);
+    }
+
+    throw new Error(extractCodexExecFailure(result.stderr) ?? "GIT_REPO_CHECK_FAILED");
   }
 }
 
@@ -214,16 +233,11 @@ function withCodexImages(
     return args;
   }
 
-  const imageArgs = images.flatMap(imagePath => ["-i", imagePath]);
-  if (trailingArgsCount <= 0 || trailingArgsCount > args.length) {
-    return [...args, ...imageArgs];
-  }
-
-  const insertIndex = args.length - trailingArgsCount;
-  const prefixArgs = args.slice(0, insertIndex);
-  const trailingArgs = args.slice(insertIndex);
-
-  return [...prefixArgs, ...imageArgs, ...trailingArgs];
+  return insertArgsBeforeTrailing(
+    args,
+    images.flatMap(imagePath => ["-i", imagePath]),
+    trailingArgsCount,
+  );
 }
 
 function coalesceCodexExecEvent(event: RunnerEvent, assistantText: string): {
@@ -538,4 +552,28 @@ function extractGitRepositoryError(stderr: unknown): string | undefined {
   }
 
   return message;
+}
+
+function isNotGitRepositoryError(stderr: unknown): boolean {
+  const message = extractCodexExecFailure(stderr);
+  return typeof message === "string" && message.includes("not a git repository");
+}
+
+function insertArgsBeforeTrailing(
+  args: string[],
+  insertedArgs: string[],
+  trailingArgsCount: number,
+): string[] {
+  if (insertedArgs.length === 0) {
+    return args;
+  }
+
+  if (trailingArgsCount <= 0 || trailingArgsCount > args.length) {
+    return [...args, ...insertedArgs];
+  }
+
+  const insertIndex = args.length - trailingArgsCount;
+  const prefixArgs = args.slice(0, insertIndex);
+  const trailingArgs = args.slice(insertIndex);
+  return [...prefixArgs, ...insertedArgs, ...trailingArgs];
 }

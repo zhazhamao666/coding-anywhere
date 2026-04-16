@@ -92,7 +92,7 @@
 63. `observability_runs` 现在会额外记录 `cancel_requested_at`、`cancel_requested_by`、`cancel_source`，便于还原取消请求来源
 64. runtime 启动时会把上次异常退出后遗留的非终态 run 统一收口为 `error`，避免 `/ops` 长期挂着僵尸 `running`
 65. `/ops/runs` 历史列表改为按最近更新时间倒序展示，不再把更早的非终态 run 固定钉在顶部
-66. `/ca new` 在创建 native thread 前会先校验当前 `cwd` 是否为 Git 仓库；若不是，会直接返回可读错误，而不是笼统的 `RUN_STREAM_FAILED`
+66. 当 `/ca new` 或普通续跑命中非 Git 项目的 `cwd` 时，runner 现在会自动补 `--skip-git-repo-check`，允许非 Git 项目继续创建或续跑 native Codex thread
 67. `/ca`、`/ca status`、`/ca session` 这几张主卡现在会优先展示人类可读的项目名 / 线程名；raw `thread_id` 只保留为辅助诊断字段，不再把 `Session` 作为主信息直接抛给飞书用户
 68. `/ca` 导航卡、“当前会话”卡和运行状态卡现在只有在当前 surface 确实存在 live run 时才展示“停止任务”；同时会在卡片里直接带出当前运行摘要，避免只给动作不给上下文
 69. 运行中的流式状态卡本身现在也带“停止任务”按钮，继续复用同一条 `/ca stop` 卡片回调链路
@@ -510,6 +510,7 @@ Feishu DM / Group Thread image
 - DM 中 `/ca new` 会创建新的 native thread 并切换当前窗口
 - 如果 DM 当前没有 native thread 绑定但已经选中了项目，`/ca new` 与下一条普通 prompt 都会优先使用该项目的 `cwd`
 - 已注册线程中的 `/ca new` 会创建新的 native thread 并重绑当前 Feishu thread surface
+- 当目标 `cwd` 不是 Git 仓库时，bridge 会自动补 `--skip-git-repo-check`，因此非 Git 项目也能创建或续跑 native thread
 - `/ca status` 会优先读取当前 surface 的 live run；有任务时返回结构化运行状态卡，空闲时返回当前上下文摘要卡；主信息优先展示可读的项目 / 线程名，`thread_id` 等 raw ID 只作为辅助诊断显示
 - `/ca stop` 只作用于当前 surface 的 live run，不暴露任意 `runId`
   - 没有 live run：返回“当前没有运行中的任务”
