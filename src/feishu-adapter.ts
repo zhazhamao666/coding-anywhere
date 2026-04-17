@@ -2,6 +2,7 @@ import path from "node:path";
 
 import { DEFAULT_BRIDGE_ASSET_ROOT_DIR } from "./bridge-image-directive.js";
 import { StreamingCardController } from "./feishu-card/streaming-card-controller.js";
+import { containsMarkdownSyntax, normalizeMarkdownToPlainText } from "./markdown-text.js";
 import { isBridgeCommandMessage } from "./command-router.js";
 import { buildFeishuInboundLog } from "./feishu-message-log.js";
 import type {
@@ -575,18 +576,6 @@ function shouldRenderAssistantAsMarkdownCard(text: string): boolean {
   return containsMarkdownSyntax(normalized) || normalized.includes("\n");
 }
 
-function containsMarkdownSyntax(text: string): boolean {
-  return /(^|\n)\s*[-*]\s+/.test(text) ||
-    /(^|\n)\s*\d+\.\s+/.test(text) ||
-    /(^|\n)\s*>/.test(text) ||
-    /(^|\n)\s*#{1,6}\s+/.test(text) ||
-    /```/.test(text) ||
-    /\*\*[^*]+\*\*/.test(text) ||
-    /`[^`]+`/.test(text) ||
-    /\[[^\]]+\]\([^)]+\)/.test(text) ||
-    /\|.+\|/.test(text);
-}
-
 function buildAssistantSummary(text: string): string {
   const firstLine = text
     .split(/\r?\n/)
@@ -596,21 +585,7 @@ function buildAssistantSummary(text: string): string {
 }
 
 function normalizeAssistantPlainText(text: string): string {
-  const normalized = text.trim();
-  if (!normalized) {
-    return text;
-  }
-
-  return normalized
-    .replace(/```([\s\S]*?)```/g, (_match, code: string) => code.trim())
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/(^|\n)\s*#{1,6}\s+/g, "$1")
-    .replace(/(^|\n)\s*[-*]\s+/g, "$1• ")
-    .replace(/(^|\n)\s*\d+\.\s+/g, (_match, prefix: string) => `${prefix}1. `)
-    .trim();
+  return normalizeMarkdownToPlainText(text);
 }
 
 function parseFeishuTextContent(content?: string): { text?: string; hasMention: boolean } {

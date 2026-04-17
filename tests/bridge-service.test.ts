@@ -106,7 +106,7 @@ describe("BridgeService", () => {
         const onEvent = typeof optionsOrOnEvent === "function"
           ? optionsOrOnEvent
           : maybeOnEvent;
-        onEvent?.({ type: "text", content: "still working" });
+        onEvent?.({ type: "text", content: "**明确待办**\n- still working" });
         return await new Promise<never>((_resolve, reject) => {
           rejectRun = reject as (error: Error) => void;
         });
@@ -153,6 +153,7 @@ describe("BridgeService", () => {
     expect(statusCardText).toContain("停止任务");
     expect(readCardSummaryMarkdown(statusCard)).toContain("当前线程");
     expect(readCardSummaryMarkdown(statusCard)).not.toContain("Session");
+    expect(statusCardText).not.toContain("**明确待办**");
 
     const hubReplies = await service.handleMessage({
       channel: "feishu",
@@ -167,6 +168,7 @@ describe("BridgeService", () => {
     expect(hubCardText).toContain("当前运行");
     expect(hubCardText).toContain("停止任务");
     expect(hubCardText).toContain("still working");
+    expect(hubCardText).not.toContain("**明确待办**");
 
     const sessionReplies = await service.handleMessage({
       channel: "feishu",

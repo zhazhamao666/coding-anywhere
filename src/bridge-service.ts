@@ -9,6 +9,7 @@ import {
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
 import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
+import { normalizeMarkdownToPlainText } from "./markdown-text.js";
 import type { ProjectThreadService } from "./project-thread-service.js";
 import { createProgressCardState, reduceProgressEvent } from "./progress-relay.js";
 import { isRunCanceledError } from "./run-cancel-error.js";
@@ -2414,7 +2415,7 @@ export class BridgeService {
     }
 
     items.push(`最近工具：${currentRun.latestTool ?? "无"}`);
-    items.push(`摘要：${currentRun.latestPreview}`);
+    items.push(`摘要：${normalizeMarkdownToPlainText(currentRun.latestPreview)}`);
     return items;
   }
 

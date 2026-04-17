@@ -85,7 +85,7 @@ export class StreamingCardController implements StreamingCardControllerLike {
 
     try {
       this.cardId = await this.dependencies.apiClient.createCardEntity(
-        buildStreamingShellCard(buildStreamingCardMarkdown(snapshot)),
+        buildStreamingShellCard(snapshot),
       );
       this.messageId = await this.dependencies.apiClient.sendCardKitMessage(
         this.dependencies.peerId,

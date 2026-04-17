@@ -1,8 +1,10 @@
 import type { PlanTodoItem, ProgressCardState, ProgressStatus } from "../types.js";
+import { normalizeMarkdownToPlainText } from "../markdown-text.js";
 
 export const STREAMING_ELEMENT_ID = "streaming_content";
 
-export function buildStreamingShellCard(summaryText: string): Record<string, unknown> {
+export function buildStreamingShellCard(state: ProgressCardState): Record<string, unknown> {
+  const summaryText = buildStreamingCardMarkdown(state);
   return {
     schema: "2.0",
     config: {
@@ -20,6 +22,7 @@ export function buildStreamingShellCard(summaryText: string): Record<string, unk
           content: summaryText,
           element_id: STREAMING_ELEMENT_ID,
         },
+        ...buildStopButtonElements(state),
       ],
     },
   };
@@ -326,15 +329,15 @@ function buildCardSummary(state: ProgressCardState): string {
     return `${formatStatusLabel(state.status)} - 完整回复请查看下方消息`;
   }
 
-  return `${formatStatusLabel(state.status)} - ${state.preview}`;
+  return `${formatStatusLabel(state.status)} - ${normalizeMarkdownToPlainText(state.preview)}`;
 }
 
 function formatPreviewForCard(state: ProgressCardState): string {
   if (state.status !== "done") {
-    return state.preview;
+    return normalizeMarkdownToPlainText(state.preview);
   }
 
-  const excerpt = summarizeTerminalPreview(state.preview);
+  const excerpt = summarizeTerminalPreview(normalizeMarkdownToPlainText(state.preview));
   if (!excerpt) {
     return "完整回复请查看下方消息";
   }
@@ -371,6 +374,38 @@ function buildTodoMarkdown(items: PlanTodoItem[]): string {
     "**计划清单**",
     ...items.map(item => `- ${item.completed ? "[x]" : "[ ]"} ${item.text}`),
   ].join("\n");
+}
+
+function buildStopButtonElements(state: ProgressCardState): Array<Record<string, unknown>> {
+  if (isTerminalStatus(state.status)) {
+    return [];
+  }
+
+  return [
+    {
+      tag: "hr",
+    },
+    {
+      tag: "column_set",
+      flex_mode: "flow",
+      background_style: "default",
+      columns: [{
+        tag: "column",
+        width: "auto",
+        weight: 1,
+        vertical_align: "top",
+        elements: [{
+          tag: "button",
+          text: {
+            tag: "plain_text",
+            content: "停止任务",
+          },
+          type: "danger",
+          value: buildStopActionValue(state),
+        }],
+      }],
+    },
+  ];
 }
 
 function buildStopActionValue(state: ProgressCardState): Record<string, unknown> {

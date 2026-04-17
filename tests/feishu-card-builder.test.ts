@@ -49,26 +49,37 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("\"surfaceRef\":\"omt_current\"");
   });
 
-  it("builds a streaming shell card with the CardKit streaming element id", () => {
-    const card = buildStreamingShellCard("思考中");
+  it("builds a streaming shell card with the CardKit streaming element id and a stop button", () => {
+    const card = buildStreamingShellCard(createState({
+      status: "running",
+      stage: "text",
+      preview: "思考中",
+      deliveryChatId: "oc_chat_current",
+      deliverySurfaceType: "thread",
+      deliverySurfaceRef: "omt_current",
+    }));
     const serialized = JSON.stringify(card);
 
     expect(serialized).toContain(STREAMING_ELEMENT_ID);
     expect(serialized).toContain("streaming_mode");
+    expect(serialized).toContain("停止任务");
+    expect(serialized).toContain("\"command\":\"/ca stop\"");
   });
 
-  it("builds streaming markdown with tool and preview details", () => {
+  it("builds streaming markdown with tool details and strips raw markdown markers from preview text", () => {
     const markdown = buildStreamingCardMarkdown(createState({
       status: "tool_active",
       stage: "tool_call",
       sessionName: "codex-main",
       latestTool: "npm test",
-      preview: "[ca] tool_call: npm test",
+      preview: "**明确待办**\n- 清理旧包",
     }));
 
     expect(markdown).toContain("工具执行中");
     expect(markdown).toContain("npm test");
     expect(markdown).toContain("codex-main");
+    expect(markdown).toContain("明确待办");
+    expect(markdown).not.toContain("**明确待办**");
   });
 
   it("builds a complete card with terminal state and elapsed time", () => {
