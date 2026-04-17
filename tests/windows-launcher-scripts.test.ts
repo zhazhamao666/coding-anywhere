@@ -19,13 +19,15 @@ describe("Windows launcher scripts", () => {
     expect(existsSync(startLauncherPath)).toBe(true);
 
     const content = readRepoFile("start-coding-anywhere.cmd");
+    expect(content).toMatch(/if \/i not "%~1"=="--launched"/i);
+    expect(content).toMatch(/start "Coding Anywhere" cmd\.exe \/k/i);
+    expect(content).toMatch(/call ""?%~f0""? --launched/i);
     expect(content).toMatch(/pushd "%~dp0"/i);
     expect(content).toMatch(/call npm run build/i);
     expect(content).toMatch(/call npm run start/i);
     expect(content.indexOf("call npm run build")).toBeLessThan(content.indexOf("call npm run start"));
     expect(content).toMatch(/echo Coding Anywhere stopped with exit code %exit_code%\./i);
-    expect(content).toMatch(/Press any key to close this window\./i);
-    expect(content.lastIndexOf("pause >nul")).toBeGreaterThan(content.indexOf("call npm run start"));
+    expect(content).not.toMatch(/pause >nul/i);
   });
 
   it("provides a root stop launcher that delegates to npm run stop", () => {

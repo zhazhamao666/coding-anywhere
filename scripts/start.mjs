@@ -2,10 +2,15 @@ import { spawn } from "node:child_process";
 import process from "node:process";
 
 import { cleanupBeforeStartup, switchWindowsConsoleToUtf8 } from "./startup-cleanup.mjs";
+import { listProtectedWindowsPids } from "./stop-support.mjs";
 
 const entrypoint = "dist/src/index.js";
+const protectedPids =
+  process.platform === "win32" ? listProtectedWindowsPids(process.pid) : [process.pid];
 
-cleanupBeforeStartup();
+cleanupBeforeStartup({
+  protectedPids,
+});
 
 if (process.platform === "win32") {
   switchWindowsConsoleToUtf8();

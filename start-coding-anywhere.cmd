@@ -1,4 +1,9 @@
 @echo off
+if /i not "%~1"=="--launched" (
+  start "Coding Anywhere" cmd.exe /k call "%~f0" --launched
+  exit /b 0
+)
+
 setlocal
 
 pushd "%~dp0"
@@ -6,10 +11,9 @@ pushd "%~dp0"
 call npm run build
 if errorlevel 1 (
   echo.
-  echo Build failed. Press any key to close this window.
-  pause >nul
+  echo Build failed with exit code %errorlevel%.
   popd
-  exit /b 1
+  exit /b %errorlevel%
 )
 
 call npm run start
@@ -17,8 +21,6 @@ set "exit_code=%errorlevel%"
 
 echo.
 echo Coding Anywhere stopped with exit code %exit_code%.
-echo Press any key to close this window.
-pause >nul
 
 popd
 exit /b %exit_code%

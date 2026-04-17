@@ -2,28 +2,16 @@ import { execFileSync } from "node:child_process";
 import process from "node:process";
 
 import { cleanupBeforeStartup, switchWindowsConsoleToUtf8 } from "./startup-cleanup.mjs";
-import { buildWindowsProtectedPidQuery, parseProtectedWindowsPids } from "./stop-support.mjs";
-
-function listProtectedWindowsPids(currentPid) {
-  try {
-    const rawOutput = execFileSync(
-      "powershell.exe",
-      ["-NoProfile", "-Command", buildWindowsProtectedPidQuery(currentPid)],
-      { encoding: "utf8" },
-    ).trim();
-
-    return parseProtectedWindowsPids(rawOutput, currentPid);
-  } catch {
-    return [currentPid];
-  }
-}
+import { listProtectedWindowsPids } from "./stop-support.mjs";
 
 if (process.platform === "win32") {
   switchWindowsConsoleToUtf8();
 }
 
 const protectedPids =
-  process.platform === "win32" ? listProtectedWindowsPids(process.pid) : [process.pid];
+  process.platform === "win32"
+    ? listProtectedWindowsPids(process.pid, { execFileSync })
+    : [process.pid];
 
 const targetIds = cleanupBeforeStartup({
   protectedPids,

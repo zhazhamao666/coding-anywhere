@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 export function buildWindowsProtectedPidQuery(currentPid) {
   return (
     "$protected = New-Object System.Collections.Generic.List[int]; " +
@@ -32,5 +34,26 @@ export function parseProtectedWindowsPids(rawOutput, fallbackPid) {
   } catch {
     const numericValue = Number(normalized);
     return Number.isInteger(numericValue) && numericValue > 0 ? [numericValue] : [fallbackPid];
+  }
+}
+
+export function listProtectedWindowsPids(currentPid, options = {}) {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "win32") {
+    return [currentPid];
+  }
+
+  const execFile = options.execFileSync ?? execFileSync;
+
+  try {
+    const rawOutput = execFile(
+      "powershell.exe",
+      ["-NoProfile", "-Command", buildWindowsProtectedPidQuery(currentPid)],
+      { encoding: "utf8" },
+    ).trim();
+
+    return parseProtectedWindowsPids(rawOutput, currentPid);
+  } catch {
+    return [currentPid];
   }
 }

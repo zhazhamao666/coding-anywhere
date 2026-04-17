@@ -2,11 +2,17 @@ import { spawn } from "node:child_process";
 import process from "node:process";
 
 import { cleanupBeforeStartup, spawnAfterCleanup, switchWindowsConsoleToUtf8 } from "./startup-cleanup.mjs";
+import { listProtectedWindowsPids } from "./stop-support.mjs";
+
+const protectedPids =
+  process.platform === "win32" ? listProtectedWindowsPids(process.pid) : [process.pid];
 
 const child =
   process.platform === "win32"
     ? (() => {
-        cleanupBeforeStartup();
+        cleanupBeforeStartup({
+          protectedPids,
+        });
         switchWindowsConsoleToUtf8();
         return spawn(
           "node",
