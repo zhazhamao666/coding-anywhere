@@ -158,7 +158,7 @@ npm run start
 先看本机：
 
 ```text
-http://127.0.0.1:3100/readyz
+http://127.0.0.1:3000/readyz
 ```
 
 再在飞书里发送：
@@ -172,7 +172,7 @@ http://127.0.0.1:3100/readyz
 然后建议立即打开：
 
 ```text
-http://127.0.0.1:3100/ops/ui
+http://127.0.0.1:3000/ops/ui
 ```
 
 确认后台观测页也能正常加载。
@@ -257,6 +257,13 @@ CA root 至少要有：
 npm run start
 ```
 
+如果你更偏好一键脚本，也可以直接使用仓库根目录的：
+
+```text
+start-coding-anywhere.cmd
+stop-coding-anywhere.cmd
+```
+
 不要长期依赖：
 
 ```bash
@@ -313,9 +320,9 @@ node scripts/start.mjs
 本机检查：
 
 ```text
-http://127.0.0.1:3100/healthz
-http://127.0.0.1:3100/readyz
-http://127.0.0.1:3100/ops/ui
+http://127.0.0.1:3000/healthz
+http://127.0.0.1:3000/readyz
+http://127.0.0.1:3000/ops/ui
 ```
 
 飞书检查：
@@ -329,17 +336,19 @@ http://127.0.0.1:3100/ops/ui
 管理员还可以直接查看：
 
 ```text
-http://127.0.0.1:3100/ops/ui
-http://127.0.0.1:3100/ops/overview
-http://127.0.0.1:3100/ops/runs
-http://127.0.0.1:3100/ops/sessions
+http://127.0.0.1:3000/ops/ui
+http://127.0.0.1:3000/ops/overview
+http://127.0.0.1:3000/ops/runtime
+http://127.0.0.1:3000/ops/runs
+http://127.0.0.1:3000/ops/sessions
 ```
 
 建议使用方式：
 
-1. `/ops/ui` 看当前正在跑什么、最近失败了什么
-2. `/ops/runs/:id` 看单条任务的完整时间线
-3. `/ops/sessions` 看当前 thread 到 session 的对应关系
+1. `/ops/ui` 看当前正在跑什么、排队了什么、最近失败了什么
+2. `/ops/runtime` 看实时 active / queued / canceling / locks 快照
+3. `/ops/runs/:id` 看单条任务的完整时间线
+4. `/ops/sessions` 看当前 thread 到 session 的对应关系
 
 ### 查看当前功能是否可用
 
@@ -384,7 +393,7 @@ npm run start
 ```
 
 7. 按 [项目总说明](./project-full-overview.md) 里的“推荐验证路径”做一轮最小回归
-8. 再打开 `/ops/ui` 确认后台观测也正常
+8. 再打开 `/ops/ui` 和 `/ops/runtime` 确认后台观测也正常
 
 ## 11. 回滚流程
 
@@ -408,7 +417,7 @@ npm run start
 test
 ```
 
-7. 确认 `/ops/ui` 和 `/ops/overview` 也恢复正常
+7. 确认 `/ops/ui`、`/ops/runtime` 和 `/ops/overview` 也恢复正常
 
 ## 12. 建议的管理员检查清单
 
@@ -417,7 +426,7 @@ test
 - `readyz` 正常
 - 飞书 `test` 不重复回复
 - `/ca status` 正常
-- `/ops/ui` 能看到最新任务
+- `/ops/ui` 能看到最新任务和 live 状态
 - 当前只运行了一个实例
 - `config.toml` 没被误改
 
@@ -432,11 +441,11 @@ test
 
 ## 14. 日志和状态建议
 
-管理员排障时优先看 4 类信息：
+管理员排障时优先看 5 类信息：
 
 1. 本机控制台输出
 2. `readyz`
-3. `/ops/ui` 与 `/ops/overview`
+3. `/ops/ui`、`/ops/runtime` 与 `/ops/overview`
 4. 飞书 `/ca status`
 5. [故障排查手册](./troubleshooting.md)
 
@@ -450,7 +459,7 @@ test
 - 重启后 `readyz` 正常
 - 飞书 `test` 只回复 1 次
 - `/ca status`、`/ca session`、`/ca new` 正常
-- `/ops/ui` 能看到 run 和时间线
+- `/ops/ui` 能看到 live run、排队任务和时间线
 - 至少有一个 root 可用
 - 管理员知道如何重启、升级、回滚
 
@@ -475,7 +484,11 @@ npm run start
 6. `npm run start`
 7. 飞书里发 `/ca status`
 8. 飞书里发 `test`
-9. 打开 `/ops/ui` 确认 run 已落库
+9. 打开 `/ops/ui` / `/ops/runtime` 确认 run 已落库且实时状态正常
 10. 通过后再继续使用
 
 这套流程虽然朴素，但对当前版本最稳。
+
+补充说明：
+
+- 本手册中的 `3000` 是 `config.example.toml` 的默认端口；如果你在本地修改了 `[server].port`，请替换成实际端口

@@ -7,8 +7,8 @@
 先依次检查：
 
 1. `npm run doctor`
-2. `http://127.0.0.1:3100/readyz`
-3. `http://127.0.0.1:3100/ops/overview`
+2. `http://127.0.0.1:3000/readyz`
+3. `http://127.0.0.1:3000/ops/overview`
 4. 飞书里发 `/ca status`
 
 ## 现象 1：DM 正常，但群线程完全没有反应
@@ -174,7 +174,7 @@
 
 最可能原因：
 
-- `/ops/ui` 当前仍以 run 视角为主
+- `/ops/ui` 现在已经支持 live / queued / 历史时间线，但项目 / 线程视图仍主要通过 JSON 接口 drill-down
 - 连续流式文本事件现在会做聚合展示，不会逐 chunk 展开
 
 检查方法：
@@ -182,8 +182,8 @@
 - 直接访问：
 
 ```text
-http://127.0.0.1:3100/ops/projects
-http://127.0.0.1:3100/ops/threads/<thread-id>
+http://127.0.0.1:3000/ops/projects
+http://127.0.0.1:3000/ops/threads/<thread-id>
 ```
 
 处理动作：
@@ -234,8 +234,13 @@ npm run build
 ```
 
 ```text
-http://127.0.0.1:3100/readyz
-http://127.0.0.1:3100/ops/overview
-http://127.0.0.1:3100/ops/projects
-http://127.0.0.1:3100/ops/ui
+http://127.0.0.1:3000/readyz
+http://127.0.0.1:3000/ops/overview
+http://127.0.0.1:3000/ops/projects
+http://127.0.0.1:3000/ops/ui
+http://127.0.0.1:3000/ops/runtime
 ```
+
+补充说明：
+
+- 本手册中的 `3000` 是 `config.example.toml` 的默认端口；如果你在本地修改了 `[server].port`，请替换成实际端口

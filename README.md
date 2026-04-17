@@ -25,10 +25,12 @@
 
 - 打开一张导航卡后，常见操作主要靠按钮点击，不需要反复手输命令
 - 项目列表、线程列表、当前项目、当前会话都能直接以结构化卡片展示
+- 当前 surface 有 live run 时，可以直接查看运行状态并在卡片里停止任务
 - 在 DM 里可以从“项目列表 -> 线程列表 -> 切换到此线程”一路点进 Codex 原生线程
 - 线程列表会把 Codex subagent 解析成母 agent / 子 agent 结构化展示，不再把 raw `source` JSON 暴露给飞书用户
 - 卡片按钮回调走飞书长连接，点击后可以原地刷新，不用额外暴露公网回调地址
 - 群话题线程和 DM 都能接入，同一线程里的上下文可以持续复用
+- assistant 的 Markdown 结果会优先走 JSON 2.0 Markdown 卡片，卡片摘要和会话预览也不会再裸露原始 Markdown 标记
 
 ## 典型体验
 
@@ -48,7 +50,8 @@ Coding Anywhere
 当前线程：README polish
 
 [导航] [项目列表] [线程列表]
-[当前项目] [当前会话] [新会话]
+[当前项目] [当前会话] [运行状态]
+[停止任务] [新会话]
 ```
 
 用户看到的重点不是命令本身，而是“当前我在哪个项目 / 哪个线程里”，以及“下一步我可以点什么”。
@@ -60,15 +63,19 @@ Coding Anywhere
 - 支持 Feishu DM
 - 支持已注册的 Feishu 群话题线程
 - 支持卡片按钮导航、项目浏览、线程浏览、线程切换和群级项目绑定
+- 支持 `/ca status` 结构化运行状态卡，以及当前 surface 的 `/ca stop`
 - DM 中的项目列表直接读取本机 Codex `state_*.sqlite`
 - DM 中只记录“当前窗口绑定到哪个 Codex thread_id”，不镜像整份 Codex 项目目录
 - 已注册线程可复用长期存在的 Codex 会话
 - 支持文本 + 图片桥接；图片可暂存到下一条文本 run，也支持 assistant 回发原生飞书图片消息
+- 运行中的流式状态卡本身也会带“停止任务”按钮
+- assistant 的 Markdown 正文会优先以 JSON 2.0 Markdown 卡片发送；过大时回退为清洗后的纯文本
 - 线程列表会按父线程分组展示子 agent，并显示 agent 名称、角色、父线程和层级
 - 单个线程串行执行，多个线程可并发执行
 - 线程内支持状态回推和最终结果回复
 - 提供本地 Feishu live auth / live smoke 脚本，能用真实网页链路验证按钮卡和命令 smoke
-- 提供 `/ops/*` 观测接口与本地只读 `ops/ui`
+- 提供 `/ops/runtime` 实时调度快照、`/ops/runs/:id/cancel` 取消接口，以及可直接取消 live run 的 `ops/ui`
+- Windows 下额外提供 `start-coding-anywhere.cmd` / `stop-coding-anywhere.cmd` 一键启停脚本
 
 ## 适合谁
 
@@ -83,6 +90,13 @@ npm install
 npm run init:config
 npm run doctor
 npm run start
+```
+
+Windows 上如果你更想用一键脚本，也可以直接运行：
+
+```text
+start-coding-anywhere.cmd
+stop-coding-anywhere.cmd
 ```
 
 飞书侧配置建议先看：[飞书配置说明](./docs/feishu-setup.md)。这份说明默认优先复用飞书官方的 OpenClaw 一键创建入口，再把生成好的应用凭据回填到本项目。
@@ -112,6 +126,7 @@ npm run start
 - 用 `/ca` 打开导航卡
 - 用卡片按钮浏览项目和线程
 - 用自然语言继续对当前线程提问
+- 长任务跑起来后，用“运行状态”或“停止任务”按钮查看和控制当前 surface 的 live run
 
 目前仍然更适合用命令完成的场景只有少数几类：
 
@@ -135,13 +150,15 @@ http://127.0.0.1:3000/readyz
 http://127.0.0.1:3000/metrics
 http://127.0.0.1:3000/ops/ui
 http://127.0.0.1:3000/ops/overview
+http://127.0.0.1:3000/ops/runtime
 http://127.0.0.1:3000/ops/projects
 ```
 
 说明：
 
 - 上面是 `config.example.toml` 的默认端口；如果你在本地改过 `[server].port`，请按实际端口访问
-- `/ops/ui` 会展示聚合后的后台时间线
+- `/ops/ui` 会展示概览、活跃/排队任务、历史时间线，并支持直接取消 live run
+- `/ops/runtime` 会返回实时调度快照，适合脚本或排障时直接读取
 - 连续流式文本不会为每个 chunk 单独落一条事件，而是按同阶段连续流合并
 
 ## 文档
