@@ -99,4 +99,38 @@ describe("collectCleanupTargets", () => {
 
     expect(targets).toEqual([]);
   });
+
+  it("skips explicitly protected process ids so the stop command does not kill its own wrapper", () => {
+    const targets = collectCleanupTargets({
+      cwd: "D:/eijud/OneDrive/eijud-sync/project/coding-anywhere",
+      port: 3100,
+      currentPid: 9000,
+      protectedPids: [2234, 3234],
+      processes: [
+        {
+          ProcessId: 1234,
+          Name: "node.exe",
+          CommandLine: "\"node\" \"D:/eijud/OneDrive/eijud-sync/project/coding-anywhere/dist/src/index.js\"",
+        },
+        {
+          ProcessId: 2234,
+          Name: "cmd.exe",
+          CommandLine: "cmd.exe /d /s /c cd /d D:/eijud/OneDrive/eijud-sync/project/coding-anywhere && node scripts/stop.mjs",
+        },
+        {
+          ProcessId: 3234,
+          Name: "node.exe",
+          CommandLine: "\"node\" \"C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js\" --prefix D:/eijud/OneDrive/eijud-sync/project/coding-anywhere run stop",
+        },
+      ],
+      listeners: [
+        {
+          OwningProcess: 1234,
+          LocalPort: 3100,
+        },
+      ],
+    });
+
+    expect(targets).toEqual([1234]);
+  });
 });

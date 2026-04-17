@@ -105,17 +105,23 @@ export function collectCleanupTargets({
   cwd,
   port,
   currentPid,
+  protectedPids = [],
   processes,
   listeners,
 }) {
   const normalizedCwd = normalizePath(cwd);
   const targetIds = new Set();
+  const protectedPidSet = new Set(
+    toArray(protectedPids)
+      .map(value => Number(value))
+      .filter(value => Number.isInteger(value) && value > 0),
+  );
 
   for (const processInfo of processes) {
     const pid = Number(processInfo?.ProcessId);
     const commandLine =
       typeof processInfo?.CommandLine === "string" ? processInfo.CommandLine : "";
-    if (!pid || pid === currentPid) {
+    if (!pid || pid === currentPid || protectedPidSet.has(pid)) {
       continue;
     }
 
@@ -127,7 +133,7 @@ export function collectCleanupTargets({
   for (const listener of listeners) {
     const pid = Number(listener?.OwningProcess);
     const listenerPort = Number(listener?.LocalPort);
-    if (!pid || pid === currentPid || listenerPort !== port) {
+    if (!pid || pid === currentPid || protectedPidSet.has(pid) || listenerPort !== port) {
       continue;
     }
 
@@ -141,6 +147,7 @@ export function cleanupBeforeStartup(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const platform = options.platform ?? process.platform;
   const currentPid = options.currentPid ?? process.pid;
+  const protectedPids = options.protectedPids ?? [];
   const port = options.port ?? loadConfiguredPort(cwd);
 
   if (platform !== "win32" || !port) {
@@ -153,6 +160,7 @@ export function cleanupBeforeStartup(options = {}) {
     cwd,
     port,
     currentPid,
+    protectedPids,
     processes,
     listeners,
   });

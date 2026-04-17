@@ -97,6 +97,7 @@
 68. `/ca` 导航卡、“当前会话”卡和运行状态卡现在只有在当前 surface 确实存在 live run 时才展示“停止任务”；同时会在卡片里直接带出当前运行摘要，避免只给动作不给上下文
 69. 运行中的流式状态卡本身现在也带“停止任务”按钮，继续复用同一条 `/ca stop` 卡片回调链路
 70. assistant 的最终正文如果包含明显 Markdown 结构，会优先以 JSON 2.0 Markdown 卡片发送；若内容过大超出飞书 `interactive` 消息安全体积，则会回退为去掉 Markdown 标记的纯文本消息
+71. Windows 仓库根目录现在额外提供 `start-coding-anywhere.cmd` 与 `stop-coding-anywhere.cmd` 一键启停脚本；前者会先执行 `npm run build` 再进入前台 `npm run start`，后者会通过共享清理逻辑停止当前项目相关进程
 
 ### 2.3 当前仍未打通的部分
 
@@ -214,8 +215,21 @@ Windows 启动前清理模块。
 - 启动前扫描当前工作区相关的 `node` / `npm` / `cmd` 进程
 - 额外扫描目标端口上的监听进程
 - 在 `npm run dev` 与 `npm run start` 启动前做 best-effort 清理，减少残留进程导致的端口占用
+- 支持跳过受保护的 PID，供一键关闭脚本避免误杀当前 stop 命令自己的 `cmd` / `npm` 包装进程
 - 在 Windows 下会先切换当前控制台到 UTF-8，再以前台方式拉起子进程
 - 在收到终止信号时向子进程透传
+
+### 5.1.3 `scripts/stop.mjs`
+
+Windows 停止入口模块。
+
+职责：
+
+- 作为 `npm run stop` 的实际入口
+- 复用 `scripts/startup-cleanup.mjs` 的清理逻辑，停止当前项目相关的残留 `node` / `npm` / `cmd` 进程和目标端口监听
+- 在 Windows 下先切换控制台到 UTF-8
+- 保护当前 stop 命令的祖先进程链，避免一键关闭时误杀自己的包装脚本
+- 供仓库根目录的 `stop-coding-anywhere.cmd` 双击调用
 
 ### 5.2 `src/feishu-adapter.ts`
 
@@ -828,6 +842,7 @@ channel + peer_id -> codex_thread_id
 - 按钮回调通过同一条飞书长连接返回，不需要额外暴露公网回调地址
 - 相同线程不会并发执行两个 run
 - 后台可以看项目、线程和线程对应 run
+- Windows 本地使用时，现在可以直接双击仓库根目录的 `start-coding-anywhere.cmd` / `stop-coding-anywhere.cmd` 完成一键启停，不必再手动切目录并分别输入 build/start 命令
 - 当飞书长连接发生底层断线或重连时，控制台现在会额外打印 transport connected、socket close code / reason 和结构化 socket error，方便直接区分业务超时与 DNS / TLS / 代理链路故障
 - 运维侧可以先运行 `npm run test:feishu:auth` 完成一次人工登录，然后重复复用持久 profile 跑真实飞书网页版 smoke，而不用每次回归都重新登录
 
@@ -853,7 +868,7 @@ channel + peer_id -> codex_thread_id
 ### 15.1 基础回归
 
 1. `npm run doctor`
-2. `npm run start`
+2. Windows 本地双击 `start-coding-anywhere.cmd`，确认会先执行 `npm run build`，成功后进入前台服务日志；如需手工验证，也可直接执行 `npm run start`
 3. 飞书 DM 发 `/ca`
 4. 点击导航卡按钮验证回调
 5. 飞书 DM 发 `/ca status`
@@ -863,6 +878,7 @@ channel + peer_id -> codex_thread_id
 9. 再发一个普通任务，确认 DM 中先出现流式状态卡；run 完成后，卡片收口为摘要卡，完整 assistant 正文以下方单独消息展示
 10. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志；如长连接发生抖动，还应能看到 `feishu ws transport connected`、`feishu ws socket closed: code=...; reason=...` 和 `feishu ws socket error` 这类诊断日志
 11. 飞书 DM 先发一张图片，再补一条文字说明，确认 bridge 会先回复“已收到图片”，随后下一条文本 run 会消费该图片
+12. Windows 本地双击 `stop-coding-anywhere.cmd`（或执行 `npm run stop`），确认服务进程退出，且再次双击启动时不会因残留端口占用而失败
 
 ### 15.2 群线程回归
 
