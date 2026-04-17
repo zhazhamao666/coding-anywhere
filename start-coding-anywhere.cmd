@@ -15,5 +15,10 @@ if errorlevel 1 (
 call npm run start
 set "exit_code=%errorlevel%"
 
+echo.
+echo Coding Anywhere stopped with exit code %exit_code%.
+echo Press any key to close this window.
+pause >nul
+
 popd
 exit /b %exit_code%

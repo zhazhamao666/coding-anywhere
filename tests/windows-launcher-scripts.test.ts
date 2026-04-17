@@ -23,6 +23,9 @@ describe("Windows launcher scripts", () => {
     expect(content).toMatch(/call npm run build/i);
     expect(content).toMatch(/call npm run start/i);
     expect(content.indexOf("call npm run build")).toBeLessThan(content.indexOf("call npm run start"));
+    expect(content).toMatch(/echo Coding Anywhere stopped with exit code %exit_code%\./i);
+    expect(content).toMatch(/Press any key to close this window\./i);
+    expect(content.lastIndexOf("pause >nul")).toBeGreaterThan(content.indexOf("call npm run start"));
   });
 
   it("provides a root stop launcher that delegates to npm run stop", () => {

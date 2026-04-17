@@ -97,7 +97,7 @@
 68. `/ca` 导航卡、“当前会话”卡和运行状态卡现在只有在当前 surface 确实存在 live run 时才展示“停止任务”；同时会在卡片里直接带出当前运行摘要，避免只给动作不给上下文
 69. 运行中的流式状态卡本身现在也带“停止任务”按钮，继续复用同一条 `/ca stop` 卡片回调链路
 70. assistant 的最终正文如果包含明显 Markdown 结构，会优先以 JSON 2.0 Markdown 卡片发送；若内容过大超出飞书 `interactive` 消息安全体积，则会回退为去掉 Markdown 标记的纯文本消息
-71. Windows 仓库根目录现在额外提供 `start-coding-anywhere.cmd` 与 `stop-coding-anywhere.cmd` 一键启停脚本；前者会先执行 `npm run build` 再进入前台 `npm run start`，后者会通过共享清理逻辑停止当前项目相关进程
+71. Windows 仓库根目录现在额外提供 `start-coding-anywhere.cmd` 与 `stop-coding-anywhere.cmd` 一键启停脚本；前者会先执行 `npm run build` 再进入前台 `npm run start`，并在服务退出后保留窗口显示退出码，后者会通过共享清理逻辑停止当前项目相关进程
 
 ### 2.3 当前仍未打通的部分
 
@@ -843,6 +843,7 @@ channel + peer_id -> codex_thread_id
 - 相同线程不会并发执行两个 run
 - 后台可以看项目、线程和线程对应 run
 - Windows 本地使用时，现在可以直接双击仓库根目录的 `start-coding-anywhere.cmd` / `stop-coding-anywhere.cmd` 完成一键启停，不必再手动切目录并分别输入 build/start 命令
+- `start-coding-anywhere.cmd` 在服务退出后会继续保留当前窗口，并显示退出码，便于排查启动后秒退或异常退出
 - 当飞书长连接发生底层断线或重连时，控制台现在会额外打印 transport connected、socket close code / reason 和结构化 socket error，方便直接区分业务超时与 DNS / TLS / 代理链路故障
 - 运维侧可以先运行 `npm run test:feishu:auth` 完成一次人工登录，然后重复复用持久 profile 跑真实飞书网页版 smoke，而不用每次回归都重新登录
 
