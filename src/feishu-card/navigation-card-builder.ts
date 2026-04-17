@@ -6,6 +6,7 @@ export function buildBridgeHubCard(input: {
     items: string[];
     monospace?: boolean;
   }>;
+  extraElements?: Array<Record<string, unknown>>;
   rows?: Array<{
     title: string;
     lines?: string[];
@@ -96,6 +97,13 @@ export function buildBridgeHubCard(input: {
         ],
       });
     }
+  }
+
+  if (input.extraElements && input.extraElements.length > 0) {
+    elements.push({
+      tag: "hr",
+    });
+    elements.push(...input.extraElements);
   }
 
   if (input.actions && input.actions.length > 0) {

@@ -8,7 +8,12 @@ import type { BridgeReply } from "./types.js";
 interface CardActionValue {
   cardId?: string;
   command?: string;
-  bridgeAction?: "open_plan_form" | "submit_plan_form" | "answer_plan_choice";
+  bridgeAction?:
+    | "open_plan_form"
+    | "submit_plan_form"
+    | "answer_plan_choice"
+    | "set_codex_model"
+    | "set_reasoning_effort";
   interactionId?: string;
   choiceId?: string;
   chatId?: string;
@@ -46,6 +51,15 @@ export class FeishuCardActionService {
           interactionId: string;
           status?: string;
         } | undefined;
+        updateCodexPreferences?(input: {
+          channel: string;
+          peerId: string;
+          chatId?: string;
+          surfaceType?: "thread";
+          surfaceRef?: string;
+          model?: string;
+          reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+        }): Promise<BridgeReply>;
       };
       apiClient?: FeishuApiClientLike;
       createStreamingCardController?: (input: {
@@ -69,6 +83,7 @@ export class FeishuCardActionService {
     action?: {
       tag?: string;
       name?: string;
+      option?: string;
       value?: CardActionValue;
       form_value?: Record<string, unknown>;
     };
@@ -79,6 +94,36 @@ export class FeishuCardActionService {
     const bridgeAction = actionValue?.bridgeAction;
     const patchTargetCardId = actionValue?.cardId;
     const patchTargetMessageId = actionValue?.messageId ?? event.open_message_id;
+
+    if (bridgeAction === "set_codex_model" || bridgeAction === "set_reasoning_effort") {
+      const selectedOption = event.action?.option?.trim();
+      if (!selectedOption || !this.dependencies.bridgeService.updateCodexPreferences) {
+        return this.buildRawCardResponse(this.buildInfoCard("设置不可用", [
+          "当前环境暂时无法更新 Codex 会话设置。",
+        ], actionValue));
+      }
+
+      const updatedReply = await this.dependencies.bridgeService.updateCodexPreferences({
+        channel: "feishu",
+        peerId: event.open_id,
+        chatId: actionValue?.chatId,
+        surfaceType: actionValue?.surfaceType,
+        surfaceRef: actionValue?.surfaceRef,
+        ...(bridgeAction === "set_codex_model"
+          ? { model: selectedOption }
+          : { reasoningEffort: selectedOption as "minimal" | "low" | "medium" | "high" | "xhigh" }),
+      });
+
+      if (updatedReply.kind === "card") {
+        return this.buildRawCardResponse(updatedReply.card);
+      }
+
+      return this.buildRawCardResponse(this.buildInfoCard("设置已更新", [
+        updatedReply.kind === "system" || updatedReply.kind === "assistant"
+          ? updatedReply.text
+          : "当前设置已更新。",
+      ], actionValue));
+    }
 
     if (bridgeAction === "open_plan_form") {
       const card = buildPlanModeFormCard({

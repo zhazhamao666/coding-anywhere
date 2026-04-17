@@ -17,6 +17,21 @@ export interface PlanInteractionDraft {
   choices: PlanChoiceOption[];
 }
 
+export type CodexReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export interface CodexPreferenceCatalog {
+  defaultModel: string;
+  defaultReasoningEffort: CodexReasoningEffort;
+  modelOptions: string[];
+  reasoningEffortOptions: CodexReasoningEffort[];
+}
+
+export interface CodexPreferenceRecord {
+  model: string;
+  reasoningEffort: CodexReasoningEffort;
+  updatedAt: string;
+}
+
 export type PendingPlanInteractionStatus = "pending" | "resolved" | "superseded";
 
 export interface PendingPlanInteractionRecord extends PlanInteractionDraft {
@@ -274,6 +289,8 @@ export interface ProgressCardState {
   runId: string;
   rootName: string;
   sessionName?: string;
+  model?: string;
+  reasoningEffort?: CodexReasoningEffort;
   deliveryChatId?: string | null;
   deliverySurfaceType?: "thread" | null;
   deliverySurfaceRef?: string | null;
@@ -403,6 +420,8 @@ export interface RuntimeRunSnapshot {
   deliverySurfaceRef: string | null;
   sessionName: string;
   rootId: string;
+  model: string | null;
+  reasoningEffort: CodexReasoningEffort | null;
   status: ProgressStatus;
   stage: ProgressStage;
   latestPreview: string;

@@ -8,6 +8,10 @@ logDir = "logs"
 
 [codex]
 command = "codex"
+defaultModel = "gpt-5.4"
+defaultReasoningEffort = "high"
+modelOptions = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"]
+reasoningEffortOptions = ["minimal", "low", "medium", "high", "xhigh"]
 
 [feishu]
 appId = "cli_xxx"

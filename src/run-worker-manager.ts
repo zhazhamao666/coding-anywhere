@@ -1,6 +1,7 @@
 import { ThreadRunGuard } from "./thread-run-guard.js";
 import { RunCanceledError } from "./run-cancel-error.js";
 import type {
+  CodexReasoningEffort,
   ProgressStage,
   ProgressStatus,
   RuntimeSnapshot,
@@ -267,6 +268,8 @@ export class RunWorkerManager {
         deliverySurfaceRef: next.descriptor.deliverySurfaceRef ?? null,
         startedAt: next.descriptor.startedAt ?? new Date().toISOString(),
         activeStartedAt: new Date().toISOString(),
+        model: next.descriptor.model ?? null,
+        reasoningEffort: next.descriptor.reasoningEffort ?? null,
         status: next.descriptor.status ?? "queued",
         stage: next.descriptor.stage ?? "received",
         latestTool: next.descriptor.latestTool ?? null,
@@ -318,6 +321,8 @@ export interface RunDescriptor {
   deliverySurfaceRef?: string | null;
   sessionName: string;
   rootId: string;
+  model?: string | null;
+  reasoningEffort?: CodexReasoningEffort | null;
   status?: ProgressStatus;
   stage?: ProgressStage;
   latestPreview: string;
@@ -337,6 +342,8 @@ interface ActiveRunRecord {
   deliverySurfaceRef: string | null;
   sessionName: string;
   rootId: string;
+  model: string | null;
+  reasoningEffort: CodexReasoningEffort | null;
   status: ProgressStatus;
   stage: ProgressStage;
   latestPreview: string;
@@ -367,6 +374,8 @@ function toRuntimeRunSnapshot(
     deliverySurfaceRef?: string | null;
     sessionName: string;
     rootId: string;
+    model?: string | null;
+    reasoningEffort?: CodexReasoningEffort | null;
     status?: ProgressStatus;
     stage?: ProgressStage;
     latestPreview: string;
@@ -390,6 +399,8 @@ function toRuntimeRunSnapshot(
     deliverySurfaceRef: record.deliverySurfaceRef ?? null,
     sessionName: record.sessionName,
     rootId: record.rootId,
+    model: record.model ?? null,
+    reasoningEffort: record.reasoningEffort ?? null,
     status: record.status ?? "queued",
     stage: record.stage ?? "received",
     latestPreview: record.latestPreview,

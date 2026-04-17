@@ -37,6 +37,12 @@ export function buildStreamingCardMarkdown(state: ProgressCardState): string {
   if (state.sessionName) {
     lines.push(`**当前会话**：${state.sessionName}`);
   }
+  if (state.model) {
+    lines.push(`**当前模型**：${state.model}`);
+  }
+  if (state.reasoningEffort) {
+    lines.push(`**推理强度**：${state.reasoningEffort}`);
+  }
   if (state.latestTool) {
     lines.push(`**最近工具**：${state.latestTool}`);
   }

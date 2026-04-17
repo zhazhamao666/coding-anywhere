@@ -65,6 +65,108 @@ describe("BridgeService", () => {
     expect(cardText).not.toContain("停止任务");
   });
 
+  it("shows session model settings and applies updated model and reasoning to subsequent thread runs", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-current",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-current",
+      title: "follow-up",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+
+    const runner = createRunnerDouble();
+    const service = new BridgeService({
+      store,
+      runner,
+      codexPreferences: {
+        defaultModel: "gpt-5.4",
+        defaultReasoningEffort: "xhigh",
+        modelOptions: ["gpt-5.4", "gpt-5.4-mini"],
+        reasoningEffortOptions: ["medium", "high", "xhigh"],
+      },
+    });
+
+    const sessionReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "/ca session",
+    });
+    const sessionCard = (sessionReplies[0] as { card: Record<string, unknown> }).card;
+    const sessionCardText = JSON.stringify(sessionCard);
+    expect(sessionCardText).toContain("当前模型");
+    expect(sessionCardText).toContain("gpt-5.4");
+    expect(sessionCardText).toContain("推理强度");
+    expect(sessionCardText).toContain("xhigh");
+    expect(sessionCardText).toContain("\"bridgeAction\":\"set_codex_model\"");
+    expect(sessionCardText).toContain("\"bridgeAction\":\"set_reasoning_effort\"");
+
+    const updatedReply = await service.updateCodexPreferences({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      model: "gpt-5.4-mini",
+      reasoningEffort: "medium",
+    });
+    expect(updatedReply).toMatchObject({
+      kind: "card",
+    });
+    const updatedCard = (updatedReply as { card: Record<string, unknown> }).card;
+    const updatedCardText = JSON.stringify(updatedCard);
+    expect(updatedCardText).toContain("gpt-5.4-mini");
+    expect(updatedCardText).toContain("medium");
+
+    const statusReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "/ca status",
+    });
+    const statusCard = (statusReplies[0] as { card: Record<string, unknown> }).card;
+    const statusCardText = JSON.stringify(statusCard);
+    expect(statusCardText).toContain("gpt-5.4-mini");
+    expect(statusCardText).toContain("medium");
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "继续处理这个线程",
+    });
+
+    expect(runner.submitVerbatim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetKind: "codex_thread",
+        threadId: "thread-current",
+      }),
+      expect.any(String),
+      expect.objectContaining({
+        model: "gpt-5.4-mini",
+        reasoningEffort: "medium",
+      }),
+      expect.any(Function),
+    );
+  });
+
   it("shows the current live run for the same surface and stops it on /ca stop", async () => {
     store.createProject({
       projectId: "proj-current",

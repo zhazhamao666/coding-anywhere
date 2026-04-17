@@ -28,6 +28,8 @@ describe("createRuntime", () => {
       },
       codex: {
         command: "codex",
+        modelOptions: [],
+        reasoningEffortOptions: [],
       },
       scheduler: {
         maxConcurrentRuns: 2,
@@ -95,6 +97,8 @@ describe("createRuntime", () => {
       },
       codex: {
         command: "codex",
+        modelOptions: [],
+        reasoningEffortOptions: [],
       },
       scheduler: {
         maxConcurrentRuns: 2,
@@ -205,6 +209,8 @@ describe("createRuntime", () => {
       },
       codex: {
         command: "codex",
+        modelOptions: [],
+        reasoningEffortOptions: [],
       },
       scheduler: {
         maxConcurrentRuns: 2,
@@ -280,6 +286,8 @@ describe("createRuntime", () => {
       },
       codex: {
         command: "codex",
+        modelOptions: [],
+        reasoningEffortOptions: [],
       },
       scheduler: {
         maxConcurrentRuns: 2,
@@ -351,6 +359,8 @@ describe("createRuntime", () => {
       },
       codex: {
         command: "codex",
+        modelOptions: [],
+        reasoningEffortOptions: [],
       },
       scheduler: {
         maxConcurrentRuns: 2,

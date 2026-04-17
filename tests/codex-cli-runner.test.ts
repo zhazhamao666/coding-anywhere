@@ -138,6 +138,36 @@ describe("CodexCliRunner", () => {
     );
   });
 
+  it("forwards model and reasoning effort overrides to codex exec", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
+    const child = createChildFromFixture("create-thread.jsonl", 0);
+    execaMock.mockReturnValueOnce(child);
+
+    const runner = new CodexCliRunner("codex");
+
+    await runner.createThread({
+      cwd: "D:/repo",
+      prompt: "Initialize a bridge thread.",
+      model: "gpt-5.4-mini",
+      reasoningEffort: "medium",
+    });
+
+    expect(execaMock).toHaveBeenNthCalledWith(
+      2,
+      "codex",
+      ["exec", "-m", "gpt-5.4-mini", "-c", 'model_reasoning_effort="medium"', "--json", "-"],
+      {
+        cwd: "D:/repo",
+        input: "Initialize a bridge thread.",
+        reject: false,
+      },
+    );
+  });
+
   it("automatically skips git repo check when creating a native thread outside a git repository", async () => {
     execaMock.mockResolvedValueOnce({
       exitCode: 128,
@@ -309,6 +339,53 @@ describe("CodexCliRunner", () => {
       { type: "text", content: "RESUMED" },
       { type: "done", content: "RESUMED" },
     ]);
+  });
+
+  it("forwards model and reasoning effort overrides when resuming an existing thread", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
+    const child = createChildFromFixture("resume-thread.jsonl", 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new CodexCliRunner("codex");
+
+    await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "test",
+      {
+        model: "gpt-5.4-mini",
+        reasoningEffort: "medium",
+      },
+    );
+
+    expect(execaMock).toHaveBeenNthCalledWith(
+      2,
+      "codex",
+      [
+        "exec",
+        "resume",
+        "-m",
+        "gpt-5.4-mini",
+        "-c",
+        'model_reasoning_effort="medium"',
+        "--json",
+        "thread-demo",
+        "-",
+      ],
+      {
+        cwd: "D:/repo",
+        input: "test",
+        reject: false,
+      },
+    );
   });
 
   it("automatically skips git repo check when resuming a native thread outside a git repository", async () => {

@@ -6,6 +6,7 @@ import type { Logger } from "pino";
 import { buildApp } from "./app.js";
 import { BridgeService } from "./bridge-service.js";
 import { CodexCliRunner } from "./codex-cli-runner.js";
+import { resolveCodexPreferenceCatalog } from "./codex-preferences.js";
 import { CodexSqliteCatalog } from "./codex-sqlite-catalog.js";
 import type { BridgeConfig } from "./config.js";
 import { FeishuAdapter, type FeishuApiClientLike, type FeishuEnvelope } from "./feishu-adapter.js";
@@ -53,6 +54,7 @@ export async function createRuntime(
   const workerManager = new RunWorkerManager({
     maxConcurrentRuns: config.scheduler.maxConcurrentRuns,
   });
+  const codexPreferences = resolveCodexPreferenceCatalog(config.codex);
   let codexCatalog: CodexSqliteCatalog | undefined;
   try {
     codexCatalog = new CodexSqliteCatalog();
@@ -72,6 +74,7 @@ export async function createRuntime(
     workerManager,
     projectThreadService,
     codexCatalog,
+    codexPreferences,
   });
   const adapter = new FeishuAdapter({
     allowlist: config.feishu.allowlist,
@@ -254,22 +257,7 @@ function createDefaultWsClient(
     appId: config.feishu.appId,
     appSecret: config.feishu.appSecret,
     onEnvelope: envelope => adapter.handleEnvelope(envelope as FeishuEnvelope),
-    onCardAction: event =>
-      cardActionService.handleAction(event as {
-        open_id: string;
-        tenant_key?: string;
-        open_message_id?: string;
-        token?: string;
-        action?: {
-          tag?: string;
-          value?: {
-            command?: string;
-            chatId?: string;
-            surfaceType?: "thread";
-            surfaceRef?: string;
-          };
-        };
-      }),
+    onCardAction: event => cardActionService.handleAction(event as any),
     encryptKey: config.feishu.encryptKey || undefined,
     reconnectCount: config.feishu.reconnectCount,
     reconnectIntervalMs: config.feishu.reconnectIntervalSeconds * 1000,

@@ -7,6 +7,7 @@ import {
   validateBridgeImagePath,
 } from "./bridge-image-directive.js";
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
+import { normalizeReasoningEffort } from "./codex-preferences.js";
 import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import { normalizeMarkdownToPlainText } from "./markdown-text.js";
@@ -21,6 +22,9 @@ import type {
   BridgeReply,
   CodexCatalogConversationItem,
   CodexCatalogProject,
+  CodexPreferenceCatalog,
+  CodexPreferenceRecord,
+  CodexReasoningEffort,
   CodexCatalogThread,
   CodexCatalogThreadSourceInfo,
   PendingPlanInteractionRecord,
@@ -40,6 +44,8 @@ interface BridgeRunner {
       prompt: string;
       images?: string[];
       sessionName?: string;
+      model?: string;
+      reasoningEffort?: CodexReasoningEffort;
     },
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome & { threadId: string }>;
@@ -49,6 +55,8 @@ interface BridgeRunner {
     prompt: string,
     optionsOrOnEvent?: {
       images?: string[];
+      model?: string;
+      reasoningEffort?: CodexReasoningEffort;
     } | ((event: RunnerEvent) => void | Promise<void>),
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome>;
@@ -112,6 +120,24 @@ interface CatalogProjectChatBinding {
   chatId: string | null;
 }
 
+interface CodexPreferenceTarget {
+  kind: "thread" | "surface";
+  threadId?: string;
+  surface: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+  };
+}
+
+interface EffectiveCodexPreferences {
+  model: string;
+  reasoningEffort: CodexReasoningEffort;
+  source: "thread" | "surface" | "default";
+}
+
 export class BridgeService {
   public constructor(
     private readonly dependencies: {
@@ -121,6 +147,7 @@ export class BridgeService {
       workerManager?: RunWorkerManagerLike;
       projectThreadService?: Pick<ProjectThreadService, "createThread" | "linkThread">;
       codexCatalog?: CodexCatalogLike;
+      codexPreferences?: CodexPreferenceCatalog;
     },
   ) {}
 
@@ -142,10 +169,13 @@ export class BridgeService {
     });
 
     const resolved = this.resolveContext(input);
+    const effectivePreferences = this.resolveEffectiveCodexPreferences(input, resolved);
     let currentProgress = createProgressCardState({
       runId: buildRunId(),
       rootName: resolved.root.id,
       sessionName: resolved.sessionName,
+      model: effectivePreferences.model,
+      reasoningEffort: effectivePreferences.reasoningEffort,
       deliveryChatId: resolved.deliveryChatId,
       deliverySurfaceType: resolved.deliverySurfaceType,
       deliverySurfaceRef: resolved.deliverySurfaceRef,
@@ -218,7 +248,12 @@ export class BridgeService {
       let sawRunnerEvent = false;
 
       if (activeResolved.context.targetKind === "new_codex_thread") {
-        activeResolved = await this.materializeNativeContext(input, activeResolved, routed.prompt);
+        activeResolved = await this.materializeNativeContext(
+          input,
+          activeResolved,
+          routed.prompt,
+          effectivePreferences,
+        );
         currentThreadId = activeResolved.threadId;
         currentProgress = {
           ...currentProgress,
@@ -333,20 +368,32 @@ export class BridgeService {
         control?.setCanceler(async () => {
           await this.dependencies.runner.cancel(activeResolved.context);
         });
-        outcome = imagePaths.length > 0
-          ? await this.dependencies.runner.submitVerbatim(
-              activeResolved.context,
-              promptText,
-              {
-                images: imagePaths,
-              },
-              runnerEventHandler,
-            )
-          : await this.dependencies.runner.submitVerbatim(
-              activeResolved.context,
-              promptText,
-              runnerEventHandler,
-            );
+        if (imagePaths.length > 0 || effectivePreferences.source !== "default") {
+          const runnerOptions: {
+            images?: string[];
+            model?: string;
+            reasoningEffort?: CodexReasoningEffort;
+          } = {};
+          if (imagePaths.length > 0) {
+            runnerOptions.images = imagePaths;
+          }
+          if (effectivePreferences.source !== "default") {
+            runnerOptions.model = effectivePreferences.model;
+            runnerOptions.reasoningEffort = effectivePreferences.reasoningEffort;
+          }
+          outcome = await this.dependencies.runner.submitVerbatim(
+            activeResolved.context,
+            promptText,
+            runnerOptions,
+            runnerEventHandler,
+          );
+        } else {
+          outcome = await this.dependencies.runner.submitVerbatim(
+            activeResolved.context,
+            promptText,
+            runnerEventHandler,
+          );
+        }
       } catch (error) {
         if (!sawRunnerEvent && consumedAssets.length > 0) {
           this.dependencies.store.restoreConsumedBridgeAssets({
@@ -490,6 +537,8 @@ export class BridgeService {
       deliverySurfaceRef: resolved.deliverySurfaceRef,
       sessionName: resolved.sessionName,
       rootId: resolved.root.id,
+      model: effectivePreferences.model,
+      reasoningEffort: effectivePreferences.reasoningEffort,
       status: currentProgress.status,
       stage: currentProgress.stage,
       latestPreview: currentProgress.preview,
@@ -527,6 +576,50 @@ export class BridgeService {
 
   public getPendingPlanInteraction(interactionId: string): PendingPlanInteractionRecord | undefined {
     return this.dependencies.store.getPendingPlanInteraction(interactionId);
+  }
+
+  public async updateCodexPreferences(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
+    model?: string;
+    reasoningEffort?: CodexReasoningEffort;
+  }): Promise<BridgeReply> {
+    const sessionInput: BridgeMessageInput = {
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId,
+      surfaceType: input.surfaceType,
+      surfaceRef: input.surfaceRef,
+      text: `${BRIDGE_COMMAND_PREFIX} session`,
+    };
+    const resolved = this.resolveContext(sessionInput);
+    const target = this.resolveCodexPreferenceTarget(sessionInput, resolved);
+    const effectivePreferences = this.resolveEffectiveCodexPreferences(sessionInput, resolved);
+    const nextModel = normalizeCodexModel(input.model) ?? effectivePreferences.model;
+    const nextReasoningEffort = normalizeReasoningEffort(input.reasoningEffort) ?? effectivePreferences.reasoningEffort;
+
+    if (target.kind === "thread" && target.threadId) {
+      this.dependencies.store.upsertCodexThreadPreference({
+        threadId: target.threadId,
+        model: nextModel,
+        reasoningEffort: nextReasoningEffort,
+      });
+    } else {
+      this.dependencies.store.upsertCodexSurfacePreference({
+        ...target.surface,
+        model: nextModel,
+        reasoningEffort: nextReasoningEffort,
+      });
+    }
+
+    const [reply] = await this.handleMessage(sessionInput);
+    return reply ?? {
+      kind: "system",
+      text: "[ca] codex preferences updated",
+    };
   }
 
   public async handlePlanChoice(input: {
@@ -607,12 +700,28 @@ export class BridgeService {
       }
       case "new": {
         const resolved = this.resolveContext(input);
+        const effectivePreferences = this.resolveEffectiveCodexPreferences(input, resolved);
         const currentThread = input.surfaceType === "thread" && input.chatId && input.surfaceRef
           ? this.dependencies.store.getCodexThreadBySurface(input.chatId, input.surfaceRef)
           : undefined;
-        const created = await this.dependencies.runner.createThread({
+        const createThreadInput: {
+          cwd: string;
+          prompt: string;
+          model?: string;
+          reasoningEffort?: CodexReasoningEffort;
+        } = {
           cwd: resolved.context.cwd,
           prompt: buildNativeThreadBootstrapPrompt(currentThread?.title ?? resolved.threadId ?? resolved.sessionName),
+        };
+        if (effectivePreferences.source !== "default") {
+          createThreadInput.model = effectivePreferences.model;
+          createThreadInput.reasoningEffort = effectivePreferences.reasoningEffort;
+        }
+        const created = await this.dependencies.runner.createThread(createThreadInput);
+        this.dependencies.store.upsertCodexThreadPreference({
+          threadId: created.threadId,
+          model: effectivePreferences.model,
+          reasoningEffort: effectivePreferences.reasoningEffort,
         });
 
         if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
@@ -711,6 +820,13 @@ export class BridgeService {
     }
 
     const summaryLines = [`**Root**：${root.id}`, `**Root 路径**：${root.cwd}`];
+    const resolved = this.tryResolveContext(input);
+    const effectivePreferences = resolved
+      ? this.resolveEffectiveCodexPreferences(input, resolved)
+      : undefined;
+    if (effectivePreferences) {
+      summaryLines.push(...this.buildCodexPreferenceSummaryLines(effectivePreferences));
+    }
     const sections: Array<{ title: string; items: string[]; monospace?: boolean }> = [];
     const actionContext = this.buildCardActionContext(input);
     const actions: Array<{
@@ -1315,6 +1431,33 @@ export class BridgeService {
           cwd: project.cwd,
         },
       };
+    }
+
+    if (input.chatId) {
+      const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
+      if (projectChat) {
+        const project = this.dependencies.store.getProject(projectChat.projectId);
+        if (!project) {
+          throw new Error("PROJECT_NOT_REGISTERED");
+        }
+
+        return {
+          root,
+          wrapPrompt: true,
+          sessionName: buildSessionName(root.id),
+          projectId: project.projectId,
+          threadId: null,
+          deliveryChatId: input.chatId,
+          deliverySurfaceType: null,
+          deliverySurfaceRef: null,
+          concurrencyKey: `pending-project-chat:${input.chatId}`,
+          context: {
+            targetKind: "new_codex_thread",
+            sessionName: buildSessionName(root.id),
+            cwd: project.cwd,
+          },
+        };
+      }
     }
 
     const codexSelection = this.lookupDmCodexSelection(input);
@@ -2030,6 +2173,8 @@ export class BridgeService {
     thread: CodexCatalogThread,
     recentConversation: CodexCatalogConversationItem[],
   ): BridgeReply {
+    const resolved = this.resolveContext(input);
+    const effectivePreferences = this.resolveEffectiveCodexPreferences(input, resolved);
     const currentRun = this.findCurrentRunByThreadId(thread.threadId, `codex-thread:${thread.threadId}`);
     const actionContext = this.buildCardActionContext(input);
     const conversationItems = recentConversation.length > 0
@@ -2091,8 +2236,13 @@ export class BridgeService {
           `**当前线程**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`,
           `线程 ID：${thread.threadId}`,
           `**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`,
+          ...this.buildCodexPreferenceSummaryLines(effectivePreferences),
         ],
         sections,
+        extraElements: this.buildCodexPreferenceControlElements({
+          context: actionContext,
+          effectivePreferences,
+        }),
         actions,
       }),
     };
@@ -2102,6 +2252,8 @@ export class BridgeService {
     input: BridgeMessageInput,
     resolved: ResolvedContext,
   ): BridgeReply {
+    const effectivePreferences = this.resolveEffectiveCodexPreferences(input, resolved);
+    const preferenceTarget = this.resolveCodexPreferenceTarget(input, resolved);
     const currentRun = this.findCurrentRunForResolved(resolved);
     const contextItems = this.buildContextSummaryItems(input, resolved, currentRun);
     const actionContext = this.buildCardActionContext(input);
@@ -2111,6 +2263,7 @@ export class BridgeService {
       `**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`,
     ];
     summaryLines.push(...this.buildContextSummaryLines(input, resolved, currentRun));
+    summaryLines.push(...this.buildCodexPreferenceSummaryLines(effectivePreferences));
     const actions: Array<{
       label: string;
       value: Record<string, unknown>;
@@ -2148,10 +2301,18 @@ export class BridgeService {
                 items: ["当前没有运行中的任务。"],
               },
           {
+            title: "Codex 设置",
+            items: this.buildCodexPreferenceSectionItems(effectivePreferences, preferenceTarget),
+          },
+          {
             title: "当前上下文",
             items: contextItems.length > 0 ? contextItems : ["当前上下文暂不可用。"],
           },
         ],
+        extraElements: this.buildCodexPreferenceControlElements({
+          context: actionContext,
+          effectivePreferences,
+        }),
         actions,
       }),
     };
@@ -2169,6 +2330,9 @@ export class BridgeService {
     }
     if (resolved) {
       summaryLines.push(...this.buildContextSummaryLines(input, resolved, currentRun));
+      summaryLines.push(...this.buildCodexPreferenceSummaryLines(
+        this.resolveEffectiveCodexPreferences(input, resolved),
+      ));
     }
     summaryLines.push(`**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`);
 
@@ -2400,6 +2564,195 @@ export class BridgeService {
     return undefined;
   }
 
+  private getCodexPreferenceCatalog(): CodexPreferenceCatalog {
+    return this.dependencies.codexPreferences ?? {
+      defaultModel: "gpt-5.4",
+      defaultReasoningEffort: "high",
+      modelOptions: ["gpt-5.4", "gpt-5.4-mini"],
+      reasoningEffortOptions: ["minimal", "low", "medium", "high", "xhigh"],
+    };
+  }
+
+  private resolveCodexPreferenceTarget(
+    input: BridgeMessageInput,
+    resolved: ResolvedContext,
+  ): CodexPreferenceTarget {
+    if (resolved.threadId) {
+      return {
+        kind: "thread",
+        threadId: resolved.threadId,
+        surface: {
+          channel: input.channel,
+          peerId: input.peerId,
+          chatId: input.chatId ?? null,
+          surfaceType: input.surfaceType ?? null,
+          surfaceRef: input.surfaceRef ?? null,
+        },
+      };
+    }
+
+    return {
+      kind: "surface",
+      surface: {
+        channel: input.channel,
+        peerId: input.peerId,
+        chatId: input.chatId ?? null,
+        surfaceType: input.surfaceType ?? null,
+        surfaceRef: input.surfaceRef ?? null,
+      },
+    };
+  }
+
+  private resolveEffectiveCodexPreferences(
+    input: BridgeMessageInput,
+    resolved: ResolvedContext,
+  ): EffectiveCodexPreferences {
+    const catalog = this.getCodexPreferenceCatalog();
+    const threadPreference = resolved.threadId
+      ? this.dependencies.store.getCodexThreadPreference(resolved.threadId)
+      : undefined;
+    if (threadPreference) {
+      return {
+        model: threadPreference.model,
+        reasoningEffort: threadPreference.reasoningEffort,
+        source: "thread",
+      };
+    }
+
+    const surfacePreference = this.dependencies.store.getCodexSurfacePreference({
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+    });
+    if (surfacePreference) {
+      return {
+        model: surfacePreference.model,
+        reasoningEffort: surfacePreference.reasoningEffort,
+        source: "surface",
+      };
+    }
+
+    return {
+      model: catalog.defaultModel,
+      reasoningEffort: catalog.defaultReasoningEffort,
+      source: "default",
+    };
+  }
+
+  private buildCodexPreferenceSummaryLines(
+    effectivePreferences: EffectiveCodexPreferences,
+  ): string[] {
+    return [
+      `**当前模型**：${effectivePreferences.model}`,
+      `**推理强度**：${effectivePreferences.reasoningEffort}`,
+      `**设置范围**：${formatCodexPreferenceSourceLabel(effectivePreferences.source)}`,
+    ];
+  }
+
+  private buildCodexPreferenceSectionItems(
+    effectivePreferences: EffectiveCodexPreferences,
+    target: CodexPreferenceTarget,
+  ): string[] {
+    return [
+      `当前模型：${effectivePreferences.model}`,
+      `推理强度：${effectivePreferences.reasoningEffort}`,
+      `生效范围：${target.kind === "thread" ? "当前线程" : "当前会话入口"}`,
+    ];
+  }
+
+  private buildCodexPreferenceControlElements(input: {
+    context: {
+      chatId?: string;
+      surfaceType?: "thread";
+      surfaceRef?: string;
+    };
+    effectivePreferences: EffectiveCodexPreferences;
+  }): Array<Record<string, unknown>> {
+    const catalog = this.getCodexPreferenceCatalog();
+    return [
+      {
+        tag: "markdown",
+        content: [
+          "**Codex 设置**",
+          input.effectivePreferences.source === "thread"
+            ? "当前选择会直接作用于这个线程的后续运行。"
+            : "当前选择会作用于这个飞书会话入口；新线程会继承它。",
+        ].join("\n"),
+      },
+      {
+        tag: "column_set",
+        flex_mode: "none",
+        background_style: "default",
+        columns: [
+          {
+            tag: "column",
+            width: "weighted",
+            weight: 1,
+            vertical_align: "top",
+            elements: [
+              {
+                tag: "markdown",
+                content: "**模型**",
+              },
+              {
+                tag: "select_static",
+                initial_option: input.effectivePreferences.model,
+                placeholder: {
+                  tag: "plain_text",
+                  content: "选择模型",
+                },
+                options: catalog.modelOptions.map(model => ({
+                  text: {
+                    tag: "plain_text",
+                    content: model,
+                  },
+                  value: model,
+                })),
+                behaviors: [{
+                  type: "callback",
+                  value: this.buildCodexPreferenceActionValue(input.context, "set_codex_model"),
+                }],
+              },
+            ],
+          },
+          {
+            tag: "column",
+            width: "weighted",
+            weight: 1,
+            vertical_align: "top",
+            elements: [
+              {
+                tag: "markdown",
+                content: "**推理强度**",
+              },
+              {
+                tag: "select_static",
+                initial_option: input.effectivePreferences.reasoningEffort,
+                placeholder: {
+                  tag: "plain_text",
+                  content: "选择推理强度",
+                },
+                options: catalog.reasoningEffortOptions.map(reasoningEffort => ({
+                  text: {
+                    tag: "plain_text",
+                    content: reasoningEffort,
+                  },
+                  value: reasoningEffort,
+                })),
+                behaviors: [{
+                  type: "callback",
+                  value: this.buildCodexPreferenceActionValue(input.context, "set_reasoning_effort"),
+                }],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+  }
+
   private buildCurrentRunItems(
     currentRun: RuntimeRunSnapshot,
     includeWait = false,
@@ -2414,6 +2767,12 @@ export class BridgeService {
       items.push(`等待：${formatRuntimeDuration(currentRun.waitMs)}`);
     }
 
+    if (currentRun.model) {
+      items.push(`模型：${currentRun.model}`);
+    }
+    if (currentRun.reasoningEffort) {
+      items.push(`推理强度：${currentRun.reasoningEffort}`);
+    }
     items.push(`最近工具：${currentRun.latestTool ?? "无"}`);
     items.push(`摘要：${normalizeMarkdownToPlainText(currentRun.latestPreview)}`);
     return items;
@@ -2661,14 +3020,30 @@ export class BridgeService {
     input: BridgeMessageInput,
     resolved: ResolvedContext,
     prompt: string,
+    effectivePreferences: EffectiveCodexPreferences,
   ): Promise<ResolvedContext> {
     if (resolved.context.targetKind !== "new_codex_thread") {
       return resolved;
     }
 
-    const created = await this.dependencies.runner.createThread({
+    const createThreadInput: {
+      cwd: string;
+      prompt: string;
+      model?: string;
+      reasoningEffort?: CodexReasoningEffort;
+    } = {
       cwd: resolved.context.cwd,
       prompt: buildNativeThreadBootstrapPrompt(resolved.context.threadTitle ?? prompt),
+    };
+    if (effectivePreferences.source !== "default") {
+      createThreadInput.model = effectivePreferences.model;
+      createThreadInput.reasoningEffort = effectivePreferences.reasoningEffort;
+    }
+    const created = await this.dependencies.runner.createThread(createThreadInput);
+    this.dependencies.store.upsertCodexThreadPreference({
+      threadId: created.threadId,
+      model: effectivePreferences.model,
+      reasoningEffort: effectivePreferences.reasoningEffort,
     });
 
     if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
@@ -2712,6 +3087,22 @@ export class BridgeService {
   ): Record<string, unknown> {
     return {
       command,
+      chatId: context.chatId,
+      surfaceType: context.surfaceType,
+      surfaceRef: context.surfaceRef,
+    };
+  }
+
+  private buildCodexPreferenceActionValue(
+    context: {
+      chatId?: string;
+      surfaceType?: "thread";
+      surfaceRef?: string;
+    },
+    bridgeAction: "set_codex_model" | "set_reasoning_effort",
+  ): Record<string, unknown> {
+    return {
+      bridgeAction,
       chatId: context.chatId,
       surfaceType: context.surfaceType,
       surfaceRef: context.surfaceRef,
@@ -2809,6 +3200,21 @@ function buildGroupProjectButtons(input: {
   }
 
   return [];
+}
+
+function formatCodexPreferenceSourceLabel(source: EffectiveCodexPreferences["source"]): string {
+  switch (source) {
+    case "thread":
+      return "当前线程";
+    case "surface":
+      return "当前会话入口";
+    case "default":
+      return "系统默认";
+  }
+}
+
+function normalizeCodexModel(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function buildSessionName(rootId: string): string {

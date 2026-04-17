@@ -71,6 +71,8 @@ describe("feishu card builder", () => {
       status: "tool_active",
       stage: "tool_call",
       sessionName: "codex-main",
+      model: "gpt-5.4",
+      reasoningEffort: "xhigh",
       latestTool: "npm test",
       preview: "**明确待办**\n- 清理旧包",
     }));
@@ -78,6 +80,8 @@ describe("feishu card builder", () => {
     expect(markdown).toContain("工具执行中");
     expect(markdown).toContain("npm test");
     expect(markdown).toContain("codex-main");
+    expect(markdown).toContain("gpt-5.4");
+    expect(markdown).toContain("xhigh");
     expect(markdown).toContain("明确待办");
     expect(markdown).not.toContain("**明确待办**");
   });

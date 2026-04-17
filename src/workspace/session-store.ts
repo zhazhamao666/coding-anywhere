@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 
 import type {
   BridgeAssetRecord,
+  CodexPreferenceRecord,
   CodexProjectSelection,
   CodexWindowBinding,
   CodexThreadRecord,
@@ -188,6 +189,104 @@ export class SessionStore {
       DELETE FROM codex_project_selections
       WHERE channel = ? AND peer_id = ?
     `).run(channel, peerId);
+  }
+
+  public upsertCodexThreadPreference(input: {
+    threadId: string;
+    model: string;
+    reasoningEffort: CodexPreferenceRecord["reasoningEffort"];
+  }): void {
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO codex_thread_preferences (
+        thread_id, model, reasoning_effort, updated_at
+      ) VALUES (
+        @threadId, @model, @reasoningEffort, @updatedAt
+      )
+      ON CONFLICT(thread_id) DO UPDATE SET
+        model = excluded.model,
+        reasoning_effort = excluded.reasoning_effort,
+        updated_at = excluded.updated_at
+    `).run({
+      ...input,
+      updatedAt,
+    });
+  }
+
+  public getCodexThreadPreference(threadId: string): CodexPreferenceRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT model, reasoning_effort, updated_at
+      FROM codex_thread_preferences
+      WHERE thread_id = ?
+    `).get(threadId) as CodexPreferenceRow | undefined;
+
+    return row ? rowToCodexPreference(row) : undefined;
+  }
+
+  public deleteCodexThreadPreference(threadId: string): void {
+    this.db.prepare(`
+      DELETE FROM codex_thread_preferences
+      WHERE thread_id = ?
+    `).run(threadId);
+  }
+
+  public upsertCodexSurfacePreference(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+    model: string;
+    reasoningEffort: CodexPreferenceRecord["reasoningEffort"];
+  }): void {
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO codex_surface_preferences (
+        surface_key, channel, peer_id, chat_id, surface_type, surface_ref, model, reasoning_effort, updated_at
+      ) VALUES (
+        @surfaceKey, @channel, @peerId, @chatId, @surfaceType, @surfaceRef, @model, @reasoningEffort, @updatedAt
+      )
+      ON CONFLICT(surface_key) DO UPDATE SET
+        model = excluded.model,
+        reasoning_effort = excluded.reasoning_effort,
+        updated_at = excluded.updated_at
+    `).run({
+      ...input,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+      surfaceKey: buildSurfacePreferenceKey(input),
+      updatedAt,
+    });
+  }
+
+  public getCodexSurfacePreference(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+  }): CodexPreferenceRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT model, reasoning_effort, updated_at
+      FROM codex_surface_preferences
+      WHERE surface_key = ?
+    `).get(buildSurfacePreferenceKey(input)) as CodexPreferenceRow | undefined;
+
+    return row ? rowToCodexPreference(row) : undefined;
+  }
+
+  public deleteCodexSurfacePreference(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+  }): void {
+    this.db.prepare(`
+      DELETE FROM codex_surface_preferences
+      WHERE surface_key = ?
+    `).run(buildSurfacePreferenceKey(input));
   }
 
   public createProject(input: ProjectRecord): void {
@@ -1947,6 +2046,25 @@ export class SessionStore {
         PRIMARY KEY (channel, peer_id)
       );
 
+      CREATE TABLE IF NOT EXISTS codex_thread_preferences (
+        thread_id TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        reasoning_effort TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS codex_surface_preferences (
+        surface_key TEXT PRIMARY KEY,
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        chat_id TEXT,
+        surface_type TEXT,
+        surface_ref TEXT,
+        model TEXT NOT NULL,
+        reasoning_effort TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_observability_runs_updated_at
       ON observability_runs(updated_at DESC);
 
@@ -1970,6 +2088,9 @@ export class SessionStore {
 
       CREATE INDEX IF NOT EXISTS idx_pending_bridge_assets_status_created_at
       ON pending_bridge_assets(status, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_codex_surface_preferences_lookup
+      ON codex_surface_preferences(channel, peer_id, chat_id, surface_type, surface_ref);
 
     `);
 
@@ -2266,6 +2387,12 @@ interface CodexProjectSelectionRow {
   channel: string;
   peer_id: string;
   project_key: string;
+  updated_at: string;
+}
+
+interface CodexPreferenceRow {
+  model: string;
+  reasoning_effort: CodexPreferenceRecord["reasoningEffort"];
   updated_at: string;
 }
 
@@ -2580,6 +2707,24 @@ function buildBridgeAssetId(input: {
   return `asset-${createHash("sha256").update(identity).digest("hex")}`;
 }
 
+function buildSurfacePreferenceKey(input: {
+  channel: string;
+  peerId: string;
+  chatId?: string | null;
+  surfaceType?: "thread" | null;
+  surfaceRef?: string | null;
+}): string {
+  const identity = [
+    input.channel,
+    input.peerId,
+    input.chatId ?? "",
+    input.surfaceType ?? "",
+    input.surfaceRef ?? "",
+  ].join("|");
+
+  return `surface-${createHash("sha256").update(identity).digest("hex")}`;
+}
+
 function rowToCodexWindowBinding(row: CodexWindowBindingRow): CodexWindowBinding {
   return {
     channel: row.channel,
@@ -2594,6 +2739,14 @@ function rowToCodexProjectSelection(row: CodexProjectSelectionRow): CodexProject
     channel: row.channel,
     peerId: row.peer_id,
     projectKey: row.project_key,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToCodexPreference(row: CodexPreferenceRow): CodexPreferenceRecord {
+  return {
+    model: row.model,
+    reasoningEffort: row.reasoning_effort,
     updatedAt: row.updated_at,
   };
 }

@@ -4,6 +4,8 @@ export function createProgressCardState(input: {
   runId: string;
   rootName: string;
   sessionName?: string;
+  model?: string;
+  reasoningEffort?: ProgressCardState["reasoningEffort"];
   deliveryChatId?: string | null;
   deliverySurfaceType?: "thread" | null;
   deliverySurfaceRef?: string | null;
@@ -12,6 +14,8 @@ export function createProgressCardState(input: {
     runId: input.runId,
     rootName: input.rootName,
     sessionName: input.sessionName,
+    model: input.model,
+    reasoningEffort: input.reasoningEffort,
     deliveryChatId: input.deliveryChatId ?? null,
     deliverySurfaceType: input.deliverySurfaceType ?? null,
     deliverySurfaceRef: input.deliverySurfaceRef ?? null,

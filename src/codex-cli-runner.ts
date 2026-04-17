@@ -2,6 +2,7 @@ import { execa } from "execa";
 
 import { RunCanceledError } from "./run-cancel-error.js";
 import type {
+  CodexReasoningEffort,
   PlanChoiceOption,
   PlanInteractionDraft,
   PlanTodoItem,
@@ -54,13 +55,21 @@ export class CodexCliRunner {
       prompt: string;
       images?: string[];
       sessionName?: string;
+      model?: string;
+      reasoningEffort?: CodexReasoningEffort;
     },
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome & { threadId: string }> {
-    const args = await this.resolveWorkspaceArgs(
-      ["exec", "--json", "-"],
-      input.cwd,
-      1,
+    const args = withCodexPreferences(
+      await this.resolveWorkspaceArgs(
+        ["exec", "--json", "-"],
+        input.cwd,
+        1,
+      ),
+      {
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+      },
     );
     const outcome = await this.runCodexExec(
       withCodexImages(args, input.images),
@@ -85,6 +94,8 @@ export class CodexCliRunner {
     prompt: string,
     optionsOrOnEvent?: {
       images?: string[];
+      model?: string;
+      reasoningEffort?: CodexReasoningEffort;
     } | ((event: RunnerEvent) => void),
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome> {
@@ -95,16 +106,22 @@ export class CodexCliRunner {
       throw new Error("CODEX_THREAD_CONTEXT_REQUIRED");
     }
 
-    const args = await this.resolveWorkspaceArgs(
-      [
-        "exec",
-        "resume",
-        "--json",
-        context.threadId,
-        "-",
-      ],
-      context.cwd,
-      2,
+    const args = withCodexPreferences(
+      await this.resolveWorkspaceArgs(
+        [
+          "exec",
+          "resume",
+          "--json",
+          context.threadId,
+          "-",
+        ],
+        context.cwd,
+        2,
+      ),
+      {
+        model: options?.model,
+        reasoningEffort: options?.reasoningEffort,
+      },
     );
 
     return this.runCodexExec(
@@ -238,6 +255,37 @@ function withCodexImages(
     images.flatMap(imagePath => ["-i", imagePath]),
     trailingArgsCount,
   );
+}
+
+function withCodexPreferences(
+  args: string[],
+  options: {
+    model?: string;
+    reasoningEffort?: CodexReasoningEffort;
+  },
+): string[] {
+  const settingsArgs: string[] = [];
+  if (options.model?.trim()) {
+    settingsArgs.push("-m", options.model.trim());
+  }
+  if (options.reasoningEffort?.trim()) {
+    settingsArgs.push("-c", `model_reasoning_effort="${options.reasoningEffort.trim()}"`);
+  }
+
+  if (settingsArgs.length === 0) {
+    return args;
+  }
+
+  const jsonFlagIndex = args.indexOf("--json");
+  if (jsonFlagIndex >= 0) {
+    return [
+      ...args.slice(0, jsonFlagIndex),
+      ...settingsArgs,
+      ...args.slice(jsonFlagIndex),
+    ];
+  }
+
+  return [...args, ...settingsArgs];
 }
 
 function coalesceCodexExecEvent(event: RunnerEvent, assistantText: string): {

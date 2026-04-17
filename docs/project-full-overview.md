@@ -99,6 +99,9 @@
 70. `/ca` 导航卡、`/ca status`、运行中的流式卡、终态摘要卡，以及 assistant Markdown 正文卡写入 `config.summary` 的预览文本，都会先把 assistant Markdown 归一化为纯文本再展示，避免 `**标题**`、列表标记等原始语法直接泄漏到飞书卡片摘要区或会话列表预览
 71. assistant 的最终正文如果包含明显 Markdown 结构，会优先以 JSON 2.0 Markdown 卡片发送；若内容过大超出飞书 `interactive` 消息安全体积，则会回退为去掉 Markdown 标记的纯文本消息
 72. Windows 仓库根目录现在额外提供 `start-coding-anywhere.cmd` 与 `stop-coding-anywhere.cmd` 一键启停脚本；前者会先自拉起独立的 `cmd /k` 窗口，再执行 `npm run build` 和前台 `npm run start`，并在服务退出后保留窗口显示退出码，后者会通过共享清理逻辑停止当前项目相关进程
+73. 飞书侧现在可以在 `/ca`、`/ca status`、`/ca session` 中直接看到当前生效的 Codex `model` 与 `reasoning effort`；`/ca session` 还会提供下拉选择器，允许在飞书里切换这两个值
+74. Codex 偏好现在按“当前线程优先、当前 surface 兜底、系统默认回退”的顺序生效：已绑定 native thread 的 DM / 飞书线程会把设置记到 `thread_id` 级别；尚未绑定 native thread 的 DM、项目群或待创建线程 surface 则先记到当前 surface，并在后续创建新线程时继承
+75. bridge 在需要显式覆盖 Codex 默认行为时，会把飞书侧选中的设置透传给 CLI：创建线程或续跑线程时分别写入 `codex exec -m <model>` 与 `-c model_reasoning_effort="..."` 参数
 
 ### 2.3 当前仍未打通的部分
 
@@ -108,6 +111,8 @@
 - 自动创建飞书项目群本身
 - 精准跳转到指定 `thread_id` 的客户端导航能力
 - 完整的线程级前端管理页面
+- 飞书侧仍看不到 Codex 5 小时额度 / 周额度
+- 飞书侧还不能直接查看和切换更多 profile 级高级参数
 
 也就是说，群线程运行链路已经具备，并且现在可以用命令注册项目群和创建线程，但还没有做成完整的飞书导航型产品界面。
 
@@ -527,6 +532,7 @@ Feishu DM / Group Thread image
 - 已注册线程中的 `/ca new` 会创建新的 native thread 并重绑当前 Feishu thread surface
 - 当目标 `cwd` 不是 Git 仓库时，bridge 会自动补 `--skip-git-repo-check`，因此非 Git 项目也能创建或续跑 native thread
 - `/ca status` 会优先读取当前 surface 的 live run；有任务时返回结构化运行状态卡，空闲时返回当前上下文摘要卡；主信息优先展示可读的项目 / 线程名，`thread_id` 等 raw ID 只作为辅助诊断显示
+- `/ca`、`/ca status`、`/ca session` 都会直接展示当前生效的 `model` 与 `reasoning effort`
 - `/ca stop` 只作用于当前 surface 的 live run，不暴露任意 `runId`
   - 没有 live run：返回“当前没有运行中的任务”
   - queued：直接取消排队项并收口为 `canceled`
@@ -550,6 +556,8 @@ Feishu DM / Group Thread image
 - DM 中 `/ca thread switch <threadId>` 成功后会返回线程切换确认卡，并附带“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
 - DM 中已切到 Codex 原生线程后，`/ca session` 会返回当前会话卡片，并附带同一套“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
 - 其它 surface 上的 `/ca session` 也会回到结构化“当前会话”卡，展示当前上下文与 live run 摘要
+- `/ca session` 还会附带两个 JSON 2.0 `select_static` 下拉选择器，可直接在飞书里切换当前线程 / 当前 surface 的 `model` 与 `reasoning effort`
+- 对已经绑定 native thread 的上下文，设置会持久化到 `thread_id`；对尚未绑定 native thread 的上下文，设置会持久化到当前飞书 surface，并在后续 `new_codex_thread` 创建时继承
 - `/ca thread create*` 成功后会返回线程摘要卡片
 - DM 中的项目列表卡和线程列表卡现在带行级按钮：项目列表可“查看线程”“切换项目”，线程列表可“切换到此线程”；线程列表底部也提供直接“新会话”入口
 - 群主时间线中的项目列表卡也带行级按钮：未绑定项目可“绑定到本群”，已绑定当前群可进入“当前项目”，已绑定其他群只展示状态，避免误转绑
@@ -753,6 +761,14 @@ channel + peer_id -> codex_thread_id
 
 - `scheduler.maxConcurrentRuns`
   - 控制全局同时运行的 worker 数
+- `codex.defaultModel`
+  - 飞书侧在没有线程级 / surface 级偏好时展示和回退使用的默认模型
+- `codex.defaultReasoningEffort`
+  - 飞书侧在没有线程级 / surface 级偏好时展示和回退使用的默认推理强度
+- `codex.modelOptions`
+  - `/ca session` 模型下拉框的候选项；若未配置，会结合本机 `~/.codex/config.toml` 与内置常见模型做兜底
+- `codex.reasoningEffortOptions`
+  - `/ca session` 推理强度下拉框的候选项；若未配置，会结合本机 `~/.codex/config.toml` 与内置 `minimal ~ xhigh` 做兜底
 - `feishu.requireGroupMention`
   - 群线程兜底模式
   - 为 `true` 时，只有带 mention 的线程消息才会进入 Codex
@@ -882,6 +898,8 @@ channel + peer_id -> codex_thread_id
 10. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志；如长连接发生抖动，还应能看到 `feishu ws transport connected`、`feishu ws socket closed: code=...; reason=...` 和 `feishu ws socket error` 这类诊断日志
 11. 飞书 DM 先发一张图片，再补一条文字说明，确认 bridge 会先回复“已收到图片”，随后下一条文本 run 会消费该图片
 12. Windows 本地双击 `stop-coding-anywhere.cmd`（或执行 `npm run stop`），确认服务进程退出，且再次双击启动时不会因残留端口占用而失败
+13. 飞书 DM 或已注册线程里点击 `/ca session`，确认卡片会显示当前 `model` / `reasoning effort`，并能通过下拉框切换
+14. 切换模型或推理强度后，再次点击 `/ca status` 或直接续跑当前线程，确认状态卡能展示新的值，且随后的 native Codex run 会按选中的参数执行
 
 ### 15.2 群线程回归
 

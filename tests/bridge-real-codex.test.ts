@@ -45,9 +45,11 @@ describe("BridgeService real runner bridge coverage", () => {
 
   it("boots a new DM thread through the real CodexCliRunner and records the bridge run", async () => {
     execaMock
+      .mockResolvedValueOnce(createGitRepoCheckSuccess(bridgeRootCwd))
       .mockImplementationOnce(() =>
         createChildFromFixture("create-thread.jsonl", 0),
       )
+      .mockResolvedValueOnce(createGitRepoCheckSuccess(bridgeRootCwd))
       .mockImplementationOnce(() =>
         createChildFromFixture("resume-thread.jsonl", 0),
       );
@@ -66,6 +68,15 @@ describe("BridgeService real runner bridge coverage", () => {
 
     expect(execaMock).toHaveBeenNthCalledWith(
       1,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      expect.objectContaining({
+        cwd: bridgeRootCwd,
+        reject: false,
+      }),
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      2,
       "codex",
       ["exec", "--json", "-"],
       expect.objectContaining({
@@ -75,7 +86,16 @@ describe("BridgeService real runner bridge coverage", () => {
       }),
     );
     expect(execaMock).toHaveBeenNthCalledWith(
-      2,
+      3,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      expect.objectContaining({
+        cwd: bridgeRootCwd,
+        reject: false,
+      }),
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      4,
       "codex",
       [
         "exec",
@@ -135,9 +155,12 @@ describe("BridgeService real runner bridge coverage", () => {
       codexThreadId: "thread-native-current",
     });
 
-    execaMock.mockReturnValue(
+    const nativeCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    execaMock
+      .mockResolvedValueOnce(createGitRepoCheckSuccess(nativeCwd))
+      .mockReturnValueOnce(
       createChildFromFixture("resume-thread.jsonl", 0),
-    );
+      );
 
     const runner = new CodexCliRunner("codex");
     const service = new BridgeService({
@@ -204,12 +227,22 @@ describe("BridgeService real runner bridge coverage", () => {
       text: "继续对话",
     });
 
-    expect(execaMock).toHaveBeenCalledTimes(1);
-    expect(execaMock).toHaveBeenCalledWith(
+    expect(execaMock).toHaveBeenCalledTimes(2);
+    expect(execaMock).toHaveBeenNthCalledWith(
+      1,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      expect.objectContaining({
+        cwd: nativeCwd,
+        reject: false,
+      }),
+    );
+    expect(execaMock).toHaveBeenNthCalledWith(
+      2,
       "codex",
       ["exec", "resume", "--json", "thread-native-current", "-"],
       expect.objectContaining({
-        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        cwd: nativeCwd,
         input: "继续对话",
         reject: false,
       }),
@@ -255,9 +288,12 @@ describe("BridgeService real runner bridge coverage", () => {
       codexThreadId: "thread-plan-current",
     });
 
-    execaMock.mockReturnValue(
+    const nativeCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    execaMock
+      .mockResolvedValueOnce(createGitRepoCheckSuccess(nativeCwd))
+      .mockReturnValueOnce(
       createChildFromFixture("plan-mode.jsonl", 0),
-    );
+      );
 
     const runner = new CodexCliRunner("codex");
     const service = new BridgeService({
@@ -277,7 +313,16 @@ describe("BridgeService real runner bridge coverage", () => {
       text: "进入计划模式",
     });
 
-    expect(execaMock).toHaveBeenCalledTimes(1);
+    expect(execaMock).toHaveBeenCalledTimes(2);
+    expect(execaMock).toHaveBeenNthCalledWith(
+      1,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      expect.objectContaining({
+        cwd: nativeCwd,
+        reject: false,
+      }),
+    );
     expect(replies).toEqual([
       {
         kind: "assistant",
@@ -325,9 +370,12 @@ describe("BridgeService real runner bridge coverage", () => {
       codexThreadId: "thread-subagent-current",
     });
 
-    execaMock.mockReturnValue(
+    const nativeCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    execaMock
+      .mockResolvedValueOnce(createGitRepoCheckSuccess(nativeCwd))
+      .mockReturnValueOnce(
       createChildFromFixture("sub-agent.jsonl", 0),
-    );
+      );
 
     const runner = new CodexCliRunner("codex");
     const service = new BridgeService({
@@ -347,7 +395,16 @@ describe("BridgeService real runner bridge coverage", () => {
       text: "委派一个子代理",
     });
 
-    expect(execaMock).toHaveBeenCalledTimes(1);
+    expect(execaMock).toHaveBeenCalledTimes(2);
+    expect(execaMock).toHaveBeenNthCalledWith(
+      1,
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      expect.objectContaining({
+        cwd: nativeCwd,
+        reject: false,
+      }),
+    );
     expect(replies).toEqual([
       {
         kind: "assistant",
@@ -444,4 +501,12 @@ function createChildFromFixture(fileName: string, exitCode: number) {
       stdout: Readable.from(lines),
     },
   );
+}
+
+function createGitRepoCheckSuccess(cwd: string) {
+  return {
+    exitCode: 0,
+    stdout: cwd,
+    stderr: "",
+  };
 }
