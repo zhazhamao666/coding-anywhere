@@ -378,6 +378,11 @@ describe("FeishuAdapter", () => {
       "ou_demo",
       expect.objectContaining({
         schema: "2.0",
+        config: expect.objectContaining({
+          summary: expect.objectContaining({
+            content: "明确待办",
+          }),
+        }),
         header: expect.objectContaining({
           title: expect.objectContaining({
             content: "完整回复",

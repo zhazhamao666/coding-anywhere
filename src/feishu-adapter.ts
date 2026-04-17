@@ -577,7 +577,7 @@ function shouldRenderAssistantAsMarkdownCard(text: string): boolean {
 }
 
 function buildAssistantSummary(text: string): string {
-  const firstLine = text
+  const firstLine = normalizeMarkdownToPlainText(text)
     .split(/\r?\n/)
     .map(line => line.trim())
     .find(Boolean) ?? "完整回复";
