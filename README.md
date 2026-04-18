@@ -28,6 +28,7 @@
 - 当前 surface 有 live run 时，可以直接查看运行状态并在卡片里停止任务
 - 可以直接在飞书里看到当前会话使用的 Codex 模型和推理强度，并在“当前会话”卡里切换它们
 - 在 DM 里可以从“项目列表 -> 线程列表 -> 切换到此线程”一路点进 Codex 原生线程
+- 在 DM 里切换项目时，会主动退出之前绑定的旧线程，避免普通消息误跑到别的项目
 - 线程列表会把 Codex subagent 解析成母 agent / 子 agent 结构化展示，不再把 raw `source` JSON 暴露给飞书用户
 - 卡片按钮回调走飞书长连接，点击后可以原地刷新，不用额外暴露公网回调地址
 - 群话题线程和 DM 都能接入，同一线程里的上下文可以持续复用
@@ -67,6 +68,7 @@ Coding Anywhere
 - 支持 `/ca status` 结构化运行状态卡，以及当前 surface 的 `/ca stop`
 - 支持在 `/ca`、`/ca status`、`/ca session` 中展示当前生效的 `model` / `reasoning effort`
 - 支持在 `/ca session` 中通过下拉框切换当前线程 / 当前 surface 的 `model` / `reasoning effort`
+- 支持在 DM 中通过 `/ca project switch <projectKey>` 切到另一个 Codex 项目，并自动解除旧线程绑定
 - DM 中的项目列表直接读取本机 Codex `state_*.sqlite`
 - DM 中只记录“当前窗口绑定到哪个 Codex thread_id”，不镜像整份 Codex 项目目录
 - 已注册线程可复用长期存在的 Codex 会话
@@ -130,6 +132,7 @@ stop-coding-anywhere.cmd
 
 - 首次启动时如果本地还没有 `data/bridge.db`，程序会自动创建 SQLite 数据库和所需表结构
 - 仓库不会提交真实 `config.toml`，所以新环境仍然需要先执行 `npm run init:config` 并补齐配置，服务才会正常启动
+- 如果你会跑真实飞书 live smoke，建议额外设置 `FEISHU_LIVE_PROJECT_KEY=coding-anywhere-autotest` 之类的专用测试项目；smoke 会先切到该项目，再发送测试指令
 
 ## 最小使用方式
 

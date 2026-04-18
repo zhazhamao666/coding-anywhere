@@ -1919,8 +1919,10 @@ describe("BridgeService", () => {
     const cardText = JSON.stringify(card);
     expect(cardText).toContain("当前项目已切换");
     expect(cardText).toContain("当前项目：coding-anywhere");
-    expect(cardText).toContain("当前线程：native follow-up");
+    expect(cardText).toContain("已退出之前绑定的线程");
+    expect(cardText).toContain("下一条普通消息会在该项目下创建新会话");
     expect(cardText).not.toContain("已记录项目切换");
+    expect(store.getCodexWindowBinding("feishu", "ou_demo")).toBeUndefined();
   });
 
   it("renders Codex subagent threads under their parent without leaking raw source JSON", async () => {

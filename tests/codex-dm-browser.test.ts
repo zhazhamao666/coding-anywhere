@@ -83,6 +83,70 @@ describe("DM Codex browser", () => {
     expect(switchCardText).toContain("下一条普通消息会在该项目下创建新会话");
   });
 
+  it("clears an existing DM thread binding when switching to another project", async () => {
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-alpha-2",
+    });
+
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: createCatalogDouble(),
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project switch project-beta",
+    });
+
+    expect((store as any).getCodexWindowBinding("feishu", "ou_demo")).toBeUndefined();
+    expect((store as any).getCodexProjectSelection("feishu", "ou_demo")).toMatchObject({
+      projectKey: "project-beta",
+    });
+
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("当前项目已切换");
+    expect(cardText).toContain("Beta");
+    expect(cardText).toContain("已退出之前绑定的线程");
+    expect(cardText).not.toContain("Alpha follow-up");
+  });
+
+  it("treats a mismatched DM project selection as authoritative and clears the stale thread binding", async () => {
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-alpha-2",
+    });
+    store.setCodexProjectSelection({
+      channel: "feishu",
+      peerId: "ou_demo",
+      projectKey: "project-beta",
+    });
+
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: createCatalogDouble(),
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project current",
+    });
+
+    expect((store as any).getCodexWindowBinding("feishu", "ou_demo")).toBeUndefined();
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("当前项目");
+    expect(cardText).toContain("Beta");
+    expect(cardText).toContain("当前线程");
+    expect(cardText).toContain("未选择");
+    expect(cardText).not.toContain("Alpha follow-up");
+  });
+
   it("uses the selected DM project for current project and current thread list when no thread is bound", async () => {
     const service = new BridgeService({
       store,
@@ -295,6 +359,15 @@ function createCatalogDouble() {
       lastUpdatedAt: "2026-03-26T01:00:00.000Z",
       gitBranch: "main",
     },
+    {
+      projectKey: "project-beta",
+      cwd: "D:\\Repos\\Beta",
+      displayName: "Beta",
+      threadCount: 1,
+      activeThreadCount: 1,
+      lastUpdatedAt: "2026-03-26T03:00:00.000Z",
+      gitBranch: "main",
+    },
   ];
 
   const threads = [
@@ -325,6 +398,20 @@ function createCatalogDouble() {
       gitBranch: "main",
       cliVersion: "0.116.0",
       rolloutPath: "D:\\rollouts\\alpha-1.jsonl",
+    },
+    {
+      threadId: "thread-beta-1",
+      projectKey: "project-beta",
+      cwd: "D:\\Repos\\Beta",
+      displayName: "Beta",
+      title: "Beta kickoff",
+      source: "cli",
+      archived: false,
+      updatedAt: "2026-03-26T03:00:00.000Z",
+      createdAt: "2026-03-26T02:30:00.000Z",
+      gitBranch: "main",
+      cliVersion: "0.116.0",
+      rolloutPath: "D:\\rollouts\\beta-1.jsonl",
     },
   ];
 

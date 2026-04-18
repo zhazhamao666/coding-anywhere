@@ -33,10 +33,21 @@ test("opens the bot DM and sends a minimal /ca smoke command", async () => {
 
     const composer = page.locator(composerSelector).last();
     await expect(composer).toBeVisible({ timeout: 30_000 });
-    await composer.click();
-    await page.keyboard.press("Control+A");
-    await page.keyboard.type(smokeText);
-    await page.keyboard.press("Enter");
+    const sendComposerText = async (text: string) => {
+      await composer.click();
+      await page.keyboard.press("Control+A");
+      await page.keyboard.type(text);
+      await page.keyboard.press("Enter");
+    };
+
+    if (settings.projectKey) {
+      await sendComposerText(`/ca project switch ${settings.projectKey}`);
+      await expect(page.getByText("当前项目已切换", { exact: false }).first()).toBeVisible({
+        timeout: 45_000,
+      });
+    }
+
+    await sendComposerText(smokeText);
 
     await expect(page.getByText(expectedText, { exact: false }).first()).toBeVisible({
       timeout: 45_000,

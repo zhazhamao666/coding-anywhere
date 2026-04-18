@@ -72,6 +72,7 @@ describe("feishu live test settings", () => {
         env: {
           FEISHU_LIVE_DM_URL: "https://feishu.cn/messages/abc",
           FEISHU_LIVE_OPS_BASE_URL: "http://localhost:3000",
+          FEISHU_LIVE_PROJECT_KEY: "coding-anywhere-autotest",
         },
       },
       {
@@ -86,6 +87,7 @@ describe("feishu live test settings", () => {
 
     expect(settings.dmUrl).toBe("https://feishu.cn/messages/abc");
     expect(settings.opsBaseUrl).toBe("http://localhost:3000");
+    expect((settings as { projectKey?: string }).projectKey).toBe("coding-anywhere-autotest");
   });
 
   it("throws a clear error when the dm target is not configured", () => {

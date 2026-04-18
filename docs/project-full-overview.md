@@ -102,6 +102,9 @@
 73. 飞书侧现在可以在 `/ca`、`/ca status`、`/ca session` 中直接看到当前生效的 Codex `model` 与 `reasoning effort`；`/ca session` 还会提供下拉选择器，允许在飞书里切换这两个值
 74. Codex 偏好现在按“当前线程优先、当前 surface 兜底、系统默认回退”的顺序生效：已绑定 native thread 的 DM / 飞书线程会把设置记到 `thread_id` 级别；尚未绑定 native thread 的 DM、项目群或待创建线程 surface 则先记到当前 surface，并在后续创建新线程时继承
 75. bridge 在需要显式覆盖 Codex 默认行为时，会把飞书侧选中的设置透传给 CLI：创建线程或续跑线程时分别写入 `codex exec -m <model>` 与 `-c model_reasoning_effort="..."` 参数
+76. DM 中执行 `/ca project switch <projectKey>` 时，如果当前窗口还绑定着旧的 native Codex thread，bridge 现在会先解除这条旧绑定，再把“当前项目”切到目标项目；后续普通消息会在新项目下创建 fresh thread，而不是继续误跑旧项目
+77. 如果 DM 当前保存了“已选项目”和“已绑线程”两个互相冲突的跨项目状态，bridge 现在会优先相信显式项目选择，并自动清理那条旧线程绑定，避免继续把普通消息送进错误项目
+78. Playwright 版真实飞书 live smoke 现在支持通过 `FEISHU_LIVE_PROJECT_KEY` 先强制切到指定测试项目，再发送 smoke 指令，降低在业务项目上误跑真实验证的风险
 
 ### 2.3 当前仍未打通的部分
 
@@ -271,6 +274,7 @@ Windows 停止入口模块。
 - 生成 `/ca` 导航卡内容
 - 让导航卡、运行状态卡、当前会话卡优先展示可读的项目 / 线程标签，并把 raw ID 降到辅助诊断层
 - 为导航卡按钮编码回放命令上下文
+- 在 DM 中执行项目切换时主动解除旧线程绑定，并对“已选项目”和“已绑线程”的跨项目冲突做自动清理
 - 为计划模式表单和计划选择按钮编码 bridge 动作上下文
 - root 上下文封装
 - 同 surface 待处理图片的消费与 prompt 附件清单封装
@@ -802,6 +806,7 @@ channel + peer_id -> codex_thread_id
 - `npm run test:feishu:live` 会复用该 profile 打开真实飞书 DM 页面，不再重复自动登录
 - `FEISHU_LIVE_DM_URL` 用于指定待测机器人 DM 的网页地址；未设置时只允许做 auth bootstrap，不允许发消息 smoke
 - `FEISHU_LIVE_CONVERSATION_NAME` 可在 `FEISHU_LIVE_DM_URL` 只能打开 messenger 根页时指定左侧会话名，例如机器人 DM 或测试群名
+- `FEISHU_LIVE_PROJECT_KEY` 可选；设置后，live smoke 会先向 DM 发送 `/ca project switch <projectKey>`，确保真实验证落在指定测试项目
 - `FEISHU_LIVE_OPS_BASE_URL` 可显式覆盖 `/ops` 根地址；未设置时会从 `config.toml` 的 `[server]` 配置自动推导
 - `.auth/` 仅用于本地测试，不纳入 git
 
@@ -843,6 +848,7 @@ channel + peer_id -> codex_thread_id
 - 可以通过结构化列表卡快速浏览项目和线程
 - 在 DM 中切到某个 Codex 原生线程后，可以直接看到该线程“最后 1 条 user + 最后 4 条 assistant”消息的原文预览
 - 在 DM 中切到某个 Codex 原生线程后，点击“当前会话”也可以继续看到同一份最近对话预览
+- 在 DM 中切换项目后，旧线程绑定会被立即解除；这时下一条普通消息会在新项目下创建 fresh thread，而不是继续跑旧项目的上下文
 - 可以在 DM 或已注册飞书线程里直接点击“运行状态”，看到当前 surface 的 live run、耗时、最近工具和摘要；没有 live run 时也能看到空闲态上下文摘要
 - 可以在 DM 或已注册飞书线程里直接点击“停止任务”或发送 `/ca stop`，请求停止当前 surface 上正在执行或排队的任务
 - 可以通过摘要卡快速确认当前项目和新建线程结果
@@ -889,17 +895,18 @@ channel + peer_id -> codex_thread_id
 1. `npm run doctor`
 2. Windows 本地双击 `start-coding-anywhere.cmd`，确认会先执行 `npm run build`，成功后进入前台服务日志；如需手工验证，也可直接执行 `npm run start`
 3. 飞书 DM 发 `/ca`
-4. 点击导航卡按钮验证回调
-5. 飞书 DM 发 `/ca status`
-6. 飞书 DM 发一个足够长的任务，再次点击“运行状态”，确认卡片能展示 `runId`、状态、耗时、最近工具与摘要
-7. 在任务仍未结束时发送 `/ca stop`，确认 run 会先进入 `canceling`，随后收口为 `canceled`
-8. 打开 `/ops/runtime` 与 `/ops/ui`，确认 active / queued 面板、取消按钮和 run 时间线一致
-9. 再发一个普通任务，确认 DM 中先出现流式状态卡；run 完成后，卡片收口为摘要卡，完整 assistant 正文以下方单独消息展示
-10. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志；如长连接发生抖动，还应能看到 `feishu ws transport connected`、`feishu ws socket closed: code=...; reason=...` 和 `feishu ws socket error` 这类诊断日志
-11. 飞书 DM 先发一张图片，再补一条文字说明，确认 bridge 会先回复“已收到图片”，随后下一条文本 run 会消费该图片
-12. Windows 本地双击 `stop-coding-anywhere.cmd`（或执行 `npm run stop`），确认服务进程退出，且再次双击启动时不会因残留端口占用而失败
-13. 飞书 DM 或已注册线程里点击 `/ca session`，确认卡片会显示当前 `model` / `reasoning effort`，并能通过下拉框切换
-14. 切换模型或推理强度后，再次点击 `/ca status` 或直接续跑当前线程，确认状态卡能展示新的值，且随后的 native Codex run 会按选中的参数执行
+4. 如果要验证“切换项目后不再误跑旧线程”，先在一个已绑定旧线程的 DM 中执行 `/ca project switch <projectKey>`，确认返回卡会明确提示“已退出之前绑定的线程”
+5. 点击导航卡按钮验证回调
+6. 飞书 DM 发 `/ca status`
+7. 飞书 DM 发一个足够长的任务，再次点击“运行状态”，确认卡片能展示 `runId`、状态、耗时、最近工具与摘要
+8. 在任务仍未结束时发送 `/ca stop`，确认 run 会先进入 `canceling`，随后收口为 `canceled`
+9. 打开 `/ops/runtime` 与 `/ops/ui`，确认 active / queued 面板、取消按钮和 run 时间线一致
+10. 再发一个普通任务，确认 DM 中先出现流式状态卡；run 完成后，卡片收口为摘要卡，完整 assistant 正文以下方单独消息展示
+11. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志；如长连接发生抖动，还应能看到 `feishu ws transport connected`、`feishu ws socket closed: code=...; reason=...` 和 `feishu ws socket error` 这类诊断日志
+12. 飞书 DM 先发一张图片，再补一条文字说明，确认 bridge 会先回复“已收到图片”，随后下一条文本 run 会消费该图片
+13. Windows 本地双击 `stop-coding-anywhere.cmd`（或执行 `npm run stop`），确认服务进程退出，且再次双击启动时不会因残留端口占用而失败
+14. 飞书 DM 或已注册线程里点击 `/ca session`，确认卡片会显示当前 `model` / `reasoning effort`，并能通过下拉框切换
+15. 切换模型或推理强度后，再次点击 `/ca status` 或直接续跑当前线程，确认状态卡能展示新的值，且随后的 native Codex run 会按选中的参数执行
 
 ### 15.2 群线程回归
 
@@ -951,8 +958,9 @@ channel + peer_id -> codex_thread_id
 3. `npm run test:feishu:live`
 4. smoke 会复用 `.auth/feishu-profile` 打开真实 DM，默认发送 `/ca`，并等待页面出现“导航”字样
 5. smoke 还会请求 `/ops/overview` 确认本地 bridge 控制面可达；如需覆盖地址，设置 `FEISHU_LIVE_OPS_BASE_URL`
-6. 如需调整 smoke 指令、会话选择或断言，可设置 `FEISHU_LIVE_SMOKE_TEXT`、`FEISHU_LIVE_CONVERSATION_NAME`、`FEISHU_LIVE_EXPECT_TEXT`、`FEISHU_LIVE_COMPOSER_SELECTOR`
-7. 登录态失效时，重新运行 `npm run test:feishu:auth` 刷新 profile
+6. 如需把 smoke 固定到专用测试项目，再额外设置 `FEISHU_LIVE_PROJECT_KEY`；脚本会先执行一次 `/ca project switch <projectKey>` 再发送 smoke 指令
+7. 如需调整 smoke 指令、会话选择或断言，可设置 `FEISHU_LIVE_SMOKE_TEXT`、`FEISHU_LIVE_CONVERSATION_NAME`、`FEISHU_LIVE_EXPECT_TEXT`、`FEISHU_LIVE_COMPOSER_SELECTOR`
+8. 登录态失效时，重新运行 `npm run test:feishu:auth` 刷新 profile
 
 ### 15.5 Codex 真实调用烟测
 

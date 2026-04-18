@@ -6,6 +6,7 @@ export interface FeishuLiveTestSettings {
   cwd: string;
   dmUrl?: string;
   opsBaseUrl: string;
+  projectKey?: string;
 }
 
 export function loadFeishuLiveTestSettings(
@@ -21,11 +22,13 @@ export function loadFeishuLiveTestSettings(
   const env = input?.env ?? process.env;
   const dmUrl = env.FEISHU_LIVE_DM_URL;
   const opsBaseUrl = env.FEISHU_LIVE_OPS_BASE_URL ?? deriveOpsBaseUrl(cwd, dependencies);
+  const projectKey = env.FEISHU_LIVE_PROJECT_KEY?.trim() || undefined;
 
   return {
     cwd,
     dmUrl,
     opsBaseUrl,
+    projectKey,
   };
 }
 

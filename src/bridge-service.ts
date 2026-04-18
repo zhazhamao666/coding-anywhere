@@ -1114,13 +1114,17 @@ export class BridgeService {
         return [this.buildCodexProjectUnavailableCardReply(input)];
       }
 
+      const hadBoundThread = Boolean(this.dependencies.store.getCodexWindowBinding(input.channel, input.peerId));
       this.dependencies.store.setCodexProjectSelection({
         channel: input.channel,
         peerId: input.peerId,
         projectKey: project.projectKey,
       });
+      if (hadBoundThread) {
+        this.dependencies.store.clearCodexWindowBinding(input.channel, input.peerId);
+      }
 
-      return [this.buildCodexProjectSwitchedCardReply(input, project, this.lookupDmCodexSelection(input)?.thread)];
+      return [this.buildCodexProjectSwitchedCardReply(input, project, hadBoundThread)];
     }
 
     if (action === "current") {
@@ -1257,6 +1261,11 @@ export class BridgeService {
           channel: input.channel,
           peerId: input.peerId,
           codexThreadId: thread.threadId,
+        });
+        this.dependencies.store.setCodexProjectSelection({
+          channel: input.channel,
+          peerId: input.peerId,
+          projectKey: thread.projectKey,
         });
 
         const recentConversation = this.dependencies.codexCatalog.listRecentConversation(thread.threadId);
@@ -2119,19 +2128,13 @@ export class BridgeService {
   private buildCodexProjectSwitchedCardReply(
     input: BridgeMessageInput,
     project: CodexCatalogProject,
-    currentThread?: CodexCatalogThread,
+    clearedPreviousThread = false,
   ): BridgeReply {
-    const nextStepItems = currentThread
-      ? [
-          `当前项目：${project.displayName}`,
-          `当前线程：${formatCurrentThreadLabel(currentThread.title, currentThread.threadId)}`,
-          `线程 ID：${currentThread.threadId}`,
-          "下一条普通消息仍会进入当前线程；要在这个项目里开始新上下文，请点击“新会话”或先切换线程。",
-        ]
-      : [
-          `当前项目：${project.displayName}`,
-          "下一条普通消息会在该项目下创建新会话。",
-        ];
+    const nextStepItems = [
+      `当前项目：${project.displayName}`,
+      ...(clearedPreviousThread ? ["已退出之前绑定的线程，避免继续误跑旧项目。"] : []),
+      "下一条普通消息会在该项目下创建新会话。",
+    ];
 
     return {
       kind: "card",
@@ -2929,6 +2932,19 @@ export class BridgeService {
     if (!project) {
       this.dependencies.store.clearCodexWindowBinding(input.channel, input.peerId);
       return undefined;
+    }
+
+    const selectedProject = this.dependencies.store.getCodexProjectSelection(input.channel, input.peerId);
+    if (selectedProject) {
+      const selectedCatalogProject = this.dependencies.codexCatalog.getProject(selectedProject.projectKey, {
+        includeArchived: true,
+      });
+      if (!selectedCatalogProject) {
+        this.dependencies.store.clearCodexProjectSelection(input.channel, input.peerId);
+      } else if (selectedCatalogProject.projectKey !== project.projectKey) {
+        this.dependencies.store.clearCodexWindowBinding(input.channel, input.peerId);
+        return undefined;
+      }
     }
 
     return {
