@@ -117,6 +117,7 @@
 - 完整的线程级前端管理页面
 - 飞书侧仍看不到 Codex 5 小时额度 / 周额度
 - 飞书侧还不能直接查看和切换更多 profile 级高级参数
+- 桌面侧原生 Codex thread 完成通知目前只完成了本地 rollout completion 提取模块，尚未接入 runtime 轮询、路由决策和飞书投递
 
 也就是说，群线程运行链路已经具备，并且现在可以用命令注册项目群和创建线程，但还没有做成完整的飞书导航型产品界面。
 
@@ -240,6 +241,19 @@ Windows 停止入口模块。
 - 在 Windows 下先切换控制台到 UTF-8
 - 保护当前 stop 命令的祖先进程链，避免一键关闭时误杀自己的包装脚本
 - 供仓库根目录的 `stop-coding-anywhere.cmd` 双击调用
+
+### 5.1.4 `src/codex-desktop-completion-observer.ts`
+
+桌面侧 native Codex rollout completion 提取模块。
+
+职责：
+
+- 只面向本地 rollout `.jsonl` 文件，不依赖飞书 SDK、bridge 路由或消息发送逻辑
+- 从已记录的 byte offset 开始读取 rollout 文件新增的 JSONL 行
+- 识别 top-level `type=event_msg` 且 `payload.type=task_complete` 的终态事件
+- 提取最近一条 assistant `final_answer` 消息里的最终正文文本
+- 基于 `thread_id + task_complete timestamp + hash(final assistant text or "")` 生成稳定的 `completionKey`
+- 返回下一次继续 tail 所需的 `nextOffset`，供后续 runtime 轮询层持久化 watch state
 
 ### 5.2 `src/feishu-adapter.ts`
 
@@ -988,6 +1002,7 @@ channel + peer_id -> codex_thread_id
 11. `tests/codex-cli-runner.test.ts` 现在会直接回放 `plan-mode.jsonl` 与 `sub-agent.jsonl`，校验 native 计划事件和子代理生命周期事件是否被归一化成正确的 runner 事件
 12. `tests/bridge-real-codex.test.ts` 现在也会用同一批 fixture 校验 bridge 层的等待态、工具调用观测和最终回复，不要求额外真实 Codex 调用
 13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式表单卡、todo list 展示、待回答计划选择题和续跑同一 native thread 的桥接链路
+14. `tests/codex-desktop-completion-observer.test.ts` 会回放 `desktop-completion-single.jsonl` 与 `desktop-completion-repeat.jsonl`，校验本地 rollout completion 提取器的 offset 读取、`task_complete` 检测、最终 assistant 正文提取和稳定 `completionKey` 生成
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 
