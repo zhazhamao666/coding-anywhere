@@ -39,6 +39,26 @@ describe("codex desktop completion observer", () => {
     });
   });
 
+  it("returns the latest completion event from a rollout with repeated final answers", () => {
+    const rolloutPath = fixturePath("desktop-completion-repeat.jsonl");
+
+    const result = observeCodexDesktopCompletion({
+      threadId: "thread-1",
+      rolloutPath,
+      offset: 0,
+    });
+
+    expect(result).toEqual({
+      completion: {
+        threadId: "thread-1",
+        completedAt: "2026-04-20T10:00:40.000Z",
+        finalAssistantText: "second done",
+        completionKey: `thread-1:2026-04-20T10:00:40.000Z:${createHash("sha256").update("second done").digest("hex")}`,
+      },
+      nextOffset: readFileSync(rolloutPath).byteLength,
+    });
+  });
+
   it("builds a stable completionKey", () => {
     const first = buildCodexDesktopCompletionKey(
       "thread-1",
