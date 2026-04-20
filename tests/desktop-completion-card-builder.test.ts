@@ -82,6 +82,44 @@ describe("desktop completion card builder", () => {
       "mute_desktop_thread",
     ]);
   });
+
+  it("normalizes markdown-heavy multiline input to plain text and truncates summary lines", () => {
+    const input: DesktopCompletionCardInput = {
+      mode: "dm",
+      projectName: "**Alpha**\n# 注入标题",
+      threadTitle: "[继续处理](https://example.com/thread)\n- 伪列表",
+      completedAt: "2026-04-20T11:10:00.000Z",
+      summaryLines: [
+        "```\nconst done = true;\n```",
+        "**第二条**\n1. 伪步骤",
+        "[第三条](https://example.com/three)\n- 伪条目",
+        "第四条不该显示",
+      ],
+      lastUserHint: "请先看 `日志`\n> 然后继续",
+      threadId: "thread_native_markdown_789",
+    };
+
+    const card = buildDesktopCompletionCard(input);
+    const visibleText = collectVisibleText(card).join("\n");
+    const serialized = JSON.stringify(card);
+
+    expect(visibleText).toContain("Alpha 注入标题");
+    expect(visibleText).toContain("继续处理 (https://example.com/thread) • 伪列表");
+    expect(visibleText).toContain("const done = true;");
+    expect(visibleText).toContain("第二条 1. 伪步骤");
+    expect(visibleText).toContain("第三条 (https://example.com/three) • 伪条目");
+    expect(visibleText).toContain("请先看 日志 > 然后继续");
+    expect(visibleText).not.toContain("**Alpha**");
+    expect(visibleText).not.toContain("# 注入标题");
+    expect(visibleText).not.toContain("[继续处理](https://example.com/thread)");
+    expect(visibleText).not.toContain("```");
+    expect(visibleText).not.toContain("**第二条**");
+    expect(visibleText).not.toContain("[第三条](https://example.com/three)");
+    expect(visibleText).not.toContain("第四条不该显示");
+    expect(serialized).not.toContain("**Alpha**");
+    expect(serialized).not.toContain("[继续处理](https://example.com/thread)");
+    expect(serialized).not.toContain("```");
+  });
 });
 
 function collectVisibleText(node: unknown, parentKey?: string): string[] {

@@ -1,13 +1,20 @@
+import { normalizeMarkdownToPlainText } from "../markdown-text.js";
 import type { DesktopCompletionCardInput } from "../types.js";
 
 export function buildDesktopCompletionCard(
   input: DesktopCompletionCardInput,
 ): Record<string, unknown> {
+  const normalizedInput = {
+    ...input,
+    projectName: normalizeCardText(input.projectName),
+    threadTitle: normalizeCardText(input.threadTitle),
+    lastUserHint: input.lastUserHint ? normalizeCardText(input.lastUserHint) : undefined,
+  };
   const summaryLines = normalizeSummaryLines(input.summaryLines);
   const elements: Array<Record<string, unknown>> = [
     {
       tag: "markdown",
-      content: buildOverviewMarkdown(input),
+      content: buildOverviewMarkdown(normalizedInput),
     },
     {
       tag: "hr",
@@ -18,14 +25,14 @@ export function buildDesktopCompletionCard(
     },
   ];
 
-  if (input.lastUserHint?.trim()) {
+  if (normalizedInput.lastUserHint) {
     elements.push(
       {
         tag: "hr",
       },
       {
         tag: "markdown",
-        content: ["**上次你的意图**", input.lastUserHint.trim()].join("\n"),
+        content: ["**上次你的意图**", normalizedInput.lastUserHint ?? ""].join("\n"),
       },
     );
   }
@@ -64,7 +71,7 @@ export function buildDesktopCompletionCard(
       wide_screen_mode: true,
       update_multi: true,
       summary: {
-        content: buildCardSummary(input, summaryLines).slice(0, 120),
+        content: buildCardSummary(normalizedInput, summaryLines).slice(0, 120),
       },
     },
     header: {
@@ -135,7 +142,7 @@ function buildActionValue(
 
 function normalizeSummaryLines(summaryLines: string[]): string[] {
   const normalized = summaryLines
-    .map(line => line.trim())
+    .map(line => normalizeCardText(line))
     .filter(line => line.length > 0)
     .slice(0, 3);
 
@@ -158,7 +165,7 @@ function buildCardSummary(input: DesktopCompletionCardInput, summaryLines: strin
 function formatCompletedAt(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return value;
+    return normalizeCardText(value);
   }
 
   const year = date.getFullYear();
@@ -173,4 +180,14 @@ function formatCompletedAt(value: string): string {
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
+}
+
+function normalizeCardText(text: string): string {
+  return normalizeMarkdownToPlainText(text)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
