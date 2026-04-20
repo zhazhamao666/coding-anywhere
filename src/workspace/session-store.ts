@@ -8,6 +8,7 @@ import type {
   BridgeAssetRecord,
   CodexPreferenceRecord,
   CodexProjectSelection,
+  CodexThreadWatchStateRecord,
   CodexWindowBinding,
   CodexThreadRecord,
   ListRunsFilters,
@@ -189,6 +190,92 @@ export class SessionStore {
       DELETE FROM codex_project_selections
       WHERE channel = ? AND peer_id = ?
     `).run(channel, peerId);
+  }
+
+  public upsertCodexThreadWatchState(input: {
+    threadId: string;
+    rolloutPath: string;
+    rolloutMtime: string;
+    lastReadOffset: number;
+    lastCompletionKey?: string | null;
+    lastNotifiedCompletionKey?: string | null;
+  }): void {
+    const updatedAt = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT INTO codex_thread_watch_state (
+        thread_id,
+        rollout_path,
+        rollout_mtime,
+        last_read_offset,
+        last_completion_key,
+        last_notified_completion_key,
+        updated_at
+      ) VALUES (
+        @threadId,
+        @rolloutPath,
+        @rolloutMtime,
+        @lastReadOffset,
+        @lastCompletionKey,
+        @lastNotifiedCompletionKey,
+        @updatedAt
+      )
+      ON CONFLICT(thread_id) DO UPDATE SET
+        rollout_path = excluded.rollout_path,
+        rollout_mtime = excluded.rollout_mtime,
+        last_read_offset = excluded.last_read_offset,
+        last_completion_key = CASE
+          WHEN @lastCompletionKeyProvided = 1 THEN @lastCompletionKey
+          ELSE last_completion_key
+        END,
+        last_notified_completion_key = CASE
+          WHEN @lastNotifiedCompletionKeyProvided = 1 THEN @lastNotifiedCompletionKey
+          ELSE last_notified_completion_key
+        END,
+        updated_at = excluded.updated_at
+    `).run({
+      ...input,
+      lastCompletionKey: input.lastCompletionKey ?? null,
+      lastCompletionKeyProvided: Object.prototype.hasOwnProperty.call(input, "lastCompletionKey") ? 1 : 0,
+      lastNotifiedCompletionKey: input.lastNotifiedCompletionKey ?? null,
+      lastNotifiedCompletionKeyProvided:
+        Object.prototype.hasOwnProperty.call(input, "lastNotifiedCompletionKey") ? 1 : 0,
+      updatedAt,
+    });
+  }
+
+  public getCodexThreadWatchState(threadId: string): CodexThreadWatchStateRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT
+        thread_id,
+        rollout_path,
+        rollout_mtime,
+        last_read_offset,
+        last_completion_key,
+        last_notified_completion_key,
+        updated_at
+      FROM codex_thread_watch_state
+      WHERE thread_id = ?
+    `).get(threadId) as CodexThreadWatchStateRow | undefined;
+
+    return row ? rowToCodexThreadWatchState(row) : undefined;
+  }
+
+  public listCodexThreadWatchStates(): CodexThreadWatchStateRecord[] {
+    const rows = this.db.prepare(`
+      SELECT
+        thread_id,
+        rollout_path,
+        rollout_mtime,
+        last_read_offset,
+        last_completion_key,
+        last_notified_completion_key,
+        updated_at
+      FROM codex_thread_watch_state
+      ORDER BY updated_at DESC, thread_id ASC
+    `).all() as CodexThreadWatchStateRow[];
+
+    return rows.map(rowToCodexThreadWatchState);
   }
 
   public upsertCodexThreadPreference(input: {
@@ -2050,6 +2137,16 @@ export class SessionStore {
         PRIMARY KEY (channel, peer_id)
       );
 
+      CREATE TABLE IF NOT EXISTS codex_thread_watch_state (
+        thread_id TEXT PRIMARY KEY,
+        rollout_path TEXT NOT NULL,
+        rollout_mtime TEXT NOT NULL,
+        last_read_offset INTEGER NOT NULL,
+        last_completion_key TEXT,
+        last_notified_completion_key TEXT,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS codex_thread_preferences (
         thread_id TEXT PRIMARY KEY,
         model TEXT NOT NULL,
@@ -2094,6 +2191,9 @@ export class SessionStore {
 
       CREATE INDEX IF NOT EXISTS idx_pending_bridge_assets_status_created_at
       ON pending_bridge_assets(status, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_codex_thread_watch_state_updated_at
+      ON codex_thread_watch_state(updated_at DESC);
 
       CREATE INDEX IF NOT EXISTS idx_codex_surface_preferences_lookup
       ON codex_surface_preferences(channel, peer_id, chat_id, surface_type, surface_ref);
@@ -2416,6 +2516,16 @@ interface CodexProjectSelectionRow {
   channel: string;
   peer_id: string;
   project_key: string;
+  updated_at: string;
+}
+
+interface CodexThreadWatchStateRow {
+  thread_id: string;
+  rollout_path: string;
+  rollout_mtime: string;
+  last_read_offset: number;
+  last_completion_key: string | null;
+  last_notified_completion_key: string | null;
   updated_at: string;
 }
 
@@ -2769,6 +2879,18 @@ function rowToCodexProjectSelection(row: CodexProjectSelectionRow): CodexProject
     channel: row.channel,
     peerId: row.peer_id,
     projectKey: row.project_key,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToCodexThreadWatchState(row: CodexThreadWatchStateRow): CodexThreadWatchStateRecord {
+  return {
+    threadId: row.thread_id,
+    rolloutPath: row.rollout_path,
+    rolloutMtime: row.rollout_mtime,
+    lastReadOffset: row.last_read_offset,
+    lastCompletionKey: row.last_completion_key,
+    lastNotifiedCompletionKey: row.last_notified_completion_key,
     updatedAt: row.updated_at,
   };
 }

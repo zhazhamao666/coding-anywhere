@@ -198,6 +198,16 @@ export interface CodexCatalogThread {
   rolloutPath: string;
 }
 
+export interface CodexThreadWatchStateRecord {
+  threadId: string;
+  rolloutPath: string;
+  rolloutMtime: string;
+  lastReadOffset: number;
+  lastCompletionKey: string | null;
+  lastNotifiedCompletionKey: string | null;
+  updatedAt: string;
+}
+
 export interface CodexCatalogConversationItem {
   role: "user" | "assistant";
   text: string;
