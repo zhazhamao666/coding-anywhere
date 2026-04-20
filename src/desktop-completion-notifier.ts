@@ -77,6 +77,17 @@ export class DesktopCompletionNotifier {
         this.dependencies.codexCatalog?.listRecentConversation(input.completion.threadId, 8) ?? [],
       ),
       threadId: input.completion.threadId,
+      ...(input.target.mode === "project_group"
+        ? {
+            chatId: input.target.chatId,
+          }
+        : input.target.mode === "thread"
+          ? {
+              chatId: input.target.chatId,
+              surfaceType: "thread" as const,
+              surfaceRef: input.target.surfaceRef,
+            }
+          : {}),
     });
 
     const delivery = resolveFeishuAssistantMessageDelivery(resultText);

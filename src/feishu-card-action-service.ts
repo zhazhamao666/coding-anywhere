@@ -5,6 +5,14 @@ import { StreamingCardController } from "./feishu-card/streaming-card-controller
 import type { FeishuApiClientLike, StreamingCardControllerLike } from "./feishu-adapter.js";
 import type { BridgeReply } from "./types.js";
 
+interface DesktopThreadContinuationResult {
+  reply: BridgeReply;
+  topicReply?: {
+    anchorMessageId: string;
+    reply: BridgeReply;
+  };
+}
+
 interface CardActionValue {
   cardId?: string;
   command?: string;
@@ -72,7 +80,10 @@ export class FeishuCardActionService {
           peerId: string;
           threadId: string;
           mode: "dm" | "project_group" | "thread";
-        }): Promise<BridgeReply>;
+          chatId?: string;
+          surfaceType?: "thread";
+          surfaceRef?: string;
+        }): Promise<DesktopThreadContinuationResult>;
       };
       apiClient?: FeishuApiClientLike;
       createStreamingCardController?: (input: {
@@ -164,20 +175,52 @@ export class FeishuCardActionService {
         ], actionValue));
       }
 
-      const reply = await this.dependencies.bridgeService.continueDesktopThread({
+      const continuationResult = await this.dependencies.bridgeService.continueDesktopThread({
         channel: "feishu",
         peerId: event.open_id,
         threadId,
         mode,
+        chatId: actionValue?.chatId,
+        surfaceType: actionValue?.surfaceType,
+        surfaceRef: actionValue?.surfaceRef,
       });
 
-      if (reply.kind === "card") {
-        return this.buildRawCardResponse(reply.card);
+      const legacyHandoff = continuationResult as {
+        kind?: string;
+        card?: Record<string, unknown>;
+        targetCard?: Record<string, unknown>;
+        targetMessageId?: string;
+      };
+      if (
+        legacyHandoff.kind === "desktop_thread_handoff" &&
+        legacyHandoff.card &&
+        legacyHandoff.targetCard &&
+        legacyHandoff.targetMessageId
+      ) {
+        await this.deliverReplyToAnchor(legacyHandoff.targetMessageId, {
+          kind: "card",
+          card: legacyHandoff.targetCard,
+        } as BridgeReply);
+        return this.buildRawCardResponse(legacyHandoff.card);
+      }
+
+      const reply = isDesktopThreadContinuationResult(continuationResult)
+        ? continuationResult
+        : {
+            reply: continuationResult as BridgeReply,
+          };
+
+      if (reply.topicReply) {
+        await this.deliverReplyToAnchor(reply.topicReply.anchorMessageId, reply.topicReply.reply);
+      }
+
+      if (reply.reply.kind === "card") {
+        return this.buildRawCardResponse(reply.reply.card);
       }
 
       return this.buildRawCardResponse(this.buildInfoCard("继续入口不可用", [
-        reply.kind === "system" || reply.kind === "assistant"
-          ? reply.text
+        reply.reply.kind === "system" || reply.reply.kind === "assistant"
+          ? reply.reply.text
           : "当前环境暂时无法继续这个桌面线程。",
       ], actionValue));
     }
@@ -477,6 +520,24 @@ export class FeishuCardActionService {
     );
   }
 
+  private async deliverReplyToAnchor(anchorMessageId: string, reply: BridgeReply): Promise<void> {
+    if (!this.dependencies.apiClient) {
+      throw new Error("FEISHU_API_CLIENT_REQUIRED");
+    }
+
+    if (reply.kind === "card") {
+      await this.dependencies.apiClient.replyInteractiveCard(anchorMessageId, reply.card);
+      return;
+    }
+
+    if (reply.kind === "assistant" || reply.kind === "system") {
+      await this.dependencies.apiClient.replyTextMessage(anchorMessageId, reply.text);
+      return;
+    }
+
+    throw new Error("FEISHU_DESKTOP_CONTINUE_REPLY_KIND_UNSUPPORTED");
+  }
+
   private async deliverImageReplies(input: {
     replies: BridgeReply[];
     peerId: string;
@@ -588,6 +649,12 @@ function summarizeCard(card: Record<string, unknown>): Record<string, unknown> {
     elementCount: elements.length,
     firstElementTag: (elements[0] as { tag?: string } | undefined)?.tag ?? "",
   };
+}
+
+function isDesktopThreadContinuationResult(value: unknown): value is DesktopThreadContinuationResult {
+  return !!value
+    && typeof value === "object"
+    && "reply" in value;
 }
 
 function readTextField(formValue: Record<string, unknown> | undefined, key: string): string | undefined {

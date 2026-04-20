@@ -171,6 +171,9 @@ export interface DesktopCompletionCardInput {
   summaryLines: string[];
   reminderText?: string;
   threadId: string;
+  chatId?: string;
+  surfaceType?: "thread";
+  surfaceRef?: string;
 }
 
 export interface CodexCatalogProject {

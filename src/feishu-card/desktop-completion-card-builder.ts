@@ -154,17 +154,17 @@ function buildActions(input: DesktopCompletionCardInput): Array<{
     {
       label: resolvePrimaryActionLabel(input.mode),
       type: "primary",
-      value: buildActionValue("continue_desktop_thread", input.threadId, input.mode),
+      value: buildActionValue("continue_desktop_thread", input),
     },
     {
       label: "查看线程记录",
       type: "default",
-      value: buildActionValue("view_desktop_thread_history", input.threadId, input.mode),
+      value: buildActionValue("view_desktop_thread_history", input),
     },
     {
       label: "静音此线程",
       type: "default",
-      value: buildActionValue("mute_desktop_thread", input.threadId, input.mode),
+      value: buildActionValue("mute_desktop_thread", input),
     },
   ];
 }
@@ -182,13 +182,15 @@ function resolvePrimaryActionLabel(mode: DesktopCompletionCardInput["mode"]): st
 
 function buildActionValue(
   bridgeAction: "continue_desktop_thread" | "view_desktop_thread_history" | "mute_desktop_thread",
-  threadId: string,
-  mode: DesktopCompletionCardInput["mode"],
+  input: Pick<DesktopCompletionCardInput, "threadId" | "mode" | "chatId" | "surfaceType" | "surfaceRef">,
 ): Record<string, unknown> {
   return {
     bridgeAction,
-    threadId,
-    mode,
+    threadId: input.threadId,
+    mode: input.mode,
+    ...(input.chatId ? { chatId: input.chatId } : {}),
+    ...(input.surfaceType ? { surfaceType: input.surfaceType } : {}),
+    ...(input.surfaceRef ? { surfaceRef: input.surfaceRef } : {}),
   };
 }
 

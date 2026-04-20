@@ -366,6 +366,138 @@ describe("FeishuCardActionService", () => {
     });
   });
 
+  it("passes desktop completion surface context through to continueDesktopThread and returns the refreshed card", async () => {
+    const replyCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "当前会话",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
+    const bridgeService = {
+      handleMessage: vi.fn(async () => []),
+      continueDesktopThread: vi.fn(async () => ({
+        reply: {
+          kind: "card",
+          card: replyCard,
+        },
+      })),
+    };
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: createApiClientDouble() as any,
+    });
+
+    const result = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_card_1",
+      action: {
+        tag: "button",
+        value: {
+          bridgeAction: "continue_desktop_thread",
+          mode: "thread",
+          threadId: "thread-native-current",
+          chatId: "oc_chat_current",
+          surfaceType: "thread",
+          surfaceRef: "omt_current",
+        },
+      },
+    });
+
+    expect(bridgeService.continueDesktopThread).toHaveBeenCalledWith({
+      channel: "feishu",
+      peerId: "ou_demo",
+      threadId: "thread-native-current",
+      mode: "thread",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    });
+    expect(result).toMatchObject({
+      card: {
+        type: "raw",
+        data: replyCard,
+      },
+    });
+  });
+
+  it("posts the standard current-session card into the linked topic when continueDesktopThread returns a handoff result", async () => {
+    const statusCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "已转到话题继续",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
+    const targetCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "当前会话",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
+    const bridgeService = {
+      handleMessage: vi.fn(async () => []),
+      continueDesktopThread: vi.fn(async () => ({
+        reply: {
+          kind: "card",
+          card: statusCard,
+        },
+        topicReply: {
+          anchorMessageId: "om_topic_new",
+          reply: {
+            kind: "card",
+            card: targetCard,
+          },
+        },
+      })),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const result = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_card_1",
+      action: {
+        tag: "button",
+        value: {
+          bridgeAction: "continue_desktop_thread",
+          mode: "project_group",
+          threadId: "thread-native-current",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    expect(apiClient.replyInteractiveCard).toHaveBeenCalledWith("om_topic_new", targetCard);
+    expect(result).toMatchObject({
+      card: {
+        type: "raw",
+        data: statusCard,
+      },
+    });
+  });
+
   it("submits a plan form asynchronously and returns an immediate ack card", async () => {
     const bridgeService = {
       handleMessage: vi.fn(() => new Promise<BridgeReply[]>(() => undefined)),

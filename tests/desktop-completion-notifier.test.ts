@@ -80,6 +80,7 @@ describe("DesktopCompletionNotifier", () => {
     });
 
     const notificationCard = harness.apiClient.replyInteractiveCard.mock.calls[0]?.[1] as Record<string, unknown>;
+    const notificationButtons = collectButtons(notificationCard);
 
     expect(harness.apiClient.replyInteractiveCard).toHaveBeenCalledWith(
       "om_anchor_topic_1",
@@ -95,9 +96,37 @@ describe("DesktopCompletionNotifier", () => {
       expect.arrayContaining([
         expect.objectContaining({
           label: "在当前话题继续",
+          value: expect.objectContaining({
+            chatId: "oc_group_1",
+            surfaceType: "thread",
+            surfaceRef: "omt_topic_1",
+          }),
         }),
       ]),
     );
+    expect(notificationButtons).toEqual([
+      expect.objectContaining({
+        value: expect.objectContaining({
+          chatId: "oc_group_1",
+          surfaceType: "thread",
+          surfaceRef: "omt_topic_1",
+        }),
+      }),
+      expect.objectContaining({
+        value: expect.objectContaining({
+          chatId: "oc_group_1",
+          surfaceType: "thread",
+          surfaceRef: "omt_topic_1",
+        }),
+      }),
+      expect.objectContaining({
+        value: expect.objectContaining({
+          chatId: "oc_group_1",
+          surfaceType: "thread",
+          surfaceRef: "omt_topic_1",
+        }),
+      }),
+    ]);
     expect(collectButtons(notificationCard)).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -140,6 +169,24 @@ describe("DesktopCompletionNotifier", () => {
         }),
       }),
     );
+    const notificationCard = harness.apiClient.sendInteractiveCardToChat.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(collectButtons(notificationCard)).toEqual([
+      expect.objectContaining({
+        value: expect.objectContaining({
+          chatId: "oc_group_1",
+        }),
+      }),
+      expect.objectContaining({
+        value: expect.objectContaining({
+          chatId: "oc_group_1",
+        }),
+      }),
+      expect.objectContaining({
+        value: expect.objectContaining({
+          chatId: "oc_group_1",
+        }),
+      }),
+    ]);
     expect(harness.apiClient.replyTextMessage).toHaveBeenCalledWith(
       "om_group_root_card_1",
       "项目群里的完整结果也发好了。",

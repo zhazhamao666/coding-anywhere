@@ -51,9 +51,18 @@ describe("desktop completion card builder", () => {
         }),
       }),
     ]);
+    expect(buttons.map(button => button.value)).toEqual(
+      expect.arrayContaining([
+        expect.not.objectContaining({
+          chatId: expect.anything(),
+          surfaceType: expect.anything(),
+          surfaceRef: expect.anything(),
+        }),
+      ]),
+    );
   });
 
-  it("uses a group-specific primary label and caps actions at one primary plus two secondary buttons", () => {
+  it("uses a group-specific primary label, caps actions at one primary plus two secondary buttons, and preserves group context", () => {
     const input: DesktopCompletionCardInput = {
       mode: "project_group",
       projectName: "Beta Project",
@@ -61,6 +70,7 @@ describe("desktop completion card builder", () => {
       completedAt: "2026-04-20T11:00:00.000Z",
       summaryLines: ["群通知版本已准备好，等待接入后续回调。"],
       threadId: "thread_native_group_456",
+      chatId: "oc_group_456",
     };
     const card = buildDesktopCompletionCard(input);
 
@@ -82,9 +92,20 @@ describe("desktop completion card builder", () => {
       "view_desktop_thread_history",
       "mute_desktop_thread",
     ]);
+    expect(buttons.map(button => button.value)).toEqual([
+      expect.objectContaining({
+        chatId: "oc_group_456",
+      }),
+      expect.objectContaining({
+        chatId: "oc_group_456",
+      }),
+      expect.objectContaining({
+        chatId: "oc_group_456",
+      }),
+    ]);
   });
 
-  it("uses a topic-specific primary label for existing-topic delivery", () => {
+  it("uses a topic-specific primary label for existing-topic delivery and preserves thread context on all actions", () => {
     const input: DesktopCompletionCardInput = {
       mode: "thread",
       projectName: "Gamma Project",
@@ -92,6 +113,9 @@ describe("desktop completion card builder", () => {
       completedAt: "2026-04-20T11:05:00.000Z",
       summaryLines: ["已有话题里的完成通知应该提示继续当前话题。"],
       threadId: "thread_native_topic_321",
+      chatId: "oc_group_topic_321",
+      surfaceType: "thread",
+      surfaceRef: "omt_topic_321",
     };
 
     const card = buildDesktopCompletionCard(input);
@@ -103,7 +127,27 @@ describe("desktop completion card builder", () => {
         value: expect.objectContaining({
           mode: "thread",
           threadId: "thread_native_topic_321",
+          chatId: "oc_group_topic_321",
+          surfaceType: "thread",
+          surfaceRef: "omt_topic_321",
         }),
+      }),
+    ]);
+    expect(buttons.map(button => button.value)).toEqual([
+      expect.objectContaining({
+        chatId: "oc_group_topic_321",
+        surfaceType: "thread",
+        surfaceRef: "omt_topic_321",
+      }),
+      expect.objectContaining({
+        chatId: "oc_group_topic_321",
+        surfaceType: "thread",
+        surfaceRef: "omt_topic_321",
+      }),
+      expect.objectContaining({
+        chatId: "oc_group_topic_321",
+        surfaceType: "thread",
+        surfaceRef: "omt_topic_321",
       }),
     ]);
   });

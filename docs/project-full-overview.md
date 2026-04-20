@@ -106,7 +106,7 @@
 77. DM 中执行 `/ca project switch <projectKey>` 时，如果当前窗口还绑定着旧的 native Codex thread，bridge 现在会先解除这条旧绑定，再把“当前项目”切到目标项目；后续普通消息会在新项目下创建 fresh thread，而不是继续误跑旧项目
 78. 如果 DM 当前保存了“已选项目”和“已绑线程”两个互相冲突的跨项目状态，bridge 现在会优先相信显式项目选择，并自动清理那条旧线程绑定，避免继续把普通消息送进错误项目
 79. Playwright 版真实飞书 live smoke 现在支持通过 `FEISHU_LIVE_PROJECT_KEY` 先强制切到指定测试项目，再发送 smoke 指令，降低在业务项目上误跑真实验证的风险
-80. 桌面 completion 通知卡在 DM 中点击主按钮 `continue_desktop_thread` 后，现在会直接把当前 DM 窗口绑定到目标 native Codex thread，并即时返回标准“当前会话”卡；后续普通 DM 文本也会续跑同一线程，而不再先落到旧的“线程已切换/命令已提交”确认卡
+80. 桌面 completion 通知卡的主按钮 `continue_desktop_thread` 现在已经覆盖三种接管路径：DM 中会直接把当前 DM 窗口绑定到目标 native Codex thread 并返回标准“当前会话”卡；已绑定飞书话题中的通知会原地切成同一话题下的“当前会话”卡；项目群主时间线中的通知会为目标 native thread 创建或绑定新的飞书话题，把标准“当前会话”卡发进该话题，再把原通知卡替换成“已转到话题继续”的状态卡
 
 ### 2.3 当前仍未打通的部分
 
@@ -118,7 +118,7 @@
 - 完整的线程级前端管理页面
 - 飞书侧仍看不到 Codex 5 小时额度 / 周额度
 - 飞书侧还不能直接查看和切换更多 profile 级高级参数
-- 桌面侧原生 Codex thread 完成通知现在已经具备“本地 rollout completion 提取 + 本地路由决策 + 飞书通知投递器”三段式基础能力：在拿到 completion event 和已解析投递目标后，能按 DM / 已有话题 / 项目群三种模式发送完成通知卡，并紧跟发送完整 assistant 正文；其中 DM 主按钮 `continue_desktop_thread` 已能把当前 DM 窗口切到目标 native thread 并返回“当前会话”卡，但 runtime 轮询、group/topic continue、history/mute 回调和自动修复仍未接通
+- 桌面侧原生 Codex thread 完成通知现在已经具备“本地 rollout completion 提取 + 本地路由决策 + 飞书通知投递器”三段式基础能力：在拿到 completion event 和已解析投递目标后，能按 DM / 已有话题 / 项目群三种模式发送完成通知卡，并紧跟发送完整 assistant 正文；主按钮 `continue_desktop_thread` 也已能分别完成 DM 接管、既有话题原地继续、以及项目群新话题接管，但 runtime 轮询、history/mute 回调和自动修复仍未接通
 
 也就是说，群线程运行链路已经具备，并且现在可以用命令注册项目群和创建线程，但还没有做成完整的飞书导航型产品界面。
 

@@ -164,6 +164,14 @@ interface DmCodexCatalogSelection {
   thread: CodexCatalogThread;
 }
 
+interface DesktopThreadContinuationResult {
+  reply: BridgeReply;
+  topicReply?: {
+    anchorMessageId: string;
+    reply: BridgeReply;
+  };
+}
+
 export class BridgeService {
   public constructor(
     private readonly dependencies: {
@@ -216,27 +224,33 @@ export class BridgeService {
     peerId: string;
     threadId: string;
     mode: "dm" | "project_group" | "thread";
-  }): Promise<BridgeReply> {
-    if (input.mode !== "dm") {
-      return {
-        kind: "system",
-        text: "[ca] desktop completion continue is not available for this target yet",
-      };
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
+  }): Promise<DesktopThreadContinuationResult> {
+    if (input.mode === "thread") {
+      return this.continueDesktopThreadInTopic(input);
+    }
+
+    if (input.mode === "project_group") {
+      return this.continueDesktopThreadInProjectGroup(input);
     }
 
     const selection = this.lookupCatalogThreadSelection(input.threadId);
     if (!selection) {
-      return this.dependencies.codexCatalog?.getThread(input.threadId)
-        ? this.buildCodexProjectUnavailableCardReply({
-            channel: input.channel,
-            peerId: input.peerId,
-            text: `${BRIDGE_COMMAND_PREFIX} session`,
-          })
-        : this.buildCodexThreadUnavailableCardReply({
-            channel: input.channel,
-            peerId: input.peerId,
-            text: `${BRIDGE_COMMAND_PREFIX} session`,
-          });
+      return {
+        reply: this.dependencies.codexCatalog?.getThread(input.threadId)
+          ? this.buildCodexProjectUnavailableCardReply({
+              channel: input.channel,
+              peerId: input.peerId,
+              text: `${BRIDGE_COMMAND_PREFIX} session`,
+            })
+          : this.buildCodexThreadUnavailableCardReply({
+              channel: input.channel,
+              peerId: input.peerId,
+              text: `${BRIDGE_COMMAND_PREFIX} session`,
+            }),
+      };
     }
 
     this.bindDmToCodexThread({
@@ -251,9 +265,143 @@ export class BridgeService {
       text: `${BRIDGE_COMMAND_PREFIX} session`,
     });
 
-    return replies[0] ?? {
-      kind: "system",
-      text: "[ca] current session unavailable",
+    return {
+      reply: replies[0] ?? {
+        kind: "system",
+        text: "[ca] current session unavailable",
+      },
+    };
+  }
+
+  private async continueDesktopThreadInTopic(input: {
+    channel: string;
+    peerId: string;
+    threadId: string;
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
+  }): Promise<DesktopThreadContinuationResult> {
+    const selection = this.lookupCatalogThreadSelection(input.threadId);
+    if (!selection) {
+      return {
+        reply: this.dependencies.codexCatalog?.getThread(input.threadId)
+          ? this.buildCodexProjectUnavailableCardReply({
+              channel: input.channel,
+              peerId: input.peerId,
+              text: `${BRIDGE_COMMAND_PREFIX} session`,
+            })
+          : this.buildCodexThreadUnavailableCardReply({
+              channel: input.channel,
+              peerId: input.peerId,
+              text: `${BRIDGE_COMMAND_PREFIX} session`,
+            }),
+      };
+    }
+
+    if (!input.chatId || input.surfaceType !== "thread" || !input.surfaceRef) {
+      return {
+        reply: {
+          kind: "system",
+          text: "[ca] desktop completion topic surface is unavailable",
+        },
+      };
+    }
+
+    this.dependencies.store.rebindCodexThreadSurface({
+      chatId: input.chatId,
+      feishuThreadId: input.surfaceRef,
+      threadId: selection.thread.threadId,
+      sessionName: selection.thread.threadId,
+      title: selection.thread.title,
+      status: "warm",
+    });
+
+    const replies = await this.handleMessage({
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId,
+      surfaceType: "thread",
+      surfaceRef: input.surfaceRef,
+      text: `${BRIDGE_COMMAND_PREFIX} session`,
+    });
+
+    return {
+      reply: replies[0] ?? {
+        kind: "system",
+        text: "[ca] current session unavailable",
+      },
+    };
+  }
+
+  private async continueDesktopThreadInProjectGroup(input: {
+    channel: string;
+    peerId: string;
+    threadId: string;
+    chatId?: string;
+  }): Promise<DesktopThreadContinuationResult> {
+    const selection = this.lookupCatalogThreadSelection(input.threadId);
+    if (!selection) {
+      return {
+        reply: this.dependencies.codexCatalog?.getThread(input.threadId)
+          ? this.buildCodexProjectUnavailableCardReply({
+              channel: input.channel,
+              peerId: input.peerId,
+              text: `${BRIDGE_COMMAND_PREFIX} session`,
+            })
+          : this.buildCodexThreadUnavailableCardReply({
+              channel: input.channel,
+              peerId: input.peerId,
+              text: `${BRIDGE_COMMAND_PREFIX} session`,
+            }),
+      };
+    }
+
+    if (!input.chatId) {
+      return {
+        reply: {
+          kind: "system",
+          text: "[ca] desktop completion project-group context is unavailable",
+        },
+      };
+    }
+
+    const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
+    if (!projectChat) {
+      throw new Error("PROJECT_CHAT_CONTEXT_REQUIRED");
+    }
+    if (!this.dependencies.projectThreadService) {
+      throw new Error("PROJECT_THREAD_SERVICE_NOT_CONFIGURED");
+    }
+
+    const linkedThread = await this.dependencies.projectThreadService.linkThread({
+      projectId: projectChat.projectId,
+      chatId: projectChat.chatId,
+      ownerOpenId: input.peerId,
+      title: selection.thread.title,
+      codexThreadId: selection.thread.threadId,
+    });
+    const topicReplies = await this.handleMessage({
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: linkedThread.chatId,
+      surfaceType: "thread",
+      surfaceRef: linkedThread.feishuThreadId,
+      text: `${BRIDGE_COMMAND_PREFIX} session`,
+    });
+
+    return {
+      reply: this.buildDesktopContinuationMovedToTopicCardReply({
+        chatId: projectChat.chatId,
+        threadId: selection.thread.threadId,
+        threadTitle: selection.thread.title,
+      }),
+      topicReply: {
+        anchorMessageId: linkedThread.anchorMessageId,
+        reply: topicReplies[0] ?? {
+          kind: "system",
+          text: "[ca] current session unavailable",
+        },
+      },
     };
   }
 
@@ -2034,6 +2182,45 @@ export class BridgeService {
           {
             label: "新会话",
             value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} new`),
+          },
+        ],
+      }),
+    };
+  }
+
+  private buildDesktopContinuationMovedToTopicCardReply(input: {
+    chatId: string;
+    threadId: string;
+    threadTitle: string;
+  }): BridgeReply {
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: "已转到话题继续",
+        summaryLines: [
+          "**视图**：已转到话题继续",
+          `**当前线程**：${formatCurrentThreadLabel(input.threadTitle, input.threadId)}`,
+          "当前会话卡已发送到新的飞书话题。",
+        ],
+        sections: [
+          {
+            title: "下一步",
+            items: ["已在新的飞书话题里发送“当前会话”卡，请进入该话题继续。"],
+          },
+        ],
+        actions: [
+          {
+            label: "导航",
+            type: "primary",
+            value: this.buildCardActionValue({ chatId: input.chatId }, BRIDGE_COMMAND_PREFIX),
+          },
+          {
+            label: "当前项目",
+            value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} project current`),
+          },
+          {
+            label: "线程列表",
+            value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
         ],
       }),
