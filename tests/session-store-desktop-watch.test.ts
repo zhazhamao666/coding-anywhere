@@ -40,8 +40,8 @@ describe("SessionStore desktop watch persistence", () => {
       rolloutPath: "C:/Users/demo/.codex/sessions/rollout-1.jsonl",
       rolloutMtime: "2026-04-20T10:00:00.000Z",
       lastReadOffset: 123,
-      lastCompletionKey: "thread-1:key-1",
-      lastNotifiedCompletionKey: "thread-1:key-1",
+      lastCompletionKey: "thread-1:completion-1",
+      lastNotifiedCompletionKey: "thread-1:notified-1",
     });
 
     const reloadedStore = reloadSessionStore();
@@ -51,15 +51,15 @@ describe("SessionStore desktop watch persistence", () => {
       rolloutPath: "C:/Users/demo/.codex/sessions/rollout-1.jsonl",
       rolloutMtime: "2026-04-20T10:00:00.000Z",
       lastReadOffset: 123,
-      lastCompletionKey: "thread-1:key-1",
-      lastNotifiedCompletionKey: "thread-1:key-1",
+      lastCompletionKey: "thread-1:completion-1",
+      lastNotifiedCompletionKey: "thread-1:notified-1",
     });
     expect(reloadedStore.listCodexThreadWatchStates()).toEqual([
       expect.objectContaining({
         threadId: "thread-1",
         lastReadOffset: 123,
-        lastCompletionKey: "thread-1:key-1",
-        lastNotifiedCompletionKey: "thread-1:key-1",
+        lastCompletionKey: "thread-1:completion-1",
+        lastNotifiedCompletionKey: "thread-1:notified-1",
       }),
     ]);
   });
@@ -72,8 +72,8 @@ describe("SessionStore desktop watch persistence", () => {
       rolloutPath: "C:/Users/demo/.codex/sessions/rollout-1.jsonl",
       rolloutMtime: "2026-04-20T10:00:00.000Z",
       lastReadOffset: 123,
-      lastCompletionKey: "thread-1:key-1",
-      lastNotifiedCompletionKey: "thread-1:key-1",
+      lastCompletionKey: "thread-1:completion-1",
+      lastNotifiedCompletionKey: "thread-1:notified-1",
     });
 
     sessionStore.upsertCodexThreadWatchState({
@@ -81,8 +81,8 @@ describe("SessionStore desktop watch persistence", () => {
       rolloutPath: "C:/Users/demo/.codex/sessions/rollout-1.jsonl",
       rolloutMtime: "2026-04-20T10:05:00.000Z",
       lastReadOffset: 456,
-      lastCompletionKey: "thread-1:key-2",
-      lastNotifiedCompletionKey: "thread-1:key-2",
+      lastCompletionKey: "thread-1:completion-2",
+      lastNotifiedCompletionKey: "thread-1:notified-2",
     });
 
     sessionStore.upsertCodexThreadWatchState({
@@ -96,8 +96,8 @@ describe("SessionStore desktop watch persistence", () => {
       threadId: "thread-1",
       rolloutMtime: "2026-04-20T10:06:00.000Z",
       lastReadOffset: 789,
-      lastCompletionKey: "thread-1:key-2",
-      lastNotifiedCompletionKey: "thread-1:key-2",
+      lastCompletionKey: "thread-1:completion-2",
+      lastNotifiedCompletionKey: "thread-1:notified-2",
     });
   });
 });
