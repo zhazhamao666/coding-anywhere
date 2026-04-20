@@ -350,6 +350,40 @@ export class FeishuApiClient {
     return messageId;
   }
 
+  public async sendInteractiveCardToChat(
+    chatId: string,
+    card: Record<string, unknown>,
+  ): Promise<{ messageId: string; threadId: string }> {
+    const response = await this.sdkClient.im.message.create({
+      params: {
+        receive_id_type: "chat_id",
+      },
+      data: {
+        receive_id: chatId,
+        msg_type: "interactive",
+        content: JSON.stringify(card),
+      },
+    });
+
+    const messageId = response.data?.message_id ?? "";
+    const threadId = response.data?.thread_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "interactive",
+        mode: "create",
+        messageId,
+        chatId,
+        threadId,
+        card,
+      },
+      [`message:${messageId}`],
+    );
+    return {
+      messageId,
+      threadId,
+    };
+  }
+
   public async updateInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<void> {
     await this.sdkClient.im.message.patch({
       path: {

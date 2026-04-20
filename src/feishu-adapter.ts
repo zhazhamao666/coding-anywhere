@@ -1,8 +1,9 @@
 import path from "node:path";
 
 import { DEFAULT_BRIDGE_ASSET_ROOT_DIR } from "./bridge-image-directive.js";
+import { resolveFeishuAssistantMessageDelivery } from "./feishu-assistant-message.js";
 import { StreamingCardController } from "./feishu-card/streaming-card-controller.js";
-import { containsMarkdownSyntax, normalizeMarkdownToPlainText } from "./markdown-text.js";
+import { normalizeMarkdownToPlainText } from "./markdown-text.js";
 import { isBridgeCommandMessage } from "./command-router.js";
 import { buildFeishuInboundLog } from "./feishu-message-log.js";
 import type {
@@ -395,12 +396,12 @@ export class FeishuAdapter {
     anchorMessageId?: string;
     text: string;
   }): Promise<void> {
-    const markdownCard = buildAssistantMarkdownCard(input.text);
-    if (markdownCard) {
+    const delivery = resolveFeishuAssistantMessageDelivery(input.text);
+    if (delivery.kind === "card") {
       await this.replyCard({
         peerId: input.peerId,
         anchorMessageId: input.anchorMessageId,
-        card: markdownCard,
+        card: delivery.card,
       });
       return;
     }
@@ -408,7 +409,7 @@ export class FeishuAdapter {
     await this.replyText({
       peerId: input.peerId,
       anchorMessageId: input.anchorMessageId,
-      text: normalizeAssistantPlainText(input.text),
+      text: delivery.text,
     });
   }
 
@@ -522,72 +523,6 @@ function formatImageFallbackText(reply: Extract<BridgeReply, { kind: "image" }>)
     : "图片结果已生成。";
 }
 
-function buildAssistantMarkdownCard(text: string): Record<string, unknown> | undefined {
-  if (!shouldRenderAssistantAsMarkdownCard(text)) {
-    return undefined;
-  }
-
-  const normalized = text.trim();
-  if (!normalized) {
-    return undefined;
-  }
-
-  const card = {
-    schema: "2.0",
-    config: {
-      wide_screen_mode: true,
-      update_multi: true,
-      summary: {
-        content: buildAssistantSummary(normalized),
-      },
-    },
-    header: {
-      title: {
-        tag: "plain_text",
-        content: "完整回复",
-      },
-      template: "blue",
-    },
-    body: {
-      elements: [
-        {
-          tag: "markdown",
-          content: normalized,
-        },
-      ],
-    },
-  } satisfies Record<string, unknown>;
-
-  return Buffer.byteLength(JSON.stringify(card), "utf8") <= FEISHU_INTERACTIVE_CARD_MAX_BYTES
-    ? card
-    : undefined;
-}
-
-function shouldRenderAssistantAsMarkdownCard(text: string): boolean {
-  const normalized = text.trim();
-  if (!normalized) {
-    return false;
-  }
-
-  if (normalized.length <= 120 && !containsMarkdownSyntax(normalized)) {
-    return false;
-  }
-
-  return containsMarkdownSyntax(normalized) || normalized.includes("\n");
-}
-
-function buildAssistantSummary(text: string): string {
-  const firstLine = normalizeMarkdownToPlainText(text)
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .find(Boolean) ?? "完整回复";
-  return firstLine.slice(0, 120);
-}
-
-function normalizeAssistantPlainText(text: string): string {
-  return normalizeMarkdownToPlainText(text);
-}
-
 function parseFeishuTextContent(content?: string): { text?: string; hasMention: boolean } {
   if (!content) {
     return {
@@ -609,8 +544,6 @@ function parseFeishuTextContent(content?: string): { text?: string; hasMention: 
     };
   }
 }
-
-const FEISHU_INTERACTIVE_CARD_MAX_BYTES = 30 * 1024;
 
 function parseFeishuImageContent(content?: string): string | undefined {
   if (!content) {

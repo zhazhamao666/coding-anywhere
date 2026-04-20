@@ -120,6 +120,41 @@ describe("FeishuApiClient", () => {
     });
   });
 
+  it("sends interactive cards to a group chat timeline with the IM create API", async () => {
+    const sdk = createSdkDouble();
+    const client = new FeishuApiClient(
+      {
+        appId: "cli_xxx",
+        appSecret: "secret",
+        apiBaseUrl: "https://open.feishu.cn/open-apis",
+      },
+      sdk as any,
+    );
+
+    const result = await client.sendInteractiveCardToChat("oc_group_1", {
+      schema: "2.0",
+      body: { elements: [] },
+    });
+
+    expect(result).toEqual({
+      messageId: "msg-card-1",
+      threadId: "omt-chat-1",
+    });
+    expect(sdk.im.message.create).toHaveBeenCalledWith({
+      params: {
+        receive_id_type: "chat_id",
+      },
+      data: {
+        receive_id: "oc_group_1",
+        msg_type: "interactive",
+        content: JSON.stringify({
+          schema: "2.0",
+          body: { elements: [] },
+        }),
+      },
+    });
+  });
+
   it("creates a CardKit entity and streams element content", async () => {
     const sdk = createSdkDouble();
     const client = new FeishuApiClient(
@@ -338,6 +373,7 @@ function createSdkDouble(): any {
                   : content.type === "card"
                     ? "msg-cardkit-1"
                     : "msg-card-1",
+              thread_id: data.msg_type === "interactive" ? "omt-chat-1" : undefined,
             },
           };
         }),
