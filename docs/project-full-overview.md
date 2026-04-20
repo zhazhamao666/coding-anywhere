@@ -267,6 +267,7 @@ Windows 停止入口模块。
 - 在已绑定飞书话题中复用已有 `anchorMessageId`，把通知卡和完整正文都回复到同一个话题根消息下
 - 在项目群主时间线中先发送新的完成通知卡，再把完整正文作为这张通知卡下的第一条回复，避免生成第二条无关联 root 消息
 - 复用和普通 assistant 回复相同的 Markdown 卡 / 纯文本回退策略，不额外发明第二套正文渲染规则
+- 当 completion 没有可用的最终正文时，会发送明确的 `body unavailable` 文本回退，而不是落一条空白结果消息
 - 只有在通知卡和完整正文都发送成功后，才推进 `lastNotifiedCompletionKey`
 
 ### 5.2 `src/feishu-adapter.ts`
@@ -422,9 +423,10 @@ Codex 本地线程目录读取层。
 职责：
 
 - 为 native Codex thread 在桌面端完成后的飞书通知构建独立的 JSON 2.0 卡片
-- 区分 DM 与项目群通知的主按钮文案，避免把完成通知误做成 `/ca` 导航 hub
+- 区分 DM、已存在话题、项目群主时间线三种通知场景的主按钮文案，避免把已在话题内的通知误写成“开新话题”
 - 在紧凑结构里展示项目名、线程名、完成状态、完成时间、结果摘要和可选的“上次用户意图”
 - 对 project / thread / summary / hint 这类用户或模型衍生文本先做 Markdown 去语法和多行收敛，避免借由 `markdown` 组件改写通知卡结构或摘要预览
+- 对超长单段结果摘要会额外收紧到较短 excerpt 预算，避免通知卡把完整正文几乎原样复写出来
 - builder 的输入契约通过 `src/types.ts` 暴露，便于后续 runtime、投递与回调链路复用同一份通知卡输入定义
 - 统一产出后续 handoff 会复用的稳定动作名，如 `continue_desktop_thread`、`view_desktop_thread_history`、`mute_desktop_thread`
 - 当前仅负责卡片展示模型，尚未声明桌面 completion 观察与自动投递链路已经全部接通

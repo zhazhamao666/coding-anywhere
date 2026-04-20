@@ -85,6 +85,8 @@ describe("DesktopCompletionNotifier", () => {
       },
     });
 
+    const notificationCard = harness.apiClient.replyInteractiveCard.mock.calls[0]?.[1] as Record<string, unknown>;
+
     expect(harness.apiClient.replyInteractiveCard).toHaveBeenCalledWith(
       "om_anchor_topic_1",
       expect.objectContaining({
@@ -94,6 +96,20 @@ describe("DesktopCompletionNotifier", () => {
           }),
         }),
       }),
+    );
+    expect(collectButtons(notificationCard)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "在当前话题继续",
+        }),
+      ]),
+    );
+    expect(collectButtons(notificationCard)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "在群里开话题继续",
+        }),
+      ]),
     );
     expect(harness.apiClient.replyTextMessage).toHaveBeenCalledWith(
       "om_anchor_topic_1",
@@ -217,6 +233,66 @@ describe("DesktopCompletionNotifier", () => {
       }),
     );
     expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends a non-empty body-unavailable fallback result when final assistant text is empty and still advances the notified key on success", async () => {
+    const harness = createHarness(harnesses);
+    seedWatchState(harness.store, {
+      threadId: "thread-native-1",
+      lastNotifiedCompletionKey: "thread-native-1:notified-old",
+    });
+
+    await harness.notifier.publish({
+      completion: createCompletion({
+        finalAssistantText: "   ",
+      }),
+      target: {
+        mode: "dm",
+        peerId: "ou_demo",
+      },
+    });
+
+    expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith(
+      "ou_demo",
+      expect.stringContaining("body unavailable"),
+    );
+    expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith(
+      "ou_demo",
+      expect.not.stringMatching(/^\s*$/),
+    );
+    expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
+      lastNotifiedCompletionKey: "thread-native-1:completion-new",
+    });
+  });
+
+  it("bounds long single-paragraph completion text to an excerpt budget inside the notification card", async () => {
+    const harness = createHarness(harnesses);
+    seedWatchState(harness.store, {
+      threadId: "thread-native-1",
+    });
+    const longParagraph = [
+      "这是一个很长的单段完成说明，用来验证通知卡不会把完整正文几乎原样塞进摘要区域。",
+      "它会连续描述多个已经完成的动作，包括投递卡片、复用既有线程锚点、保持正文回退策略一致，以及更新通知去重状态。",
+      "最后这段尾巴只是为了制造明显的超长正文，并带上唯一标记：尾段标记不应完整出现在通知摘要中。",
+    ].join("");
+
+    await harness.notifier.publish({
+      completion: createCompletion({
+        finalAssistantText: longParagraph,
+      }),
+      target: {
+        mode: "dm",
+        peerId: "ou_demo",
+      },
+    });
+
+    const notificationCard = harness.apiClient.sendInteractiveCard.mock.calls[0]?.[1] as Record<string, unknown>;
+    const summaryMarkdown = findSummaryMarkdown(notificationCard);
+
+    expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", longParagraph);
+    expect(summaryMarkdown).toContain("**结果摘要**");
+    expect(summaryMarkdown).not.toContain("尾段标记不应完整出现在通知摘要中");
+    expect(summaryMarkdown.length).toBeLessThanOrEqual(260);
   });
 });
 
@@ -369,4 +445,82 @@ function seedThreadBinding(
 
 function firstCallOrder(mockFn: ReturnType<typeof vi.fn>): number {
   return mockFn.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER;
+}
+
+function collectButtons(card: Record<string, unknown>): Array<{
+  label: string;
+  type: string;
+  value?: Record<string, unknown>;
+}> {
+  const buttons: Array<{
+    label: string;
+    type: string;
+    value?: Record<string, unknown>;
+  }> = [];
+
+  visit(card);
+  return buttons;
+
+  function visit(node: unknown): void {
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        visit(item);
+      }
+      return;
+    }
+
+    if (!node || typeof node !== "object") {
+      return;
+    }
+
+    const candidate = node as {
+      tag?: unknown;
+      type?: unknown;
+      text?: {
+        content?: unknown;
+      };
+      value?: Record<string, unknown>;
+    };
+
+    if (candidate.tag === "button") {
+      buttons.push({
+        label: typeof candidate.text?.content === "string" ? candidate.text.content : "",
+        type: typeof candidate.type === "string" ? candidate.type : "default",
+        value: candidate.value,
+      });
+    }
+
+    for (const value of Object.values(node)) {
+      visit(value);
+    }
+  }
+}
+
+function findSummaryMarkdown(card: Record<string, unknown>): string {
+  const markdownBlocks = collectMarkdownBlocks(card);
+  return markdownBlocks.find(block => block.includes("**结果摘要**")) ?? "";
+}
+
+function collectMarkdownBlocks(node: unknown): string[] {
+  if (Array.isArray(node)) {
+    return node.flatMap(item => collectMarkdownBlocks(item));
+  }
+
+  if (!node || typeof node !== "object") {
+    return [];
+  }
+
+  const candidate = node as {
+    tag?: unknown;
+    content?: unknown;
+  };
+
+  const current = candidate.tag === "markdown" && typeof candidate.content === "string"
+    ? [candidate.content]
+    : [];
+
+  return [
+    ...current,
+    ...Object.values(node).flatMap(value => collectMarkdownBlocks(value)),
+  ];
 }

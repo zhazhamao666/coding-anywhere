@@ -4,6 +4,8 @@ import { buildDesktopCompletionCard } from "./feishu-card/desktop-completion-car
 import { normalizeMarkdownToPlainText } from "./markdown-text.js";
 import type { CodexCatalogConversationItem, CodexCatalogThread, CodexThreadRecord } from "./types.js";
 
+const BODY_UNAVAILABLE_RESULT_TEXT = "完整正文暂不可用（body unavailable）。";
+
 export type DesktopCompletionDeliveryTarget =
   | {
       mode: "dm";
@@ -56,20 +58,21 @@ export class DesktopCompletionNotifier {
     completion: CodexDesktopCompletionEvent;
     target: DesktopCompletionDeliveryTarget;
   }): Promise<void> {
+    const resultText = resolveCompletionResultText(input.completion.finalAssistantText);
     const thread = this.dependencies.codexCatalog?.getThread(input.completion.threadId);
     const card = buildDesktopCompletionCard({
-      mode: input.target.mode === "dm" ? "dm" : "project_group",
+      mode: input.target.mode,
       projectName: resolveProjectName(thread, input.completion),
       threadTitle: resolveThreadTitle(thread, input.completion),
       completedAt: input.completion.completedAt,
-      summaryLines: buildSummaryLines(input.completion.finalAssistantText),
+      summaryLines: buildSummaryLines(resultText),
       lastUserHint: resolveLastUserHint(
         this.dependencies.codexCatalog?.listRecentConversation(input.completion.threadId, 8) ?? [],
       ),
       threadId: input.completion.threadId,
     });
 
-    const delivery = resolveFeishuAssistantMessageDelivery(input.completion.finalAssistantText);
+    const delivery = resolveFeishuAssistantMessageDelivery(resultText);
     const notificationAnchor = await this.sendNotification(input.target, input.completion.threadId, card);
 
     if (delivery.kind === "card") {
@@ -189,9 +192,19 @@ function resolveLastUserHint(conversation: CodexCatalogConversationItem[]): stri
 }
 
 function buildSummaryLines(finalAssistantText: string): string[] {
-  return normalizeMarkdownToPlainText(finalAssistantText)
+  const normalized = normalizeMarkdownToPlainText(finalAssistantText)
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(Boolean)
     .slice(0, 3);
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  return [BODY_UNAVAILABLE_RESULT_TEXT];
+}
+
+function resolveCompletionResultText(finalAssistantText: string): string {
+  return finalAssistantText.trim() ? finalAssistantText : BODY_UNAVAILABLE_RESULT_TEXT;
 }

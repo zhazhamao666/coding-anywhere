@@ -111,7 +111,7 @@ function buildActions(input: DesktopCompletionCardInput): Array<{
 }> {
   return [
     {
-      label: input.mode === "dm" ? "在飞书继续" : "在群里开话题继续",
+      label: resolvePrimaryActionLabel(input.mode),
       type: "primary",
       value: buildActionValue("continue_desktop_thread", input.threadId, input.mode),
     },
@@ -126,6 +126,17 @@ function buildActions(input: DesktopCompletionCardInput): Array<{
       value: buildActionValue("mute_desktop_thread", input.threadId, input.mode),
     },
   ];
+}
+
+function resolvePrimaryActionLabel(mode: DesktopCompletionCardInput["mode"]): string {
+  switch (mode) {
+    case "dm":
+      return "在飞书继续";
+    case "thread":
+      return "在当前话题继续";
+    case "project_group":
+      return "在群里开话题继续";
+  }
 }
 
 function buildActionValue(
@@ -146,11 +157,55 @@ function normalizeSummaryLines(summaryLines: string[]): string[] {
     .filter(line => line.length > 0)
     .slice(0, 3);
 
-  if (normalized.length > 0) {
-    return normalized;
+  const bounded = boundSummaryLines(
+    normalized,
+    normalized.length <= 1 ? 80 : 220,
+  );
+
+  if (bounded.length > 0) {
+    return bounded;
   }
 
   return ["任务已经在桌面端完成，可继续在飞书追问或查看线程记录。"];
+}
+
+function boundSummaryLines(lines: string[], maxChars: number): string[] {
+  const bounded: string[] = [];
+  let usedChars = 0;
+
+  for (const line of lines) {
+    const separatorChars = bounded.length > 0 ? 1 : 0;
+    const remainingChars = maxChars - usedChars - separatorChars;
+    if (remainingChars <= 0) {
+      break;
+    }
+
+    const nextLine = truncateSummaryLine(line, remainingChars);
+    if (!nextLine) {
+      break;
+    }
+
+    bounded.push(nextLine);
+    usedChars += separatorChars + nextLine.length;
+
+    if (nextLine !== line) {
+      break;
+    }
+  }
+
+  return bounded;
+}
+
+function truncateSummaryLine(line: string, maxChars: number): string {
+  if (line.length <= maxChars) {
+    return line;
+  }
+
+  if (maxChars <= 3) {
+    return line.slice(0, maxChars);
+  }
+
+  return `${line.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
 function buildCardSummary(input: DesktopCompletionCardInput, summaryLines: string[]): string {

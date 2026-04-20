@@ -83,6 +83,30 @@ describe("desktop completion card builder", () => {
     ]);
   });
 
+  it("uses a topic-specific primary label for existing-topic delivery", () => {
+    const input: DesktopCompletionCardInput = {
+      mode: "thread",
+      projectName: "Gamma Project",
+      threadTitle: "沿用现有话题继续",
+      completedAt: "2026-04-20T11:05:00.000Z",
+      summaryLines: ["已有话题里的完成通知应该提示继续当前话题。"],
+      threadId: "thread_native_topic_321",
+    };
+
+    const card = buildDesktopCompletionCard(input);
+    const buttons = collectButtons(card);
+
+    expect(buttons.filter(button => button.type === "primary")).toEqual([
+      expect.objectContaining({
+        label: "在当前话题继续",
+        value: expect.objectContaining({
+          mode: "thread",
+          threadId: "thread_native_topic_321",
+        }),
+      }),
+    ]);
+  });
+
   it("normalizes markdown-heavy multiline input to plain text and truncates summary lines", () => {
     const input: DesktopCompletionCardInput = {
       mode: "dm",
@@ -119,6 +143,30 @@ describe("desktop completion card builder", () => {
     expect(serialized).not.toContain("**Alpha**");
     expect(serialized).not.toContain("[继续处理](https://example.com/thread)");
     expect(serialized).not.toContain("```");
+  });
+
+  it("bounds an oversized single-line summary to the excerpt budget", () => {
+    const input: DesktopCompletionCardInput = {
+      mode: "dm",
+      projectName: "Budget Project",
+      threadTitle: "限制摘要预算",
+      completedAt: "2026-04-20T11:15:00.000Z",
+      summaryLines: [
+        [
+          "这是一个超长摘要，用来验证桌面完成通知卡不会把整段正文完整塞进摘要区域。",
+          "它会持续追加很多描述文字，直到明显超过允许的 excerpt 预算。",
+          "尾段标记不应完整出现在通知摘要中。",
+        ].join(""),
+      ],
+      threadId: "thread_native_budget_654",
+    };
+
+    const card = buildDesktopCompletionCard(input);
+    const summaryMarkdown = collectVisibleText(card).find(text => text.includes("**结果摘要**")) ?? "";
+
+    expect(summaryMarkdown).toContain("**结果摘要**");
+    expect(summaryMarkdown).not.toContain("尾段标记不应完整出现在通知摘要中");
+    expect(summaryMarkdown.length).toBeLessThanOrEqual(260);
   });
 });
 

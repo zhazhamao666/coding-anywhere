@@ -164,7 +164,7 @@ export interface BridgeMessageInput {
 }
 
 export interface DesktopCompletionCardInput {
-  mode: "dm" | "project_group";
+  mode: "dm" | "project_group" | "thread";
   projectName: string;
   threadTitle: string;
   completedAt: string;
