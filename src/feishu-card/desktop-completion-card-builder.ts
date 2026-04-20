@@ -1,12 +1,4 @@
-export interface DesktopCompletionCardInput {
-  mode: "dm" | "project_group";
-  projectName: string;
-  threadTitle: string;
-  completedAt: string;
-  summaryLines: string[];
-  lastUserHint?: string;
-  threadId: string;
-}
+import type { DesktopCompletionCardInput } from "../types.js";
 
 export function buildDesktopCompletionCard(
   input: DesktopCompletionCardInput,

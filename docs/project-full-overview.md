@@ -409,6 +409,7 @@ Codex 本地线程目录读取层。
 - 为 native Codex thread 在桌面端完成后的飞书通知构建独立的 JSON 2.0 卡片
 - 区分 DM 与项目群通知的主按钮文案，避免把完成通知误做成 `/ca` 导航 hub
 - 在紧凑结构里展示项目名、线程名、完成状态、完成时间、结果摘要和可选的“上次用户意图”
+- builder 的输入契约通过 `src/types.ts` 暴露，便于后续 runtime、投递与回调链路复用同一份通知卡输入定义
 - 统一产出后续 handoff 会复用的稳定动作名，如 `continue_desktop_thread`、`view_desktop_thread_history`、`mute_desktop_thread`
 - 当前仅负责卡片展示模型，尚未声明桌面 completion 观察与自动投递链路已经全部接通
 

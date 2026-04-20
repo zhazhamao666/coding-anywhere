@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { buildDesktopCompletionCard } from "../src/feishu-card/desktop-completion-card-builder.js";
+import type { DesktopCompletionCardInput } from "../src/types.js";
 
 describe("desktop completion card builder", () => {
   it("builds a dm completion notification card with focused completion details", () => {
-    const card = buildDesktopCompletionCard({
+    const input: DesktopCompletionCardInput = {
       mode: "dm",
       projectName: "Alpha Project",
       threadTitle: "修复桌面完成通知",
@@ -15,7 +16,8 @@ describe("desktop completion card builder", () => {
       ],
       lastUserHint: "用户希望先收紧通知卡展示，再接回调。",
       threadId: "thread_native_123",
-    });
+    };
+    const card = buildDesktopCompletionCard(input);
 
     const visibleText = collectVisibleText(card).join("\n");
     const buttons = collectButtons(card);
@@ -51,14 +53,15 @@ describe("desktop completion card builder", () => {
   });
 
   it("uses a group-specific primary label and caps actions at one primary plus two secondary buttons", () => {
-    const card = buildDesktopCompletionCard({
+    const input: DesktopCompletionCardInput = {
       mode: "project_group",
       projectName: "Beta Project",
       threadTitle: "补齐群通知文案",
       completedAt: "2026-04-20T11:00:00.000Z",
       summaryLines: ["群通知版本已准备好，等待接入后续回调。"],
       threadId: "thread_native_group_456",
-    });
+    };
+    const card = buildDesktopCompletionCard(input);
 
     const buttons = collectButtons(card);
     const primaryButtons = buttons.filter(button => button.type === "primary");

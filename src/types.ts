@@ -163,6 +163,16 @@ export interface BridgeMessageInput {
   surfaceRef?: string;
 }
 
+export interface DesktopCompletionCardInput {
+  mode: "dm" | "project_group";
+  projectName: string;
+  threadTitle: string;
+  completedAt: string;
+  summaryLines: string[];
+  lastUserHint?: string;
+  threadId: string;
+}
+
 export interface CodexCatalogProject {
   projectKey: string;
   cwd: string;
