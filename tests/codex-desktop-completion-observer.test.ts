@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -57,6 +58,155 @@ describe("codex desktop completion observer", () => {
       },
       nextOffset: readFileSync(rolloutPath).byteLength,
     });
+  });
+
+  it("rewinds to preserve the latest final assistant text when task_complete arrives in a later poll", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "desktop-completion-observer-"));
+    const rolloutPath = path.join(tempDir, "rollout.jsonl");
+    const sessionMetaLine = JSON.stringify({
+      timestamp: "2026-04-20T10:00:00.000Z",
+      type: "session_meta",
+      payload: {
+        id: "thread-1",
+        timestamp: "2026-04-20T10:00:00.000Z",
+        cwd: "D:\\Repos\\Demo",
+        cli_version: "0.116.0",
+        source: "desktop",
+      },
+    });
+    const finalAnswerLine = JSON.stringify({
+      timestamp: "2026-04-20T10:00:09.000Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        phase: "final_answer",
+        content: [
+          {
+            type: "output_text",
+            text: "done text",
+          },
+        ],
+      },
+    });
+    const taskCompleteLine = JSON.stringify({
+      timestamp: "2026-04-20T10:00:10.000Z",
+      type: "event_msg",
+      payload: {
+        type: "task_complete",
+      },
+    });
+
+    try {
+      writeFileSync(rolloutPath, `${sessionMetaLine}\n${finalAnswerLine}\n`, "utf8");
+
+      const firstPoll = observeCodexDesktopCompletion({
+        threadId: "thread-1",
+        rolloutPath,
+        offset: 0,
+      });
+
+      expect(firstPoll).toEqual({
+        completion: undefined,
+        nextOffset: Buffer.byteLength(`${sessionMetaLine}\n`, "utf8"),
+      });
+
+      appendFileSync(rolloutPath, `${taskCompleteLine}\n`, "utf8");
+
+      const secondPoll = observeCodexDesktopCompletion({
+        threadId: "thread-1",
+        rolloutPath,
+        offset: firstPoll.nextOffset,
+      });
+
+      expect(secondPoll).toEqual({
+        completion: {
+          threadId: "thread-1",
+          completedAt: "2026-04-20T10:00:10.000Z",
+          finalAssistantText: "done text",
+          completionKey: `thread-1:2026-04-20T10:00:10.000Z:${createHash("sha256").update("done text").digest("hex")}`,
+        },
+        nextOffset: readFileSync(rolloutPath).byteLength,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not advance past a trailing partial JSON line and parses it on the next poll", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "desktop-completion-observer-"));
+    const rolloutPath = path.join(tempDir, "rollout.jsonl");
+    const sessionMetaLine = JSON.stringify({
+      timestamp: "2026-04-20T10:00:00.000Z",
+      type: "session_meta",
+      payload: {
+        id: "thread-1",
+        timestamp: "2026-04-20T10:00:00.000Z",
+        cwd: "D:\\Repos\\Demo",
+        cli_version: "0.116.0",
+        source: "desktop",
+      },
+    });
+    const finalAnswerLine = JSON.stringify({
+      timestamp: "2026-04-20T10:00:09.000Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        phase: "final_answer",
+        content: [
+          {
+            type: "output_text",
+            text: "done text",
+          },
+        ],
+      },
+    });
+    const taskCompleteLine = JSON.stringify({
+      timestamp: "2026-04-20T10:00:10.000Z",
+      type: "event_msg",
+      payload: {
+        type: "task_complete",
+      },
+    });
+    const splitIndex = Math.max(1, Math.floor(finalAnswerLine.length / 2));
+    const partialFinalAnswerLine = finalAnswerLine.slice(0, splitIndex);
+    const remainingFinalAnswerLine = finalAnswerLine.slice(splitIndex);
+
+    try {
+      writeFileSync(rolloutPath, `${sessionMetaLine}\n${partialFinalAnswerLine}`, "utf8");
+
+      const firstPoll = observeCodexDesktopCompletion({
+        threadId: "thread-1",
+        rolloutPath,
+        offset: 0,
+      });
+
+      expect(firstPoll).toEqual({
+        completion: undefined,
+        nextOffset: Buffer.byteLength(`${sessionMetaLine}\n`, "utf8"),
+      });
+
+      appendFileSync(rolloutPath, `${remainingFinalAnswerLine}\n${taskCompleteLine}\n`, "utf8");
+
+      const secondPoll = observeCodexDesktopCompletion({
+        threadId: "thread-1",
+        rolloutPath,
+        offset: firstPoll.nextOffset,
+      });
+
+      expect(secondPoll).toEqual({
+        completion: {
+          threadId: "thread-1",
+          completedAt: "2026-04-20T10:00:10.000Z",
+          finalAssistantText: "done text",
+          completionKey: `thread-1:2026-04-20T10:00:10.000Z:${createHash("sha256").update("done text").digest("hex")}`,
+        },
+        nextOffset: readFileSync(rolloutPath).byteLength,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("builds a stable completionKey", () => {
