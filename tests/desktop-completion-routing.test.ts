@@ -11,6 +11,12 @@ describe("desktop completion routing", () => {
         chatId: "oc_group_1",
         feishuThreadId: "omt_topic_1",
       },
+      projects: [{
+        projectId: "proj-a",
+        name: "Repo One",
+        chatId: "oc_group_1",
+        updatedAt: "2026-04-20T10:00:00.000Z",
+      }],
     });
     const bridge = createBridge({ store });
 
