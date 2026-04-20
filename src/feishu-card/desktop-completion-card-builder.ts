@@ -1,43 +1,77 @@
 import { normalizeMarkdownToPlainText } from "../markdown-text.js";
 import type { DesktopCompletionCardInput } from "../types.js";
 
+const MAX_CARD_PAYLOAD_BYTES = 30 * 1024;
+const MAX_PROJECT_NAME_CHARS = 120;
+const MAX_THREAD_TITLE_CHARS = 160;
+const MAX_REMINDER_CHARS = 260;
+const MAX_REMINDER_COMPACT_CHARS = 140;
+const SINGLE_PARAGRAPH_SUMMARY_MAX_CHARS = 220;
+const MULTI_LINE_SUMMARY_MAX_CHARS = 220;
+const COMPACT_SUMMARY_MAX_CHARS = 180;
+const MINIMAL_SUMMARY_MAX_CHARS = 120;
+const DEFAULT_SUMMARY_FALLBACK = "任务已经在桌面端完成，可继续在飞书追问或查看线程记录。";
+const DEFAULT_REMINDER_FALLBACK = "返回飞书继续当前会话。";
+
 export function buildDesktopCompletionCard(
   input: DesktopCompletionCardInput,
 ): Record<string, unknown> {
   const normalizedInput = {
     ...input,
-    projectName: normalizeCardText(input.projectName),
-    threadTitle: normalizeCardText(input.threadTitle),
-    lastUserHint: input.lastUserHint ? normalizeCardText(input.lastUserHint) : undefined,
+    projectName: truncateCardText(normalizeCardText(input.projectName), MAX_PROJECT_NAME_CHARS),
+    threadTitle: truncateCardText(normalizeCardText(input.threadTitle), MAX_THREAD_TITLE_CHARS),
   };
   const summaryLines = normalizeSummaryLines(input.summaryLines);
+  const reminderText = normalizeReminderText(input.reminderText, normalizedInput.threadTitle);
+  const card = buildCardPayload({
+    input: normalizedInput,
+    summaryLines,
+    reminderText,
+  });
+  if (isWithinPayloadBudget(card)) {
+    return card;
+  }
+
+  const compactCard = buildCardPayload({
+    input: normalizedInput,
+    summaryLines: normalizeSummaryLines(summaryLines, COMPACT_SUMMARY_MAX_CHARS),
+    reminderText: truncateCardText(reminderText, MAX_REMINDER_COMPACT_CHARS),
+  });
+  if (isWithinPayloadBudget(compactCard)) {
+    return compactCard;
+  }
+
+  return buildCardPayload({
+    input: normalizedInput,
+    summaryLines: normalizeSummaryLines(summaryLines, MINIMAL_SUMMARY_MAX_CHARS),
+    reminderText: truncateCardText(reminderText || DEFAULT_REMINDER_FALLBACK, 80),
+  });
+}
+
+function buildCardPayload(input: {
+  input: DesktopCompletionCardInput;
+  summaryLines: string[];
+  reminderText: string;
+}): Record<string, unknown> {
   const elements: Array<Record<string, unknown>> = [
     {
       tag: "markdown",
-      content: buildOverviewMarkdown(normalizedInput),
+      content: buildOverviewMarkdown(input.input),
     },
     {
       tag: "hr",
     },
     {
       tag: "markdown",
-      content: buildSummaryMarkdown(summaryLines),
+      content: buildSummaryMarkdown(input.summaryLines),
     },
-  ];
-
-  if (normalizedInput.lastUserHint) {
-    elements.push(
-      {
-        tag: "hr",
-      },
-      {
-        tag: "markdown",
-        content: ["**上次你的意图**", normalizedInput.lastUserHint ?? ""].join("\n"),
-      },
-    );
-  }
-
-  elements.push(
+    {
+      tag: "hr",
+    },
+    {
+      tag: "markdown",
+      content: buildReminderMarkdown(input.reminderText),
+    },
     {
       tag: "hr",
     },
@@ -45,7 +79,7 @@ export function buildDesktopCompletionCard(
       tag: "column_set",
       flex_mode: "flow",
       background_style: "default",
-      columns: buildActions(input).map(action => ({
+      columns: buildActions(input.input).map(action => ({
         tag: "column",
         width: "auto",
         weight: 1,
@@ -63,7 +97,7 @@ export function buildDesktopCompletionCard(
         ],
       })),
     },
-  );
+  ];
 
   return {
     schema: "2.0",
@@ -71,7 +105,7 @@ export function buildDesktopCompletionCard(
       wide_screen_mode: true,
       update_multi: true,
       summary: {
-        content: buildCardSummary(normalizedInput, summaryLines).slice(0, 120),
+        content: buildCardSummary(input.input, input.summaryLines).slice(0, 120),
       },
     },
     header: {
@@ -101,6 +135,13 @@ function buildSummaryMarkdown(summaryLines: string[]): string {
   return [
     "**结果摘要**",
     ...summaryLines.map(line => `- ${line}`),
+  ].join("\n");
+}
+
+function buildReminderMarkdown(reminderText: string): string {
+  return [
+    "**你离开前的会话**",
+    reminderText,
   ].join("\n");
 }
 
@@ -151,7 +192,7 @@ function buildActionValue(
   };
 }
 
-function normalizeSummaryLines(summaryLines: string[]): string[] {
+function normalizeSummaryLines(summaryLines: string[], maxChars?: number): string[] {
   const normalized = summaryLines
     .map(line => normalizeCardText(line))
     .filter(line => line.length > 0)
@@ -159,14 +200,14 @@ function normalizeSummaryLines(summaryLines: string[]): string[] {
 
   const bounded = boundSummaryLines(
     normalized,
-    normalized.length <= 1 ? 80 : 220,
+    maxChars ?? (normalized.length <= 1 ? SINGLE_PARAGRAPH_SUMMARY_MAX_CHARS : MULTI_LINE_SUMMARY_MAX_CHARS),
   );
 
   if (bounded.length > 0) {
     return bounded;
   }
 
-  return ["任务已经在桌面端完成，可继续在飞书追问或查看线程记录。"];
+  return [DEFAULT_SUMMARY_FALLBACK];
 }
 
 function boundSummaryLines(lines: string[], maxChars: number): string[] {
@@ -245,4 +286,27 @@ function normalizeCardText(text: string): string {
     .join(" ")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+function normalizeReminderText(reminderText: string | undefined, fallback: string): string {
+  const normalizedReminder = reminderText ? normalizeCardText(reminderText) : "";
+  const normalizedFallback = normalizeCardText(fallback);
+  const reminder = normalizedReminder || normalizedFallback || DEFAULT_REMINDER_FALLBACK;
+  return truncateCardText(reminder, MAX_REMINDER_CHARS);
+}
+
+function truncateCardText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  if (maxChars <= 3) {
+    return text.slice(0, maxChars);
+  }
+
+  return `${text.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function isWithinPayloadBudget(card: Record<string, unknown>): boolean {
+  return Buffer.byteLength(JSON.stringify(card), "utf8") <= MAX_CARD_PAYLOAD_BYTES;
 }

@@ -155,6 +155,7 @@ interface DesktopCompletionRouteTarget {
   peerId?: string;
   chatId?: string;
   surfaceRef?: string;
+  anchorMessageId?: string;
 }
 
 export class BridgeService {
@@ -178,11 +179,12 @@ export class BridgeService {
   }): DesktopCompletionRouteTarget {
     const validateTarget = input.routeValidator ?? (() => true);
     const existingSurface = this.dependencies.store.getPreferredCodexThreadBinding(input.threadId);
-    if (existingSurface?.chatId && existingSurface.feishuThreadId) {
+    if (existingSurface?.chatId && existingSurface.feishuThreadId && existingSurface.anchorMessageId) {
       const threadTarget: DesktopCompletionRouteTarget = {
         mode: "thread",
         chatId: existingSurface.chatId,
         surfaceRef: existingSurface.feishuThreadId,
+        anchorMessageId: existingSurface.anchorMessageId,
       };
       if (validateTarget(threadTarget)) {
         return threadTarget;

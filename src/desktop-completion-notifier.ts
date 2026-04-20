@@ -2,7 +2,11 @@ import type { CodexDesktopCompletionEvent } from "./codex-desktop-completion-obs
 import { resolveFeishuAssistantMessageDelivery } from "./feishu-assistant-message.js";
 import { buildDesktopCompletionCard } from "./feishu-card/desktop-completion-card-builder.js";
 import { normalizeMarkdownToPlainText } from "./markdown-text.js";
-import type { CodexCatalogConversationItem, CodexCatalogThread, CodexThreadRecord } from "./types.js";
+import type {
+  CodexCatalogConversationItem,
+  CodexCatalogThread,
+  CodexThreadWatchStateRecord,
+} from "./types.js";
 
 const BODY_UNAVAILABLE_RESULT_TEXT = "完整正文暂不可用（body unavailable）。";
 
@@ -15,6 +19,7 @@ export type DesktopCompletionDeliveryTarget =
       mode: "thread";
       chatId: string;
       surfaceRef: string;
+      anchorMessageId: string;
     }
   | {
       mode: "project_group";
@@ -33,11 +38,11 @@ interface DesktopCompletionNotifierApiClientLike {
 }
 
 interface DesktopCompletionNotifierStoreLike {
+  getCodexThreadWatchState(threadId: string): CodexThreadWatchStateRecord | undefined;
   upsertCodexThreadWatchState(input: {
     threadId: string;
     lastNotifiedCompletionKey?: string | null;
   }): void;
-  getPreferredCodexThreadBinding(threadId: string): CodexThreadRecord | undefined;
 }
 
 interface DesktopCompletionNotifierCodexCatalogLike {
@@ -58,6 +63,8 @@ export class DesktopCompletionNotifier {
     completion: CodexDesktopCompletionEvent;
     target: DesktopCompletionDeliveryTarget;
   }): Promise<void> {
+    this.assertWatchStateExists(input.completion.threadId);
+
     const resultText = resolveCompletionResultText(input.completion.finalAssistantText);
     const thread = this.dependencies.codexCatalog?.getThread(input.completion.threadId);
     const card = buildDesktopCompletionCard({
@@ -66,14 +73,14 @@ export class DesktopCompletionNotifier {
       threadTitle: resolveThreadTitle(thread, input.completion),
       completedAt: input.completion.completedAt,
       summaryLines: buildSummaryLines(resultText),
-      lastUserHint: resolveLastUserHint(
+      reminderText: resolveLastUserReminder(
         this.dependencies.codexCatalog?.listRecentConversation(input.completion.threadId, 8) ?? [],
       ),
       threadId: input.completion.threadId,
     });
 
     const delivery = resolveFeishuAssistantMessageDelivery(resultText);
-    const notificationAnchor = await this.sendNotification(input.target, input.completion.threadId, card);
+    const notificationAnchor = await this.sendNotification(input.target, card);
 
     if (delivery.kind === "card") {
       await this.sendCardResult(input.target, notificationAnchor, delivery.card);
@@ -89,7 +96,6 @@ export class DesktopCompletionNotifier {
 
   private async sendNotification(
     target: DesktopCompletionDeliveryTarget,
-    threadId: string,
     card: Record<string, unknown>,
   ): Promise<string | undefined> {
     switch (target.mode) {
@@ -101,9 +107,8 @@ export class DesktopCompletionNotifier {
         return created.messageId;
       }
       case "thread": {
-        const anchorMessageId = this.resolveThreadAnchorMessageId(threadId, target);
-        await this.dependencies.apiClient.replyInteractiveCard(anchorMessageId, card);
-        return anchorMessageId;
+        await this.dependencies.apiClient.replyInteractiveCard(target.anchorMessageId, card);
+        return target.anchorMessageId;
       }
     }
   }
@@ -144,20 +149,10 @@ export class DesktopCompletionNotifier {
     }
   }
 
-  private resolveThreadAnchorMessageId(
-    threadId: string,
-    target: Extract<DesktopCompletionDeliveryTarget, { mode: "thread" }>,
-  ): string {
-    const binding = this.dependencies.store.getPreferredCodexThreadBinding(threadId);
-    if (
-      !binding?.anchorMessageId ||
-      binding.chatId !== target.chatId ||
-      binding.feishuThreadId !== target.surfaceRef
-    ) {
-      throw new Error("FEISHU_DESKTOP_THREAD_ANCHOR_NOT_FOUND");
+  private assertWatchStateExists(threadId: string): void {
+    if (!this.dependencies.store.getCodexThreadWatchState(threadId)) {
+      throw new Error("FEISHU_DESKTOP_WATCH_STATE_NOT_FOUND");
     }
-
-    return binding.anchorMessageId;
   }
 }
 
@@ -175,7 +170,7 @@ function resolveThreadTitle(
   return thread?.title?.trim() || completion.threadId;
 }
 
-function resolveLastUserHint(conversation: CodexCatalogConversationItem[]): string | undefined {
+function resolveLastUserReminder(conversation: CodexCatalogConversationItem[]): string | undefined {
   for (let index = conversation.length - 1; index >= 0; index -= 1) {
     const item = conversation[index];
     if (item.role !== "user") {

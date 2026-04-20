@@ -55,6 +55,7 @@ describe("desktop completion routing", () => {
       mode: "thread",
       chatId: "oc_group_1",
       surfaceRef: "omt_topic_999",
+      anchorMessageId: "om_anchor_omt_topic_999",
     });
   });
 

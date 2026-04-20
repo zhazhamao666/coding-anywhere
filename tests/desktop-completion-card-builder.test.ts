@@ -14,7 +14,7 @@ describe("desktop completion card builder", () => {
         "已完成桌面端通知卡的初版实现。",
         "新增定向测试并通过卡片渲染校验。",
       ],
-      lastUserHint: "用户希望先收紧通知卡展示，再接回调。",
+      reminderText: "用户希望先收紧通知卡展示，再接回调。",
       threadId: "thread_native_123",
     };
     const card = buildDesktopCompletionCard(input);
@@ -37,6 +37,7 @@ describe("desktop completion card builder", () => {
     expect(visibleText).toContain("已完成桌面端通知卡的初版实现。");
     expect(visibleText).toContain("新增定向测试并通过卡片渲染校验。");
     expect(visibleText).toContain("用户希望先收紧通知卡展示，再接回调。");
+    expect(visibleText).toContain("你离开前的会话");
     expect(visibleText).not.toContain("项目列表");
     expect(visibleText).not.toContain("导航");
     expect(visibleText).not.toContain("当前项目");
@@ -119,7 +120,7 @@ describe("desktop completion card builder", () => {
         "[第三条](https://example.com/three)\n- 伪条目",
         "第四条不该显示",
       ],
-      lastUserHint: "请先看 `日志`\n> 然后继续",
+      reminderText: "请先看 `日志`\n> 然后继续",
       threadId: "thread_native_markdown_789",
     };
 
@@ -145,7 +146,25 @@ describe("desktop completion card builder", () => {
     expect(serialized).not.toContain("```");
   });
 
-  it("bounds an oversized single-line summary to the excerpt budget", () => {
+  it("always shows 你离开前的会话 and falls back to the thread title when no recent user reminder exists", () => {
+    const input: DesktopCompletionCardInput = {
+      mode: "thread",
+      projectName: "Fallback Project",
+      threadTitle: "继续修复桌面通知",
+      completedAt: "2026-04-20T11:12:00.000Z",
+      summaryLines: ["这张卡应该总是带提醒区。"],
+      threadId: "thread_native_fallback_987",
+    };
+
+    const card = buildDesktopCompletionCard(input);
+    const visibleText = collectVisibleText(card).join("\n");
+
+    expect(visibleText).toContain("你离开前的会话");
+    expect(visibleText).toContain("继续修复桌面通知");
+    expect(visibleText).not.toContain("上次你的意图");
+  });
+
+  it("keeps long paragraph summaries bounded without over-truncating them to the old 80-char budget", () => {
     const input: DesktopCompletionCardInput = {
       mode: "dm",
       projectName: "Budget Project",
@@ -155,6 +174,9 @@ describe("desktop completion card builder", () => {
         [
           "这是一个超长摘要，用来验证桌面完成通知卡不会把整段正文完整塞进摘要区域。",
           "它会持续追加很多描述文字，直到明显超过允许的 excerpt 预算。",
+          "这里再补充关于通知顺序、提醒区回退和 payload guard 的背景说明，确保单段摘要仍然保留充足上下文。",
+          "然后继续补上一段关于线程锚点稳定性和结果正文复用策略的描述，把真正的截断点推到更靠后的位置。",
+          "最后再增加一段关于群时间线根卡与首条回复配对关系的说明，用来验证 builder 不会因为预算放宽就丢掉边界控制。",
           "尾段标记不应完整出现在通知摘要中。",
         ].join(""),
       ],
@@ -166,7 +188,27 @@ describe("desktop completion card builder", () => {
 
     expect(summaryMarkdown).toContain("**结果摘要**");
     expect(summaryMarkdown).not.toContain("尾段标记不应完整出现在通知摘要中");
-    expect(summaryMarkdown.length).toBeLessThanOrEqual(260);
+    expect(summaryMarkdown.length).toBeGreaterThan(140);
+    expect(summaryMarkdown.length).toBeLessThanOrEqual(320);
+  });
+
+  it("keeps oversized reminder text within Feishu payload budget", () => {
+    const hugeReminder = "提醒内容很长，需要被稳定截断。".repeat(3_000);
+    const input: DesktopCompletionCardInput = {
+      mode: "dm",
+      projectName: "Payload Project",
+      threadTitle: "限制卡片体积",
+      completedAt: "2026-04-20T11:20:00.000Z",
+      summaryLines: ["摘要保持正常长度。"],
+      reminderText: hugeReminder,
+      threadId: "thread_native_payload_111",
+    };
+
+    const card = buildDesktopCompletionCard(input);
+    const visibleText = collectVisibleText(card).join("\n");
+
+    expect(visibleText).toContain("你离开前的会话");
+    expect(Buffer.byteLength(JSON.stringify(card), "utf8")).toBeLessThanOrEqual(30 * 1024);
   });
 });
 

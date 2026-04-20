@@ -169,7 +169,7 @@ export interface DesktopCompletionCardInput {
   threadTitle: string;
   completedAt: string;
   summaryLines: string[];
-  lastUserHint?: string;
+  reminderText?: string;
   threadId: string;
 }
 

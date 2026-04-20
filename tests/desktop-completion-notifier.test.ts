@@ -66,13 +66,6 @@ describe("DesktopCompletionNotifier", () => {
     seedWatchState(harness.store, {
       threadId: "thread-native-1",
     });
-    seedThreadBinding(harness.store, {
-      threadId: "thread-native-1",
-      projectId: "project-key-1",
-      chatId: "oc_group_1",
-      feishuThreadId: "omt_topic_1",
-      anchorMessageId: "om_anchor_topic_1",
-    });
 
     await harness.notifier.publish({
       completion: createCompletion({
@@ -82,6 +75,7 @@ describe("DesktopCompletionNotifier", () => {
         mode: "thread",
         chatId: "oc_group_1",
         surfaceRef: "omt_topic_1",
+        anchorMessageId: "om_anchor_topic_1",
       },
     });
 
@@ -273,6 +267,8 @@ describe("DesktopCompletionNotifier", () => {
     const longParagraph = [
       "这是一个很长的单段完成说明，用来验证通知卡不会把完整正文几乎原样塞进摘要区域。",
       "它会连续描述多个已经完成的动作，包括投递卡片、复用既有线程锚点、保持正文回退策略一致，以及更新通知去重状态。",
+      "这里再追加一段关于提醒区总是展示最近用户上下文、线程标题回退和整体 payload guard 的说明，让单段摘要长度更接近真实场景。",
+      "随后继续补充一段关于项目群根卡和首条回复配对关系的描述，把应该被裁掉的尾段标记推到更靠后的位置。",
       "最后这段尾巴只是为了制造明显的超长正文，并带上唯一标记：尾段标记不应完整出现在通知摘要中。",
     ].join("");
 
@@ -292,7 +288,58 @@ describe("DesktopCompletionNotifier", () => {
     expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", longParagraph);
     expect(summaryMarkdown).toContain("**结果摘要**");
     expect(summaryMarkdown).not.toContain("尾段标记不应完整出现在通知摘要中");
-    expect(summaryMarkdown.length).toBeLessThanOrEqual(260);
+    expect(summaryMarkdown.length).toBeGreaterThan(140);
+    expect(summaryMarkdown.length).toBeLessThanOrEqual(320);
+  });
+
+  it("refuses before sending when the watch-state row is missing", async () => {
+    const harness = createHarness(harnesses);
+
+    await expect(harness.notifier.publish({
+      completion: createCompletion(),
+      target: {
+        mode: "dm",
+        peerId: "ou_demo",
+      },
+    })).rejects.toThrow("FEISHU_DESKTOP_WATCH_STATE_NOT_FOUND");
+
+    expect(harness.apiClient.sendInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("uses the stable thread anchor carried in the target instead of re-reading mutable store bindings", async () => {
+    const harness = createHarness(harnesses);
+    seedWatchState(harness.store, {
+      threadId: "thread-native-1",
+    });
+    seedThreadBinding(harness.store, {
+      threadId: "thread-native-1",
+      projectId: "project-key-1",
+      chatId: "oc_group_1",
+      feishuThreadId: "omt_topic_1",
+      anchorMessageId: "om_mutated_other_anchor",
+    });
+
+    await harness.notifier.publish({
+      completion: createCompletion({
+        finalAssistantText: "使用预解析锚点发送。",
+      }),
+      target: {
+        mode: "thread",
+        chatId: "oc_group_1",
+        surfaceRef: "omt_topic_1",
+        anchorMessageId: "om_stable_anchor",
+      },
+    });
+
+    expect(harness.apiClient.replyInteractiveCard).toHaveBeenCalledWith(
+      "om_stable_anchor",
+      expect.any(Object),
+    );
+    expect(harness.apiClient.replyTextMessage).toHaveBeenCalledWith(
+      "om_stable_anchor",
+      "使用预解析锚点发送。",
+    );
   });
 });
 
