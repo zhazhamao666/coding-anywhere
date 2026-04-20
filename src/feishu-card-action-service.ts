@@ -12,11 +12,16 @@ interface CardActionValue {
     | "open_plan_form"
     | "submit_plan_form"
     | "answer_plan_choice"
+    | "continue_desktop_thread"
+    | "view_desktop_thread_history"
+    | "mute_desktop_thread"
     | "set_codex_model"
     | "set_reasoning_effort"
     | "set_codex_speed";
   interactionId?: string;
   choiceId?: string;
+  threadId?: string;
+  mode?: "dm" | "project_group" | "thread";
   chatId?: string;
   messageId?: string;
   surfaceType?: "thread";
@@ -61,6 +66,12 @@ export class FeishuCardActionService {
           model?: string;
           reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
           speed?: "standard" | "fast";
+        }): Promise<BridgeReply>;
+        continueDesktopThread?(input: {
+          channel: string;
+          peerId: string;
+          threadId: string;
+          mode: "dm" | "project_group" | "thread";
         }): Promise<BridgeReply>;
       };
       apiClient?: FeishuApiClientLike;
@@ -142,6 +153,41 @@ export class FeishuCardActionService {
         },
       });
       return this.buildRawCardResponse(card);
+    }
+
+    if (bridgeAction === "continue_desktop_thread") {
+      const threadId = actionValue?.threadId?.trim();
+      const mode = actionValue?.mode;
+      if (!threadId || !mode || !this.dependencies.bridgeService.continueDesktopThread) {
+        return this.buildRawCardResponse(this.buildInfoCard("继续入口不可用", [
+          "当前环境暂时无法继续这个桌面线程。",
+        ], actionValue));
+      }
+
+      const reply = await this.dependencies.bridgeService.continueDesktopThread({
+        channel: "feishu",
+        peerId: event.open_id,
+        threadId,
+        mode,
+      });
+
+      if (reply.kind === "card") {
+        return this.buildRawCardResponse(reply.card);
+      }
+
+      return this.buildRawCardResponse(this.buildInfoCard("继续入口不可用", [
+        reply.kind === "system" || reply.kind === "assistant"
+          ? reply.text
+          : "当前环境暂时无法继续这个桌面线程。",
+      ], actionValue));
+    }
+
+    if (bridgeAction === "view_desktop_thread_history" || bridgeAction === "mute_desktop_thread") {
+      return this.buildRawCardResponse(this.buildInfoCard("功能暂未接通", [
+        bridgeAction === "view_desktop_thread_history"
+          ? "查看桌面线程记录稍后接入。"
+          : "桌面线程静音稍后接入。",
+      ], actionValue));
     }
 
     if (bridgeAction === "submit_plan_form") {

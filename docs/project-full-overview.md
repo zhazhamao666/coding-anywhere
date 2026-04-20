@@ -106,6 +106,7 @@
 77. DM 中执行 `/ca project switch <projectKey>` 时，如果当前窗口还绑定着旧的 native Codex thread，bridge 现在会先解除这条旧绑定，再把“当前项目”切到目标项目；后续普通消息会在新项目下创建 fresh thread，而不是继续误跑旧项目
 78. 如果 DM 当前保存了“已选项目”和“已绑线程”两个互相冲突的跨项目状态，bridge 现在会优先相信显式项目选择，并自动清理那条旧线程绑定，避免继续把普通消息送进错误项目
 79. Playwright 版真实飞书 live smoke 现在支持通过 `FEISHU_LIVE_PROJECT_KEY` 先强制切到指定测试项目，再发送 smoke 指令，降低在业务项目上误跑真实验证的风险
+80. 桌面 completion 通知卡在 DM 中点击主按钮 `continue_desktop_thread` 后，现在会直接把当前 DM 窗口绑定到目标 native Codex thread，并即时返回标准“当前会话”卡；后续普通 DM 文本也会续跑同一线程，而不再先落到旧的“线程已切换/命令已提交”确认卡
 
 ### 2.3 当前仍未打通的部分
 
@@ -117,7 +118,7 @@
 - 完整的线程级前端管理页面
 - 飞书侧仍看不到 Codex 5 小时额度 / 周额度
 - 飞书侧还不能直接查看和切换更多 profile 级高级参数
-- 桌面侧原生 Codex thread 完成通知现在已经具备“本地 rollout completion 提取 + 本地路由决策 + 飞书通知投递器”三段式基础能力：在拿到 completion event 和已解析投递目标后，能按 DM / 已有话题 / 项目群三种模式发送完成通知卡，并紧跟发送完整 assistant 正文；但 runtime 轮询、continue/history/mute 回调和自动修复仍未接通
+- 桌面侧原生 Codex thread 完成通知现在已经具备“本地 rollout completion 提取 + 本地路由决策 + 飞书通知投递器”三段式基础能力：在拿到 completion event 和已解析投递目标后，能按 DM / 已有话题 / 项目群三种模式发送完成通知卡，并紧跟发送完整 assistant 正文；其中 DM 主按钮 `continue_desktop_thread` 已能把当前 DM 窗口切到目标 native thread 并返回“当前会话”卡，但 runtime 轮询、group/topic continue、history/mute 回调和自动修复仍未接通
 
 也就是说，群线程运行链路已经具备，并且现在可以用命令注册项目群和创建线程，但还没有做成完整的飞书导航型产品界面。
 
@@ -312,6 +313,7 @@ Windows 停止入口模块。
 - 在 DM 中执行项目切换时主动解除旧线程绑定，并对“已选项目”和“已绑线程”的跨项目冲突做自动清理
 - 为计划模式表单和计划选择按钮编码 bridge 动作上下文
 - 为未来的桌面 completion 通知提供纯本地路由解析：优先 native thread 的首选话题绑定，并把稳定 `anchorMessageId` 一起带入 thread target；其次精确项目绑定或唯一 cwd 命中的项目群，最后 DM fallback；cwd 命中多个项目时不会猜测路由目标
+- 处理桌面 completion 的 DM continue handoff：把当前 DM 窗口重绑到目标 native thread，并直接复用标准“当前会话”卡作为回调响应
 - root 上下文封装
 - 同 surface 待处理图片的消费与 prompt 附件清单封装
 - run 生命周期组织
@@ -945,7 +947,7 @@ channel + peer_id -> codex_thread_id
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
 - 普通对话 run 的终态投递策略当前固定为“摘要卡 + 完整正文消息”，尚未开放配置；如后续确有分场景需求，可再扩展为可配置策略，但当前记为低优先级后续计划
 - 现在的“计划模式”是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，不等同于官方交互式 CLI `/plan` 原语
-- 桌面 completion 通知虽然已经有本地路由决策、DM owner 配置解析和实际消息发送器，但 runtime 轮询、continue/history/mute 回调以及“同一 completion 失败后自动修复”还没有接通
+- 桌面 completion 通知虽然已经有本地路由决策、DM owner 配置解析、实际消息发送器和 DM continue handoff，但 runtime 轮询、group/topic continue、history/mute 回调以及“同一 completion 失败后自动修复”还没有接通
 - 当前只支持文本 + 图片；通用文件、语音仍未接通
 - outbound 图片必须位于当前 run `cwd` 或 bridge 受管资产目录下；超出范围的路径会被拒绝并退回文本错误
 - 真实飞书网页版 live smoke 当前采用“首次人工登录 + 持久 profile 复用”模型；如果租户启用了 SSO、验证码或二次验证，登录刷新仍需要人工介入
@@ -1046,6 +1048,7 @@ channel + peer_id -> codex_thread_id
 15. `tests/desktop-completion-routing.test.ts` 会用本地 SQLite store + 小型 catalog double 校验桌面 completion 的本地投递目标解析：同一 native thread 有多个话题绑定时会选择首选绑定；项目群 fallback 会先看精确 `projectKey`，再看唯一 cwd 命中；cwd 命中多个项目时不会猜测，而是退回 DM 或明确报出 DM owner 歧义错误
 16. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面完成通知卡的 DM / 项目群主动作差异、完成摘要字段，以及“通知卡而非导航卡”的展示约束
 17. `tests/desktop-completion-notifier.test.ts` 会校验桌面 completion 投递器在 DM / 已绑定话题 / 项目群三种目标下的消息顺序、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及最终 assistant 正文继续复用现有 Markdown 卡 / 纯文本回退策略
+18. `tests/desktop-completion-dm-handoff.test.ts` 会用真实 `BridgeService` + `FeishuCardActionService` harness 校验 DM 通知卡主按钮 `continue_desktop_thread`：点击后会把 DM 绑定到目标 native thread、回调直接返回标准“当前会话”卡，且下一条普通 DM 文本会续跑同一线程
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 

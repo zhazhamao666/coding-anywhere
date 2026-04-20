@@ -158,6 +158,12 @@ interface DesktopCompletionRouteTarget {
   anchorMessageId?: string;
 }
 
+interface DmCodexCatalogSelection {
+  binding: { codexThreadId: string };
+  project: CodexCatalogProject;
+  thread: CodexCatalogThread;
+}
+
 export class BridgeService {
   public constructor(
     private readonly dependencies: {
@@ -203,6 +209,52 @@ export class BridgeService {
     }
 
     return buildDesktopCompletionDmTarget(input);
+  }
+
+  public async continueDesktopThread(input: {
+    channel: string;
+    peerId: string;
+    threadId: string;
+    mode: "dm" | "project_group" | "thread";
+  }): Promise<BridgeReply> {
+    if (input.mode !== "dm") {
+      return {
+        kind: "system",
+        text: "[ca] desktop completion continue is not available for this target yet",
+      };
+    }
+
+    const selection = this.lookupCatalogThreadSelection(input.threadId);
+    if (!selection) {
+      return this.dependencies.codexCatalog?.getThread(input.threadId)
+        ? this.buildCodexProjectUnavailableCardReply({
+            channel: input.channel,
+            peerId: input.peerId,
+            text: `${BRIDGE_COMMAND_PREFIX} session`,
+          })
+        : this.buildCodexThreadUnavailableCardReply({
+            channel: input.channel,
+            peerId: input.peerId,
+            text: `${BRIDGE_COMMAND_PREFIX} session`,
+          });
+    }
+
+    this.bindDmToCodexThread({
+      channel: input.channel,
+      peerId: input.peerId,
+      thread: selection.thread,
+    });
+
+    const replies = await this.handleMessage({
+      channel: input.channel,
+      peerId: input.peerId,
+      text: `${BRIDGE_COMMAND_PREFIX} session`,
+    });
+
+    return replies[0] ?? {
+      kind: "system",
+      text: "[ca] current session unavailable",
+    };
   }
 
   public async handleMessage(input: BridgeMessageInput, options?: {
@@ -1330,15 +1382,10 @@ export class BridgeService {
       }
 
       if (this.isDmContext(input)) {
-        this.dependencies.store.bindCodexWindow({
+        this.bindDmToCodexThread({
           channel: input.channel,
           peerId: input.peerId,
-          codexThreadId: thread.threadId,
-        });
-        this.dependencies.store.setCodexProjectSelection({
-          channel: input.channel,
-          peerId: input.peerId,
-          projectKey: thread.projectKey,
+          thread,
         });
 
         const recentConversation = this.dependencies.codexCatalog.listRecentConversation(thread.threadId);
@@ -3034,16 +3081,8 @@ export class BridgeService {
       return undefined;
     }
 
-    const thread = this.dependencies.codexCatalog.getThread(binding.codexThreadId);
-    if (!thread) {
-      this.dependencies.store.clearCodexWindowBinding(input.channel, input.peerId);
-      return undefined;
-    }
-
-    const project = this.dependencies.codexCatalog.getProject(thread.projectKey, {
-      includeArchived: true,
-    });
-    if (!project) {
+    const selection = this.lookupCatalogThreadSelection(binding.codexThreadId);
+    if (!selection) {
       this.dependencies.store.clearCodexWindowBinding(input.channel, input.peerId);
       return undefined;
     }
@@ -3055,16 +3094,15 @@ export class BridgeService {
       });
       if (!selectedCatalogProject) {
         this.dependencies.store.clearCodexProjectSelection(input.channel, input.peerId);
-      } else if (selectedCatalogProject.projectKey !== project.projectKey) {
+      } else if (selectedCatalogProject.projectKey !== selection.project.projectKey) {
         this.dependencies.store.clearCodexWindowBinding(input.channel, input.peerId);
         return undefined;
       }
     }
 
     return {
+      ...selection,
       binding,
-      project,
-      thread,
     };
   }
 
@@ -3087,6 +3125,32 @@ export class BridgeService {
     }
 
     return project;
+  }
+
+  private lookupCatalogThreadSelection(threadId: string): DmCodexCatalogSelection | undefined {
+    if (!this.dependencies.codexCatalog) {
+      return undefined;
+    }
+
+    const thread = this.dependencies.codexCatalog.getThread(threadId);
+    if (!thread) {
+      return undefined;
+    }
+
+    const project = this.dependencies.codexCatalog.getProject(thread.projectKey, {
+      includeArchived: true,
+    });
+    if (!project) {
+      return undefined;
+    }
+
+    return {
+      binding: {
+        codexThreadId: thread.threadId,
+      },
+      project,
+      thread,
+    };
   }
 
   private isNativeCatalogThread(threadId: string): boolean {
@@ -3241,6 +3305,23 @@ export class BridgeService {
         cwd: resolved.context.cwd,
       },
     };
+  }
+
+  private bindDmToCodexThread(input: {
+    channel: string;
+    peerId: string;
+    thread: CodexCatalogThread;
+  }): void {
+    this.dependencies.store.bindCodexWindow({
+      channel: input.channel,
+      peerId: input.peerId,
+      codexThreadId: input.thread.threadId,
+    });
+    this.dependencies.store.setCodexProjectSelection({
+      channel: input.channel,
+      peerId: input.peerId,
+      projectKey: input.thread.projectKey,
+    });
   }
 
   private buildCardActionValue(
