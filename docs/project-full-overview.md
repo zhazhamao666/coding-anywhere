@@ -400,6 +400,18 @@ Codex 本地线程目录读取层。
 - 终态成功时将状态卡收口为摘要卡，完整 assistant 正文继续通过普通消息 / 线程回复回推
 - 终态失败时收口错误卡或直接回复错误
 
+### 5.8.1 `src/feishu-card/desktop-completion-card-builder.ts`
+
+桌面端完成通知卡构建器。
+
+职责：
+
+- 为 native Codex thread 在桌面端完成后的飞书通知构建独立的 JSON 2.0 卡片
+- 区分 DM 与项目群通知的主按钮文案，避免把完成通知误做成 `/ca` 导航 hub
+- 在紧凑结构里展示项目名、线程名、完成状态、完成时间、结果摘要和可选的“上次用户意图”
+- 统一产出后续 handoff 会复用的稳定动作名，如 `continue_desktop_thread`、`view_desktop_thread_history`、`mute_desktop_thread`
+- 当前仅负责卡片展示模型，尚未声明桌面 completion 观察与自动投递链路已经全部接通
+
 ### 5.9 `src/workspace/session-store.ts`
 
 SQLite 持久化层。
@@ -1009,6 +1021,7 @@ channel + peer_id -> codex_thread_id
 13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式表单卡、todo list 展示、待回答计划选择题和续跑同一 native thread 的桥接链路
 14. `tests/codex-desktop-completion-observer.test.ts` 会回放 `desktop-completion-single.jsonl` 与 `desktop-completion-repeat.jsonl`，校验本地 rollout completion 提取器的 offset 读取、`task_complete` 检测、最终 assistant 正文提取和稳定 `completionKey` 生成
 15. `tests/desktop-completion-routing.test.ts` 会用本地 SQLite store + 小型 catalog double 校验桌面 completion 的本地投递目标解析：同一 native thread 有多个话题绑定时会选择首选绑定；项目群 fallback 会先看精确 `projectKey`，再看唯一 cwd 命中；cwd 命中多个项目时不会猜测，而是退回 DM 或明确报出 DM owner 歧义错误
+16. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面完成通知卡的 DM / 项目群主动作差异、完成摘要字段，以及“通知卡而非导航卡”的展示约束
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 
