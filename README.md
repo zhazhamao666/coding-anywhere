@@ -26,7 +26,7 @@
 - 打开一张导航卡后，常见操作主要靠按钮点击，不需要反复手输命令
 - 项目列表、线程列表、当前项目、当前会话都能直接以结构化卡片展示
 - 当前 surface 有 live run 时，可以直接查看运行状态并在卡片里停止任务
-- 可以直接在飞书里看到当前会话使用的 Codex 模型和推理强度，并在“当前会话”卡里切换它们
+- 可以直接在飞书里看到当前会话使用的 Codex 模型、推理和速度，并在“当前会话”“运行状态”和具体对话卡里随时切换
 - 在 DM 里可以从“项目列表 -> 线程列表 -> 切换到此线程”一路点进 Codex 原生线程
 - 在 DM 里切换项目时，会主动退出之前绑定的旧线程，避免普通消息误跑到别的项目
 - 线程列表会把 Codex subagent 解析成母 agent / 子 agent 结构化展示，不再把 raw `source` JSON 暴露给飞书用户
@@ -66,8 +66,8 @@ Coding Anywhere
 - 支持已注册的 Feishu 群话题线程
 - 支持卡片按钮导航、项目浏览、线程浏览、线程切换和群级项目绑定
 - 支持 `/ca status` 结构化运行状态卡，以及当前 surface 的 `/ca stop`
-- 支持在 `/ca`、`/ca status`、`/ca session` 中展示当前生效的 `model` / `reasoning effort`
-- 支持在 `/ca session` 中通过下拉框切换当前线程 / 当前 surface 的 `model` / `reasoning effort`
+- 支持在 `/ca`、`/ca status`、`/ca session` 以及具体对话卡中展示当前生效的 `model` / `reasoning effort` / `speed`
+- 支持在 `/ca session`、`/ca status` 和具体对话卡中通过下拉框切换当前线程 / 当前 surface 的 `model` / `reasoning effort` / `speed`
 - 支持在 DM 中通过 `/ca project switch <projectKey>` 切到另一个 Codex 项目，并自动解除旧线程绑定
 - DM 中的项目列表直接读取本机 Codex `state_*.sqlite`
 - DM 中只记录“当前窗口绑定到哪个 Codex thread_id”，不镜像整份 Codex 项目目录
@@ -116,10 +116,12 @@ stop-coding-anywhere.cmd
 
 - `defaultModel`
 - `defaultReasoningEffort`
+- `defaultSpeed`
 - `modelOptions`
 - `reasoningEffortOptions`
+- `speedOptions`
 
-这样飞书里的“当前会话”卡就能展示并提供更贴近你本机 Codex 环境的默认模型与候选项。
+这样飞书里的“当前会话”“运行状态”和具体对话卡就能展示并提供更贴近你本机 Codex 环境的默认模型、推理与速度候选项。
 
 启动前你至少需要准备好：
 

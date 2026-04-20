@@ -15,13 +15,16 @@ const RootSchema = z.object({
 });
 
 const CodexReasoningSchema = z.enum(["minimal", "low", "medium", "high", "xhigh"]);
+const CodexSpeedSchema = z.enum(["standard", "fast"]);
 
 const CodexSchema = z.object({
   command: z.string().default("codex"),
   defaultModel: z.string().optional(),
   defaultReasoningEffort: CodexReasoningSchema.optional(),
+  defaultSpeed: CodexSpeedSchema.optional(),
   modelOptions: z.array(z.string()).default([]),
   reasoningEffortOptions: z.array(CodexReasoningSchema).default([]),
+  speedOptions: z.array(CodexSpeedSchema).default([]),
 });
 
 const RawConfigSchema = z.object({
@@ -71,8 +74,10 @@ const BridgeConfigSchema = z.object({
     command: "codex",
     defaultModel: undefined,
     defaultReasoningEffort: undefined,
+    defaultSpeed: undefined,
     modelOptions: [],
     reasoningEffortOptions: [],
+    speedOptions: [],
   }),
   scheduler: z.object({
     maxConcurrentRuns: z.number().int().positive().default(2),
@@ -120,8 +125,10 @@ export function loadConfigWithMetadata(configPath: string): LoadedBridgeConfig {
         command: codexCommand,
         defaultModel: parsed.codex?.defaultModel,
         defaultReasoningEffort: parsed.codex?.defaultReasoningEffort,
+        defaultSpeed: parsed.codex?.defaultSpeed,
         modelOptions: parsed.codex?.modelOptions ?? [],
         reasoningEffortOptions: parsed.codex?.reasoningEffortOptions ?? [],
+        speedOptions: parsed.codex?.speedOptions ?? [],
       },
     }),
   };

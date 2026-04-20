@@ -195,17 +195,19 @@ export class SessionStore {
     threadId: string;
     model: string;
     reasoningEffort: CodexPreferenceRecord["reasoningEffort"];
+    speed: CodexPreferenceRecord["speed"];
   }): void {
     const updatedAt = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO codex_thread_preferences (
-        thread_id, model, reasoning_effort, updated_at
+        thread_id, model, reasoning_effort, speed, updated_at
       ) VALUES (
-        @threadId, @model, @reasoningEffort, @updatedAt
+        @threadId, @model, @reasoningEffort, @speed, @updatedAt
       )
       ON CONFLICT(thread_id) DO UPDATE SET
         model = excluded.model,
         reasoning_effort = excluded.reasoning_effort,
+        speed = excluded.speed,
         updated_at = excluded.updated_at
     `).run({
       ...input,
@@ -215,7 +217,7 @@ export class SessionStore {
 
   public getCodexThreadPreference(threadId: string): CodexPreferenceRecord | undefined {
     const row = this.db.prepare(`
-      SELECT model, reasoning_effort, updated_at
+      SELECT model, reasoning_effort, speed, updated_at
       FROM codex_thread_preferences
       WHERE thread_id = ?
     `).get(threadId) as CodexPreferenceRow | undefined;
@@ -238,17 +240,19 @@ export class SessionStore {
     surfaceRef?: string | null;
     model: string;
     reasoningEffort: CodexPreferenceRecord["reasoningEffort"];
+    speed: CodexPreferenceRecord["speed"];
   }): void {
     const updatedAt = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO codex_surface_preferences (
-        surface_key, channel, peer_id, chat_id, surface_type, surface_ref, model, reasoning_effort, updated_at
+        surface_key, channel, peer_id, chat_id, surface_type, surface_ref, model, reasoning_effort, speed, updated_at
       ) VALUES (
-        @surfaceKey, @channel, @peerId, @chatId, @surfaceType, @surfaceRef, @model, @reasoningEffort, @updatedAt
+        @surfaceKey, @channel, @peerId, @chatId, @surfaceType, @surfaceRef, @model, @reasoningEffort, @speed, @updatedAt
       )
       ON CONFLICT(surface_key) DO UPDATE SET
         model = excluded.model,
         reasoning_effort = excluded.reasoning_effort,
+        speed = excluded.speed,
         updated_at = excluded.updated_at
     `).run({
       ...input,
@@ -268,7 +272,7 @@ export class SessionStore {
     surfaceRef?: string | null;
   }): CodexPreferenceRecord | undefined {
     const row = this.db.prepare(`
-      SELECT model, reasoning_effort, updated_at
+      SELECT model, reasoning_effort, speed, updated_at
       FROM codex_surface_preferences
       WHERE surface_key = ?
     `).get(buildSurfacePreferenceKey(input)) as CodexPreferenceRow | undefined;
@@ -2050,6 +2054,7 @@ export class SessionStore {
         thread_id TEXT PRIMARY KEY,
         model TEXT NOT NULL,
         reasoning_effort TEXT NOT NULL,
+        speed TEXT NOT NULL DEFAULT 'standard',
         updated_at TEXT NOT NULL
       );
 
@@ -2062,6 +2067,7 @@ export class SessionStore {
         surface_ref TEXT,
         model TEXT NOT NULL,
         reasoning_effort TEXT NOT NULL,
+        speed TEXT NOT NULL DEFAULT 'standard',
         updated_at TEXT NOT NULL
       );
 
@@ -2103,6 +2109,7 @@ export class SessionStore {
     this.migrateObservabilityEventSources();
     this.dropObsoleteTables();
     this.ensureCodexThreadIndexes();
+    this.migrateCodexPreferenceTables();
   }
 
   private migrateLegacyRootTable(): void {
@@ -2346,6 +2353,28 @@ export class SessionStore {
     `);
   }
 
+  private migrateCodexPreferenceTables(): void {
+    const threadColumns = this.db.prepare(`PRAGMA table_info(codex_thread_preferences)`).all() as Array<{
+      name: string;
+    }>;
+    if (threadColumns.some(column => column.name === "speed") === false) {
+      this.db.exec(`
+        ALTER TABLE codex_thread_preferences
+        ADD COLUMN speed TEXT NOT NULL DEFAULT 'standard'
+      `);
+    }
+
+    const surfaceColumns = this.db.prepare(`PRAGMA table_info(codex_surface_preferences)`).all() as Array<{
+      name: string;
+    }>;
+    if (surfaceColumns.some(column => column.name === "speed") === false) {
+      this.db.exec(`
+        ALTER TABLE codex_surface_preferences
+        ADD COLUMN speed TEXT NOT NULL DEFAULT 'standard'
+      `);
+    }
+  }
+
   private dropObsoleteTables(): void {
     this.db.exec(`
       DROP TABLE IF EXISTS workspaces;
@@ -2393,6 +2422,7 @@ interface CodexProjectSelectionRow {
 interface CodexPreferenceRow {
   model: string;
   reasoning_effort: CodexPreferenceRecord["reasoningEffort"];
+  speed: CodexPreferenceRecord["speed"];
   updated_at: string;
 }
 
@@ -2747,6 +2777,7 @@ function rowToCodexPreference(row: CodexPreferenceRow): CodexPreferenceRecord {
   return {
     model: row.model,
     reasoningEffort: row.reasoning_effort,
+    speed: row.speed,
     updatedAt: row.updated_at,
   };
 }

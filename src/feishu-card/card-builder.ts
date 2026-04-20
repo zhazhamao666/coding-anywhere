@@ -1,3 +1,9 @@
+import {
+  getCodexModelLabel,
+  getCodexReasoningLabel,
+  getCodexSpeedLabel,
+  getFallbackCodexPreferenceCatalog,
+} from "../codex-preferences.js";
 import type { PlanTodoItem, ProgressCardState, ProgressStatus } from "../types.js";
 import { normalizeMarkdownToPlainText } from "../markdown-text.js";
 
@@ -22,6 +28,7 @@ export function buildStreamingShellCard(state: ProgressCardState): Record<string
           content: summaryText,
           element_id: STREAMING_ELEMENT_ID,
         },
+        ...buildCodexPreferenceControlElements(state),
         ...buildStopButtonElements(state),
       ],
     },
@@ -38,10 +45,13 @@ export function buildStreamingCardMarkdown(state: ProgressCardState): string {
     lines.push(`**当前会话**：${state.sessionName}`);
   }
   if (state.model) {
-    lines.push(`**当前模型**：${state.model}`);
+    lines.push(`**当前模型**：${getCodexModelLabel(state.model)}`);
   }
   if (state.reasoningEffort) {
-    lines.push(`**推理强度**：${state.reasoningEffort}`);
+    lines.push(`**推理**：${getCodexReasoningLabel(state.reasoningEffort)}`);
+  }
+  if (state.speed) {
+    lines.push(`**速度**：${getCodexSpeedLabel(state.speed)}`);
   }
   if (state.latestTool) {
     lines.push(`**最近工具**：${state.latestTool}`);
@@ -58,6 +68,7 @@ export function buildBridgeCard(state: ProgressCardState): Record<string, unknow
       tag: "markdown",
       content,
     },
+    ...buildCodexPreferenceControlElements(state),
   ];
 
   if (state.planTodos && state.planTodos.length > 0) {
@@ -417,6 +428,142 @@ function buildStopButtonElements(state: ProgressCardState): Array<Record<string,
 function buildStopActionValue(state: ProgressCardState): Record<string, unknown> {
   return {
     command: "/ca stop",
+    chatId: state.deliveryChatId ?? undefined,
+    surfaceType: state.deliverySurfaceType ?? undefined,
+    surfaceRef: state.deliverySurfaceRef ?? undefined,
+  };
+}
+
+function buildCodexPreferenceControlElements(state: ProgressCardState): Array<Record<string, unknown>> {
+  const catalog = getFallbackCodexPreferenceCatalog();
+  const modelOptions = state.modelOptions ?? catalog.modelOptions;
+  const reasoningEffortOptions = state.reasoningEffortOptions ?? catalog.reasoningEffortOptions;
+  const speedOptions = state.speedOptions ?? catalog.speedOptions;
+
+  if (!state.model && !state.reasoningEffort && !state.speed) {
+    return [];
+  }
+
+  return [
+    {
+      tag: "hr",
+    },
+    {
+      tag: "markdown",
+      content: [
+        "**Codex 设置**",
+        "调整后会作用于当前会话的后续运行，不会打断这次正在执行的任务。",
+      ].join("\n"),
+    },
+    {
+      tag: "column_set",
+      flex_mode: "none",
+      background_style: "default",
+      columns: [
+        {
+          tag: "column",
+          width: "weighted",
+          weight: 1,
+          vertical_align: "top",
+          elements: [
+            {
+              tag: "markdown",
+              content: "**模型**",
+            },
+            {
+              tag: "select_static",
+              initial_option: state.model ?? catalog.defaultModel,
+              placeholder: {
+                tag: "plain_text",
+                content: "选择模型",
+              },
+              options: modelOptions.map(model => ({
+                text: {
+                  tag: "plain_text",
+                  content: getCodexModelLabel(model),
+                },
+                value: model,
+              })),
+              behaviors: [{
+                type: "callback",
+                value: buildPreferenceActionValue(state, "set_codex_model"),
+              }],
+            },
+          ],
+        },
+        {
+          tag: "column",
+          width: "weighted",
+          weight: 1,
+          vertical_align: "top",
+          elements: [
+            {
+              tag: "markdown",
+              content: "**推理**",
+            },
+            {
+              tag: "select_static",
+              initial_option: state.reasoningEffort ?? catalog.defaultReasoningEffort,
+              placeholder: {
+                tag: "plain_text",
+                content: "选择推理",
+              },
+              options: reasoningEffortOptions.map(reasoningEffort => ({
+                text: {
+                  tag: "plain_text",
+                  content: getCodexReasoningLabel(reasoningEffort),
+                },
+                value: reasoningEffort,
+              })),
+              behaviors: [{
+                type: "callback",
+                value: buildPreferenceActionValue(state, "set_reasoning_effort"),
+              }],
+            },
+          ],
+        },
+        {
+          tag: "column",
+          width: "weighted",
+          weight: 1,
+          vertical_align: "top",
+          elements: [
+            {
+              tag: "markdown",
+              content: "**速度**",
+            },
+            {
+              tag: "select_static",
+              initial_option: state.speed ?? catalog.defaultSpeed,
+              placeholder: {
+                tag: "plain_text",
+                content: "选择速度",
+              },
+              options: speedOptions.map(speed => ({
+                text: {
+                  tag: "plain_text",
+                  content: getCodexSpeedLabel(speed),
+                },
+                value: speed,
+              })),
+              behaviors: [{
+                type: "callback",
+                value: buildPreferenceActionValue(state, "set_codex_speed"),
+              }],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+function buildPreferenceActionValue(
+  state: ProgressCardState,
+  bridgeAction: "set_codex_model" | "set_reasoning_effort" | "set_codex_speed",
+): Record<string, unknown> {
+  return {
+    bridgeAction,
     chatId: state.deliveryChatId ?? undefined,
     surfaceType: state.deliverySurfaceType ?? undefined,
     surfaceRef: state.deliverySurfaceRef ?? undefined,

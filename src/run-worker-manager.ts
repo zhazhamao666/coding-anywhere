@@ -2,6 +2,7 @@ import { ThreadRunGuard } from "./thread-run-guard.js";
 import { RunCanceledError } from "./run-cancel-error.js";
 import type {
   CodexReasoningEffort,
+  CodexSpeed,
   ProgressStage,
   ProgressStatus,
   RuntimeSnapshot,
@@ -270,6 +271,7 @@ export class RunWorkerManager {
         activeStartedAt: new Date().toISOString(),
         model: next.descriptor.model ?? null,
         reasoningEffort: next.descriptor.reasoningEffort ?? null,
+        speed: next.descriptor.speed ?? null,
         status: next.descriptor.status ?? "queued",
         stage: next.descriptor.stage ?? "received",
         latestTool: next.descriptor.latestTool ?? null,
@@ -323,6 +325,7 @@ export interface RunDescriptor {
   rootId: string;
   model?: string | null;
   reasoningEffort?: CodexReasoningEffort | null;
+  speed?: CodexSpeed | null;
   status?: ProgressStatus;
   stage?: ProgressStage;
   latestPreview: string;
@@ -344,6 +347,7 @@ interface ActiveRunRecord {
   rootId: string;
   model: string | null;
   reasoningEffort: CodexReasoningEffort | null;
+  speed: CodexSpeed | null;
   status: ProgressStatus;
   stage: ProgressStage;
   latestPreview: string;
@@ -376,6 +380,7 @@ function toRuntimeRunSnapshot(
     rootId: string;
     model?: string | null;
     reasoningEffort?: CodexReasoningEffort | null;
+    speed?: CodexSpeed | null;
     status?: ProgressStatus;
     stage?: ProgressStage;
     latestPreview: string;
@@ -401,6 +406,7 @@ function toRuntimeRunSnapshot(
     rootId: record.rootId,
     model: record.model ?? null,
     reasoningEffort: record.reasoningEffort ?? null,
+    speed: record.speed ?? null,
     status: record.status ?? "queued",
     stage: record.stage ?? "received",
     latestPreview: record.latestPreview,

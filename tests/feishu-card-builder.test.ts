@@ -16,6 +16,12 @@ describe("feishu card builder", () => {
       status: "preparing",
       stage: "ensuring_session",
       sessionName: "codex-main",
+      model: "gpt-5.4",
+      reasoningEffort: "xhigh",
+      speed: "standard",
+      deliveryChatId: "oc_chat_current",
+      deliverySurfaceType: "thread",
+      deliverySurfaceRef: "omt_current",
       preview: "[ca] ensuring session",
     }));
 
@@ -29,6 +35,9 @@ describe("feishu card builder", () => {
     expect(JSON.stringify(card)).toContain("准备中");
     expect(JSON.stringify(card)).toContain("codex-main");
     expect(JSON.stringify(card)).toContain("main");
+    expect(JSON.stringify(card)).toContain("\"bridgeAction\":\"set_codex_model\"");
+    expect(JSON.stringify(card)).toContain("\"bridgeAction\":\"set_reasoning_effort\"");
+    expect(JSON.stringify(card)).toContain("\"bridgeAction\":\"set_codex_speed\"");
   });
 
   it("adds a stop button to non-terminal streaming cards with the current surface context", () => {
@@ -53,6 +62,9 @@ describe("feishu card builder", () => {
     const card = buildStreamingShellCard(createState({
       status: "running",
       stage: "text",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      speed: "fast",
       preview: "思考中",
       deliveryChatId: "oc_chat_current",
       deliverySurfaceType: "thread",
@@ -64,15 +76,19 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("streaming_mode");
     expect(serialized).toContain("停止任务");
     expect(serialized).toContain("\"command\":\"/ca stop\"");
+    expect(serialized).toContain("\"bridgeAction\":\"set_codex_model\"");
+    expect(serialized).toContain("\"bridgeAction\":\"set_reasoning_effort\"");
+    expect(serialized).toContain("\"bridgeAction\":\"set_codex_speed\"");
   });
 
-  it("builds streaming markdown with tool details and strips raw markdown markers from preview text", () => {
+  it("builds streaming markdown with display labels and strips raw markdown markers from preview text", () => {
     const markdown = buildStreamingCardMarkdown(createState({
       status: "tool_active",
       stage: "tool_call",
       sessionName: "codex-main",
       model: "gpt-5.4",
       reasoningEffort: "xhigh",
+      speed: "fast",
       latestTool: "npm test",
       preview: "**明确待办**\n- 清理旧包",
     }));
@@ -80,8 +96,9 @@ describe("feishu card builder", () => {
     expect(markdown).toContain("工具执行中");
     expect(markdown).toContain("npm test");
     expect(markdown).toContain("codex-main");
-    expect(markdown).toContain("gpt-5.4");
-    expect(markdown).toContain("xhigh");
+    expect(markdown).toContain("GPT-5.4");
+    expect(markdown).toContain("超高");
+    expect(markdown).toContain("快速");
     expect(markdown).toContain("明确待办");
     expect(markdown).not.toContain("**明确待办**");
   });

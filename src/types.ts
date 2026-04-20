@@ -18,17 +18,21 @@ export interface PlanInteractionDraft {
 }
 
 export type CodexReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+export type CodexSpeed = "standard" | "fast";
 
 export interface CodexPreferenceCatalog {
   defaultModel: string;
   defaultReasoningEffort: CodexReasoningEffort;
+  defaultSpeed: CodexSpeed;
   modelOptions: string[];
   reasoningEffortOptions: CodexReasoningEffort[];
+  speedOptions: CodexSpeed[];
 }
 
 export interface CodexPreferenceRecord {
   model: string;
   reasoningEffort: CodexReasoningEffort;
+  speed: CodexSpeed;
   updatedAt: string;
 }
 
@@ -291,6 +295,10 @@ export interface ProgressCardState {
   sessionName?: string;
   model?: string;
   reasoningEffort?: CodexReasoningEffort;
+  speed?: CodexSpeed;
+  modelOptions?: string[];
+  reasoningEffortOptions?: CodexReasoningEffort[];
+  speedOptions?: CodexSpeed[];
   deliveryChatId?: string | null;
   deliverySurfaceType?: "thread" | null;
   deliverySurfaceRef?: string | null;
@@ -422,6 +430,7 @@ export interface RuntimeRunSnapshot {
   rootId: string;
   model: string | null;
   reasoningEffort: CodexReasoningEffort | null;
+  speed: CodexSpeed | null;
   status: ProgressStatus;
   stage: ProgressStage;
   latestPreview: string;

@@ -13,7 +13,8 @@ interface CardActionValue {
     | "submit_plan_form"
     | "answer_plan_choice"
     | "set_codex_model"
-    | "set_reasoning_effort";
+    | "set_reasoning_effort"
+    | "set_codex_speed";
   interactionId?: string;
   choiceId?: string;
   chatId?: string;
@@ -59,6 +60,7 @@ export class FeishuCardActionService {
           surfaceRef?: string;
           model?: string;
           reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+          speed?: "standard" | "fast";
         }): Promise<BridgeReply>;
       };
       apiClient?: FeishuApiClientLike;
@@ -95,7 +97,11 @@ export class FeishuCardActionService {
     const patchTargetCardId = actionValue?.cardId;
     const patchTargetMessageId = actionValue?.messageId ?? event.open_message_id;
 
-    if (bridgeAction === "set_codex_model" || bridgeAction === "set_reasoning_effort") {
+    if (
+      bridgeAction === "set_codex_model" ||
+      bridgeAction === "set_reasoning_effort" ||
+      bridgeAction === "set_codex_speed"
+    ) {
       const selectedOption = event.action?.option?.trim();
       if (!selectedOption || !this.dependencies.bridgeService.updateCodexPreferences) {
         return this.buildRawCardResponse(this.buildInfoCard("设置不可用", [
@@ -111,7 +117,9 @@ export class FeishuCardActionService {
         surfaceRef: actionValue?.surfaceRef,
         ...(bridgeAction === "set_codex_model"
           ? { model: selectedOption }
-          : { reasoningEffort: selectedOption as "minimal" | "low" | "medium" | "high" | "xhigh" }),
+          : bridgeAction === "set_reasoning_effort"
+            ? { reasoningEffort: selectedOption as "minimal" | "low" | "medium" | "high" | "xhigh" }
+            : { speed: selectedOption as "standard" | "fast" }),
       });
 
       if (updatedReply.kind === "card") {

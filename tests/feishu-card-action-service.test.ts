@@ -309,6 +309,63 @@ describe("FeishuCardActionService", () => {
     });
   });
 
+  it("updates Codex speed from a select_static callback and returns the refreshed session card", async () => {
+    const replyCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "当前会话",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
+    const bridgeService = {
+      handleMessage: vi.fn(async () => []),
+      updateCodexPreferences: vi.fn(async () => ({
+        kind: "card",
+        card: replyCard,
+      })),
+    };
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: createApiClientDouble() as any,
+    });
+
+    const result = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_card_1",
+      action: {
+        tag: "select_static",
+        option: "fast",
+        value: {
+          bridgeAction: "set_codex_speed",
+          chatId: "oc_chat_current",
+          surfaceType: "thread",
+          surfaceRef: "omt_current",
+        },
+      },
+    });
+
+    expect(bridgeService.updateCodexPreferences).toHaveBeenCalledWith({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      speed: "fast",
+    });
+    expect(result).toMatchObject({
+      card: {
+        type: "raw",
+        data: replyCard,
+      },
+    });
+  });
+
   it("submits a plan form asynchronously and returns an immediate ack card", async () => {
     const bridgeService = {
       handleMessage: vi.fn(() => new Promise<BridgeReply[]>(() => undefined)),

@@ -7,7 +7,15 @@ import {
   validateBridgeImagePath,
 } from "./bridge-image-directive.js";
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
-import { normalizeReasoningEffort } from "./codex-preferences.js";
+import {
+  getCodexModelLabel,
+  getCodexReasoningLabel,
+  getCodexSpeedLabel,
+  getFallbackCodexPreferenceCatalog,
+  normalizeCodexModel,
+  normalizeCodexSpeed,
+  normalizeReasoningEffort,
+} from "./codex-preferences.js";
 import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import { normalizeMarkdownToPlainText } from "./markdown-text.js";
@@ -25,6 +33,7 @@ import type {
   CodexPreferenceCatalog,
   CodexPreferenceRecord,
   CodexReasoningEffort,
+  CodexSpeed,
   CodexCatalogThread,
   CodexCatalogThreadSourceInfo,
   PendingPlanInteractionRecord,
@@ -46,6 +55,7 @@ interface BridgeRunner {
       sessionName?: string;
       model?: string;
       reasoningEffort?: CodexReasoningEffort;
+      speed?: CodexSpeed;
     },
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome & { threadId: string }>;
@@ -57,6 +67,7 @@ interface BridgeRunner {
       images?: string[];
       model?: string;
       reasoningEffort?: CodexReasoningEffort;
+      speed?: CodexSpeed;
     } | ((event: RunnerEvent) => void | Promise<void>),
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome>;
@@ -135,6 +146,7 @@ interface CodexPreferenceTarget {
 interface EffectiveCodexPreferences {
   model: string;
   reasoningEffort: CodexReasoningEffort;
+  speed: CodexSpeed;
   source: "thread" | "surface" | "default";
 }
 
@@ -176,6 +188,10 @@ export class BridgeService {
       sessionName: resolved.sessionName,
       model: effectivePreferences.model,
       reasoningEffort: effectivePreferences.reasoningEffort,
+      speed: effectivePreferences.speed,
+      modelOptions: this.getCodexPreferenceCatalog().modelOptions,
+      reasoningEffortOptions: this.getCodexPreferenceCatalog().reasoningEffortOptions,
+      speedOptions: this.getCodexPreferenceCatalog().speedOptions,
       deliveryChatId: resolved.deliveryChatId,
       deliverySurfaceType: resolved.deliverySurfaceType,
       deliverySurfaceRef: resolved.deliverySurfaceRef,
@@ -368,11 +384,13 @@ export class BridgeService {
         control?.setCanceler(async () => {
           await this.dependencies.runner.cancel(activeResolved.context);
         });
-        if (imagePaths.length > 0 || effectivePreferences.source !== "default") {
+        const shouldForwardSpeed = effectivePreferences.source !== "default" || effectivePreferences.speed === "fast";
+        if (imagePaths.length > 0 || effectivePreferences.source !== "default" || shouldForwardSpeed) {
           const runnerOptions: {
             images?: string[];
             model?: string;
             reasoningEffort?: CodexReasoningEffort;
+            speed?: CodexSpeed;
           } = {};
           if (imagePaths.length > 0) {
             runnerOptions.images = imagePaths;
@@ -380,6 +398,9 @@ export class BridgeService {
           if (effectivePreferences.source !== "default") {
             runnerOptions.model = effectivePreferences.model;
             runnerOptions.reasoningEffort = effectivePreferences.reasoningEffort;
+          }
+          if (shouldForwardSpeed) {
+            runnerOptions.speed = effectivePreferences.speed;
           }
           outcome = await this.dependencies.runner.submitVerbatim(
             activeResolved.context,
@@ -539,6 +560,7 @@ export class BridgeService {
       rootId: resolved.root.id,
       model: effectivePreferences.model,
       reasoningEffort: effectivePreferences.reasoningEffort,
+      speed: effectivePreferences.speed,
       status: currentProgress.status,
       stage: currentProgress.stage,
       latestPreview: currentProgress.preview,
@@ -586,6 +608,7 @@ export class BridgeService {
     surfaceRef?: string;
     model?: string;
     reasoningEffort?: CodexReasoningEffort;
+    speed?: CodexSpeed;
   }): Promise<BridgeReply> {
     const sessionInput: BridgeMessageInput = {
       channel: input.channel,
@@ -600,18 +623,21 @@ export class BridgeService {
     const effectivePreferences = this.resolveEffectiveCodexPreferences(sessionInput, resolved);
     const nextModel = normalizeCodexModel(input.model) ?? effectivePreferences.model;
     const nextReasoningEffort = normalizeReasoningEffort(input.reasoningEffort) ?? effectivePreferences.reasoningEffort;
+    const nextSpeed = normalizeCodexSpeed(input.speed) ?? effectivePreferences.speed;
 
     if (target.kind === "thread" && target.threadId) {
       this.dependencies.store.upsertCodexThreadPreference({
         threadId: target.threadId,
         model: nextModel,
         reasoningEffort: nextReasoningEffort,
+        speed: nextSpeed,
       });
     } else {
       this.dependencies.store.upsertCodexSurfacePreference({
         ...target.surface,
         model: nextModel,
         reasoningEffort: nextReasoningEffort,
+        speed: nextSpeed,
       });
     }
 
@@ -709,6 +735,7 @@ export class BridgeService {
           prompt: string;
           model?: string;
           reasoningEffort?: CodexReasoningEffort;
+          speed?: CodexSpeed;
         } = {
           cwd: resolved.context.cwd,
           prompt: buildNativeThreadBootstrapPrompt(currentThread?.title ?? resolved.threadId ?? resolved.sessionName),
@@ -717,11 +744,15 @@ export class BridgeService {
           createThreadInput.model = effectivePreferences.model;
           createThreadInput.reasoningEffort = effectivePreferences.reasoningEffort;
         }
+        if (effectivePreferences.source !== "default" || effectivePreferences.speed === "fast") {
+          createThreadInput.speed = effectivePreferences.speed;
+        }
         const created = await this.dependencies.runner.createThread(createThreadInput);
         this.dependencies.store.upsertCodexThreadPreference({
           threadId: created.threadId,
           model: effectivePreferences.model,
           reasoningEffort: effectivePreferences.reasoningEffort,
+          speed: effectivePreferences.speed,
         });
 
         if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
@@ -2327,15 +2358,16 @@ export class BridgeService {
     currentRun?: RuntimeRunSnapshot,
   ): BridgeReply {
     const actionContext = this.buildCardActionContext(input);
+    const effectivePreferences = resolved
+      ? this.resolveEffectiveCodexPreferences(input, resolved)
+      : undefined;
     const summaryLines = ["**视图**：运行状态"];
     if (resolved?.root.id) {
       summaryLines.push(`**Root**：${resolved.root.id}`);
     }
     if (resolved) {
       summaryLines.push(...this.buildContextSummaryLines(input, resolved, currentRun));
-      summaryLines.push(...this.buildCodexPreferenceSummaryLines(
-        this.resolveEffectiveCodexPreferences(input, resolved),
-      ));
+      summaryLines.push(...this.buildCodexPreferenceSummaryLines(effectivePreferences!));
     }
     summaryLines.push(`**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`);
 
@@ -2387,6 +2419,12 @@ export class BridgeService {
         title: "运行状态",
         summaryLines,
         sections,
+        extraElements: effectivePreferences
+          ? this.buildCodexPreferenceControlElements({
+              context: actionContext,
+              effectivePreferences,
+            })
+          : undefined,
         actions,
       }),
     };
@@ -2568,12 +2606,7 @@ export class BridgeService {
   }
 
   private getCodexPreferenceCatalog(): CodexPreferenceCatalog {
-    return this.dependencies.codexPreferences ?? {
-      defaultModel: "gpt-5.4",
-      defaultReasoningEffort: "high",
-      modelOptions: ["gpt-5.4", "gpt-5.4-mini"],
-      reasoningEffortOptions: ["minimal", "low", "medium", "high", "xhigh"],
-    };
+    return this.dependencies.codexPreferences ?? getFallbackCodexPreferenceCatalog();
   }
 
   private resolveCodexPreferenceTarget(
@@ -2618,6 +2651,7 @@ export class BridgeService {
       return {
         model: threadPreference.model,
         reasoningEffort: threadPreference.reasoningEffort,
+        speed: threadPreference.speed,
         source: "thread",
       };
     }
@@ -2633,6 +2667,7 @@ export class BridgeService {
       return {
         model: surfacePreference.model,
         reasoningEffort: surfacePreference.reasoningEffort,
+        speed: surfacePreference.speed,
         source: "surface",
       };
     }
@@ -2640,6 +2675,7 @@ export class BridgeService {
     return {
       model: catalog.defaultModel,
       reasoningEffort: catalog.defaultReasoningEffort,
+      speed: catalog.defaultSpeed,
       source: "default",
     };
   }
@@ -2648,8 +2684,9 @@ export class BridgeService {
     effectivePreferences: EffectiveCodexPreferences,
   ): string[] {
     return [
-      `**当前模型**：${effectivePreferences.model}`,
-      `**推理强度**：${effectivePreferences.reasoningEffort}`,
+      `**当前模型**：${getCodexModelLabel(effectivePreferences.model)}`,
+      `**推理**：${getCodexReasoningLabel(effectivePreferences.reasoningEffort)}`,
+      `**速度**：${getCodexSpeedLabel(effectivePreferences.speed)}`,
       `**设置范围**：${formatCodexPreferenceSourceLabel(effectivePreferences.source)}`,
     ];
   }
@@ -2659,8 +2696,9 @@ export class BridgeService {
     target: CodexPreferenceTarget,
   ): string[] {
     return [
-      `当前模型：${effectivePreferences.model}`,
-      `推理强度：${effectivePreferences.reasoningEffort}`,
+      `当前模型：${getCodexModelLabel(effectivePreferences.model)}`,
+      `推理：${getCodexReasoningLabel(effectivePreferences.reasoningEffort)}`,
+      `速度：${getCodexSpeedLabel(effectivePreferences.speed)}`,
       `生效范围：${target.kind === "thread" ? "当前线程" : "当前会话入口"}`,
     ];
   }
@@ -2709,7 +2747,7 @@ export class BridgeService {
                 options: catalog.modelOptions.map(model => ({
                   text: {
                     tag: "plain_text",
-                    content: model,
+                    content: getCodexModelLabel(model),
                   },
                   value: model,
                 })),
@@ -2728,25 +2766,56 @@ export class BridgeService {
             elements: [
               {
                 tag: "markdown",
-                content: "**推理强度**",
+                content: "**推理**",
               },
               {
                 tag: "select_static",
                 initial_option: input.effectivePreferences.reasoningEffort,
                 placeholder: {
                   tag: "plain_text",
-                  content: "选择推理强度",
+                  content: "选择推理",
                 },
                 options: catalog.reasoningEffortOptions.map(reasoningEffort => ({
                   text: {
                     tag: "plain_text",
-                    content: reasoningEffort,
+                    content: getCodexReasoningLabel(reasoningEffort),
                   },
                   value: reasoningEffort,
                 })),
                 behaviors: [{
                   type: "callback",
                   value: this.buildCodexPreferenceActionValue(input.context, "set_reasoning_effort"),
+                }],
+              },
+            ],
+          },
+          {
+            tag: "column",
+            width: "weighted",
+            weight: 1,
+            vertical_align: "top",
+            elements: [
+              {
+                tag: "markdown",
+                content: "**速度**",
+              },
+              {
+                tag: "select_static",
+                initial_option: input.effectivePreferences.speed,
+                placeholder: {
+                  tag: "plain_text",
+                  content: "选择速度",
+                },
+                options: catalog.speedOptions.map(speed => ({
+                  text: {
+                    tag: "plain_text",
+                    content: getCodexSpeedLabel(speed),
+                  },
+                  value: speed,
+                })),
+                behaviors: [{
+                  type: "callback",
+                  value: this.buildCodexPreferenceActionValue(input.context, "set_codex_speed"),
                 }],
               },
             ],
@@ -2771,10 +2840,13 @@ export class BridgeService {
     }
 
     if (currentRun.model) {
-      items.push(`模型：${currentRun.model}`);
+      items.push(`模型：${getCodexModelLabel(currentRun.model)}`);
     }
     if (currentRun.reasoningEffort) {
-      items.push(`推理强度：${currentRun.reasoningEffort}`);
+      items.push(`推理：${getCodexReasoningLabel(currentRun.reasoningEffort)}`);
+    }
+    if (currentRun.speed) {
+      items.push(`速度：${getCodexSpeedLabel(currentRun.speed)}`);
     }
     items.push(`最近工具：${currentRun.latestTool ?? "无"}`);
     items.push(`摘要：${normalizeMarkdownToPlainText(currentRun.latestPreview)}`);
@@ -3047,6 +3119,7 @@ export class BridgeService {
       prompt: string;
       model?: string;
       reasoningEffort?: CodexReasoningEffort;
+      speed?: CodexSpeed;
     } = {
       cwd: resolved.context.cwd,
       prompt: buildNativeThreadBootstrapPrompt(resolved.context.threadTitle ?? prompt),
@@ -3055,11 +3128,15 @@ export class BridgeService {
       createThreadInput.model = effectivePreferences.model;
       createThreadInput.reasoningEffort = effectivePreferences.reasoningEffort;
     }
+    if (effectivePreferences.source !== "default" || effectivePreferences.speed === "fast") {
+      createThreadInput.speed = effectivePreferences.speed;
+    }
     const created = await this.dependencies.runner.createThread(createThreadInput);
     this.dependencies.store.upsertCodexThreadPreference({
       threadId: created.threadId,
       model: effectivePreferences.model,
       reasoningEffort: effectivePreferences.reasoningEffort,
+      speed: effectivePreferences.speed,
     });
 
     if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
@@ -3115,7 +3192,7 @@ export class BridgeService {
       surfaceType?: "thread";
       surfaceRef?: string;
     },
-    bridgeAction: "set_codex_model" | "set_reasoning_effort",
+    bridgeAction: "set_codex_model" | "set_reasoning_effort" | "set_codex_speed",
   ): Record<string, unknown> {
     return {
       bridgeAction,
@@ -3227,10 +3304,6 @@ function formatCodexPreferenceSourceLabel(source: EffectiveCodexPreferences["sou
     case "default":
       return "系统默认";
   }
-}
-
-function normalizeCodexModel(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function buildSessionName(rootId: string): string {

@@ -138,7 +138,7 @@ describe("CodexCliRunner", () => {
     );
   });
 
-  it("forwards model and reasoning effort overrides to codex exec", async () => {
+  it("forwards model, reasoning effort, and speed overrides to codex exec", async () => {
     execaMock.mockResolvedValueOnce({
       exitCode: 0,
       stdout: "D:/repo",
@@ -154,12 +154,13 @@ describe("CodexCliRunner", () => {
       prompt: "Initialize a bridge thread.",
       model: "gpt-5.4-mini",
       reasoningEffort: "medium",
+      speed: "fast",
     });
 
     expect(execaMock).toHaveBeenNthCalledWith(
       2,
       "codex",
-      ["exec", "-m", "gpt-5.4-mini", "-c", 'model_reasoning_effort="medium"', "--json", "-"],
+      ["exec", "-m", "gpt-5.4-mini", "-c", 'model_reasoning_effort="medium"', "-c", 'service_tier="fast"', "-c", "features.fast_mode=true", "--json", "-"],
       {
         cwd: "D:/repo",
         input: "Initialize a bridge thread.",
@@ -341,7 +342,7 @@ describe("CodexCliRunner", () => {
     ]);
   });
 
-  it("forwards model and reasoning effort overrides when resuming an existing thread", async () => {
+  it("forwards model, reasoning effort, and speed overrides when resuming an existing thread", async () => {
     execaMock.mockResolvedValueOnce({
       exitCode: 0,
       stdout: "D:/repo",
@@ -363,6 +364,7 @@ describe("CodexCliRunner", () => {
       {
         model: "gpt-5.4-mini",
         reasoningEffort: "medium",
+        speed: "fast",
       },
     );
 
@@ -376,6 +378,10 @@ describe("CodexCliRunner", () => {
         "gpt-5.4-mini",
         "-c",
         'model_reasoning_effort="medium"',
+        "-c",
+        'service_tier="fast"',
+        "-c",
+        "features.fast_mode=true",
         "--json",
         "thread-demo",
         "-",

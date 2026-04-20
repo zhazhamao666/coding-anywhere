@@ -6,6 +6,10 @@ export function createProgressCardState(input: {
   sessionName?: string;
   model?: string;
   reasoningEffort?: ProgressCardState["reasoningEffort"];
+  speed?: ProgressCardState["speed"];
+  modelOptions?: ProgressCardState["modelOptions"];
+  reasoningEffortOptions?: ProgressCardState["reasoningEffortOptions"];
+  speedOptions?: ProgressCardState["speedOptions"];
   deliveryChatId?: string | null;
   deliverySurfaceType?: "thread" | null;
   deliverySurfaceRef?: string | null;
@@ -16,6 +20,10 @@ export function createProgressCardState(input: {
     sessionName: input.sessionName,
     model: input.model,
     reasoningEffort: input.reasoningEffort,
+    speed: input.speed,
+    modelOptions: input.modelOptions,
+    reasoningEffortOptions: input.reasoningEffortOptions,
+    speedOptions: input.speedOptions,
     deliveryChatId: input.deliveryChatId ?? null,
     deliverySurfaceType: input.deliverySurfaceType ?? null,
     deliverySurfaceRef: input.deliverySurfaceRef ?? null,

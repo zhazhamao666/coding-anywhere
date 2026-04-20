@@ -3,6 +3,7 @@ import { execa } from "execa";
 import { RunCanceledError } from "./run-cancel-error.js";
 import type {
   CodexReasoningEffort,
+  CodexSpeed,
   PlanChoiceOption,
   PlanInteractionDraft,
   PlanTodoItem,
@@ -57,6 +58,7 @@ export class CodexCliRunner {
       sessionName?: string;
       model?: string;
       reasoningEffort?: CodexReasoningEffort;
+      speed?: CodexSpeed;
     },
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome & { threadId: string }> {
@@ -69,6 +71,7 @@ export class CodexCliRunner {
       {
         model: input.model,
         reasoningEffort: input.reasoningEffort,
+        speed: input.speed,
       },
     );
     const outcome = await this.runCodexExec(
@@ -96,6 +99,7 @@ export class CodexCliRunner {
       images?: string[];
       model?: string;
       reasoningEffort?: CodexReasoningEffort;
+      speed?: CodexSpeed;
     } | ((event: RunnerEvent) => void),
     onEvent?: (event: RunnerEvent) => void,
   ): Promise<RunOutcome> {
@@ -121,6 +125,7 @@ export class CodexCliRunner {
       {
         model: options?.model,
         reasoningEffort: options?.reasoningEffort,
+        speed: options?.speed,
       },
     );
 
@@ -262,6 +267,7 @@ function withCodexPreferences(
   options: {
     model?: string;
     reasoningEffort?: CodexReasoningEffort;
+    speed?: CodexSpeed;
   },
 ): string[] {
   const settingsArgs: string[] = [];
@@ -270,6 +276,11 @@ function withCodexPreferences(
   }
   if (options.reasoningEffort?.trim()) {
     settingsArgs.push("-c", `model_reasoning_effort="${options.reasoningEffort.trim()}"`);
+  }
+  if (options.speed === "fast") {
+    settingsArgs.push("-c", 'service_tier="fast"', "-c", "features.fast_mode=true");
+  } else if (options.speed === "standard") {
+    settingsArgs.push("-c", "features.fast_mode=false");
   }
 
   if (settingsArgs.length === 0) {

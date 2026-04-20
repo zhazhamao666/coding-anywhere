@@ -65,7 +65,7 @@ describe("BridgeService", () => {
     expect(cardText).not.toContain("停止任务");
   });
 
-  it("shows session model settings and applies updated model and reasoning to subsequent thread runs", async () => {
+  it("shows session codex settings and applies updated model, reasoning, and speed to subsequent thread runs", async () => {
     store.createProject({
       projectId: "proj-current",
       name: "Current Project",
@@ -92,8 +92,10 @@ describe("BridgeService", () => {
       codexPreferences: {
         defaultModel: "gpt-5.4",
         defaultReasoningEffort: "xhigh",
-        modelOptions: ["gpt-5.4", "gpt-5.4-mini"],
-        reasoningEffortOptions: ["medium", "high", "xhigh"],
+        defaultSpeed: "standard",
+        modelOptions: ["gpt-5.4", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.4-mini"],
+        reasoningEffortOptions: ["low", "medium", "high", "xhigh"],
+        speedOptions: ["standard", "fast"],
       },
     });
 
@@ -108,11 +110,21 @@ describe("BridgeService", () => {
     const sessionCard = (sessionReplies[0] as { card: Record<string, unknown> }).card;
     const sessionCardText = JSON.stringify(sessionCard);
     expect(sessionCardText).toContain("当前模型");
-    expect(sessionCardText).toContain("gpt-5.4");
-    expect(sessionCardText).toContain("推理强度");
-    expect(sessionCardText).toContain("xhigh");
+    expect(sessionCardText).toContain("GPT-5.4");
+    expect(sessionCardText).toContain("推理");
+    expect(sessionCardText).toContain("超高");
+    expect(sessionCardText).toContain("速度");
+    expect(sessionCardText).toContain("标准");
     expect(sessionCardText).toContain("\"bridgeAction\":\"set_codex_model\"");
     expect(sessionCardText).toContain("\"bridgeAction\":\"set_reasoning_effort\"");
+    expect(sessionCardText).toContain("\"bridgeAction\":\"set_codex_speed\"");
+    expect(sessionCardText.indexOf("GPT-5.4")).toBeLessThan(sessionCardText.indexOf("GPT-5.2-Codex"));
+    expect(sessionCardText.indexOf("GPT-5.2-Codex")).toBeLessThan(sessionCardText.indexOf("GPT-5.1-Codex-Max"));
+    expect(sessionCardText.indexOf("GPT-5.1-Codex-Max")).toBeLessThan(sessionCardText.indexOf("GPT-5.4-Mini"));
+    expect(sessionCardText.indexOf("\"content\":\"低\"")).toBeLessThan(sessionCardText.indexOf("\"content\":\"中\""));
+    expect(sessionCardText.indexOf("\"content\":\"中\"")).toBeLessThan(sessionCardText.indexOf("\"content\":\"高\""));
+    expect(sessionCardText.indexOf("\"content\":\"高\"")).toBeLessThan(sessionCardText.indexOf("\"content\":\"超高\""));
+    expect(sessionCardText.indexOf("\"content\":\"标准\"")).toBeLessThan(sessionCardText.indexOf("\"content\":\"快速\""));
 
     const updatedReply = await service.updateCodexPreferences({
       channel: "feishu",
@@ -122,14 +134,16 @@ describe("BridgeService", () => {
       surfaceRef: "omt_current",
       model: "gpt-5.4-mini",
       reasoningEffort: "medium",
+      speed: "fast",
     });
     expect(updatedReply).toMatchObject({
       kind: "card",
     });
     const updatedCard = (updatedReply as { card: Record<string, unknown> }).card;
     const updatedCardText = JSON.stringify(updatedCard);
-    expect(updatedCardText).toContain("gpt-5.4-mini");
-    expect(updatedCardText).toContain("medium");
+    expect(updatedCardText).toContain("GPT-5.4-Mini");
+    expect(updatedCardText).toContain("中");
+    expect(updatedCardText).toContain("快速");
 
     const statusReplies = await service.handleMessage({
       channel: "feishu",
@@ -141,8 +155,10 @@ describe("BridgeService", () => {
     });
     const statusCard = (statusReplies[0] as { card: Record<string, unknown> }).card;
     const statusCardText = JSON.stringify(statusCard);
-    expect(statusCardText).toContain("gpt-5.4-mini");
-    expect(statusCardText).toContain("medium");
+    expect(statusCardText).toContain("GPT-5.4-Mini");
+    expect(statusCardText).toContain("中");
+    expect(statusCardText).toContain("快速");
+    expect(statusCardText).toContain("\"bridgeAction\":\"set_codex_speed\"");
 
     await service.handleMessage({
       channel: "feishu",
@@ -162,6 +178,7 @@ describe("BridgeService", () => {
       expect.objectContaining({
         model: "gpt-5.4-mini",
         reasoningEffort: "medium",
+        speed: "fast",
       }),
       expect.any(Function),
     );
