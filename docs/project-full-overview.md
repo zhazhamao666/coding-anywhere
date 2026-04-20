@@ -397,6 +397,7 @@ SQLite 持久化层。
 - projects
 - project_chats
 - codex_threads
+- codex_thread_watch_state
 - pending_bridge_assets
 - pending_plan_interactions
 - observability_runs
@@ -408,6 +409,7 @@ SQLite 持久化层。
 - 启动迁移时会把旧版遗留表 `workspaces`、`users`、`acp_sessions`、`runs`、`message_links`、`event_offsets` 清理掉
 - 如果数据库里仍只有旧版 `workspaces` 根配置而没有 `bridge_root`，会先把旧根信息迁入 `bridge_root` 再删除旧表
 - 如果数据库里的 `codex_threads` 仍以 `thread_id` 作为主键，启动迁移会自动重建为“按飞书 surface 建模”的新结构，允许多个话题绑定到同一个 native `thread_id`
+- `codex_thread_watch_state` 会按 native desktop `thread_id` 持久化观察状态，记录当前 rollout 路径 / mtime、`last_read_offset`、`last_completion_key` 和 `last_notified_completion_key`，用于桌面线程观察与完成通知去重
 - `pending_bridge_assets` 会按飞书 surface 暂存待处理图片，记录本地文件路径、来源消息和当前状态；runtime 维护任务会按 TTL 标记过期图片
 - `pending_plan_interactions` 会按飞书 surface 记录待回答的计划单选问题；同一 surface 上出现新的待回答问题时，旧记录会被标记为 `superseded`
 
@@ -692,6 +694,7 @@ channel + peer_id -> codex_thread_id
 - `projects`
 - `project_chats`
 - `codex_threads`
+- `codex_thread_watch_state`
 - `pending_bridge_assets`
 - `pending_plan_interactions`
 
@@ -702,6 +705,7 @@ channel + peer_id -> codex_thread_id
 - `codex_threads` 表示“飞书 surface 到 native Codex thread”的绑定记录
 - `codex_threads` 以 `(chat_id, feishu_thread_id)` 唯一标识一个飞书话题 surface，而不是再把 `thread_id` 当作唯一主键
 - 因此同一个 native `thread_id` 可以被多个飞书话题引用；项目摘要中的线程数按去重后的 native `thread_id` 统计
+- `codex_thread_watch_state` 表示 native desktop 线程观察状态，记录 rollout 路径 / mtime、`last_read_offset`、`last_completion_key` 和 `last_notified_completion_key`，用于桌面端线程观察与完成通知去重
 - `pending_bridge_assets` 表示某个飞书 surface 上还没被下一条文本 prompt 消费的图片资产；状态支持 `pending / consumed / failed / expired`
 - `pending_plan_interactions` 表示某个飞书 surface 上最近一次待回答的 bridge 计划选择题，以及它对应的 native `thread_id`
 
