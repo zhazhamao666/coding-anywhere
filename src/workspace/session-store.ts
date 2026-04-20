@@ -764,6 +764,33 @@ export class SessionStore {
     return row ? rowToThreadSummary(row) : undefined;
   }
 
+  public getPreferredCodexThreadBinding(threadId: string): CodexThreadRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT
+        thread_id,
+        project_id,
+        feishu_thread_id,
+        chat_id,
+        anchor_message_id,
+        latest_message_id,
+        session_name,
+        title,
+        owner_open_id,
+        status,
+        last_run_id,
+        last_activity_at,
+        created_at,
+        updated_at,
+        archived_at
+      FROM codex_threads
+      WHERE thread_id = ?
+      ORDER BY updated_at DESC, created_at DESC, binding_id DESC
+      LIMIT 1
+    `).get(threadId) as CodexThreadRow | undefined;
+
+    return row ? rowToCodexThread(row) : undefined;
+  }
+
   public listThreadRuns(threadId: string, limit = 50): ObservabilityRun[] {
     const rows = this.db.prepare(`
       SELECT

@@ -1,26 +1,52 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BridgeService } from "../src/bridge-service.js";
+import { SessionStore } from "../src/workspace/session-store.js";
 
 describe("desktop completion routing", () => {
-  it("routes an exactly bound native thread to its Feishu topic", () => {
-    const store = createStoreDouble({
-      thread: {
-        threadId: "thread-native-1",
-        projectId: "proj-a",
-        chatId: "oc_group_1",
-        feishuThreadId: "omt_topic_1",
-      },
-      projects: [{
-        projectId: "proj-a",
-        name: "Repo One",
-        chatId: "oc_group_1",
-        updatedAt: "2026-04-20T10:00:00.000Z",
-      }],
-    });
-    const bridge = createBridge({ store });
+  const harnesses: RoutingHarness[] = [];
 
-    const target = (bridge as any).resolveDesktopCompletionRoute({
+  afterEach(() => {
+    while (harnesses.length > 0) {
+      const harness = harnesses.pop();
+      harness?.store.close();
+      if (harness) {
+        rmSync(harness.rootDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("routes an exactly bound native thread to the preferred Feishu topic even when a project group binding also exists", () => {
+    const harness = createRoutingHarness(harnesses);
+    seedProjectBinding(harness.store, {
+      projectId: "proj-a",
+      name: "Repo One",
+      cwd: "D:/repo-one",
+      chatId: "oc_group_1",
+      updatedAt: "2026-04-20T12:00:00.000Z",
+    });
+    seedThreadBinding(harness.store, {
+      threadId: "thread-native-1",
+      projectId: "proj-a",
+      chatId: "oc_group_1",
+      feishuThreadId: "omt_topic_001",
+      createdAt: "2026-04-20T10:00:00.000Z",
+      updatedAt: "2026-04-20T12:00:00.000Z",
+    });
+    seedThreadBinding(harness.store, {
+      threadId: "thread-native-1",
+      projectId: "proj-a",
+      chatId: "oc_group_1",
+      feishuThreadId: "omt_topic_999",
+      createdAt: "2026-04-20T11:00:00.000Z",
+      updatedAt: "2026-04-20T12:00:00.000Z",
+    });
+
+    const target = harness.bridge.resolveDesktopCompletionRoute({
       threadId: "thread-native-1",
       allowlist: ["ou_owner"],
     });
@@ -28,37 +54,26 @@ describe("desktop completion routing", () => {
     expect(target).toEqual({
       mode: "thread",
       chatId: "oc_group_1",
-      surfaceRef: "omt_topic_1",
+      surfaceRef: "omt_topic_999",
     });
   });
 
   it("routes to the project group timeline when the native thread has no topic binding", () => {
-    const store = createStoreDouble({
-      projects: [{
-        projectId: "project-key-1",
-        name: "Repo One",
-        chatId: "oc_group_1",
-        updatedAt: "2026-04-20T10:00:00.000Z",
-      }],
-      projectRecords: {
-        "project-key-1": {
-          projectId: "project-key-1",
-          name: "Repo One",
-          cwd: "D:/repo-one",
-          repoRoot: "D:/repo-one",
-        },
-      },
-    });
-    const codexCatalog = createCatalogDouble({
-      thread: {
+    const harness = createRoutingHarness(harnesses, {
+      catalogThread: {
         threadId: "thread-native-1",
         projectKey: "project-key-1",
         cwd: "D:/repo-one",
       },
     });
-    const bridge = createBridge({ store, codexCatalog });
+    seedProjectBinding(harness.store, {
+      projectId: "project-key-1",
+      name: "Repo One",
+      cwd: "D:/repo-one",
+      chatId: "oc_group_1",
+    });
 
-    const target = (bridge as any).resolveDesktopCompletionRoute({
+    const target = harness.bridge.resolveDesktopCompletionRoute({
       threadId: "thread-native-1",
       allowlist: ["ou_owner"],
     });
@@ -69,18 +84,54 @@ describe("desktop completion routing", () => {
     });
   });
 
-  it("falls back to a DM target when no topic or project group binding exists", () => {
-    const store = createStoreDouble();
-    const codexCatalog = createCatalogDouble({
-      thread: {
+  it("routes to the project group timeline via a unique cwd match when projectId differs from projectKey", () => {
+    const harness = createRoutingHarness(harnesses, {
+      catalogThread: {
         threadId: "thread-native-1",
-        projectKey: "project-key-1",
+        projectKey: "catalog-project-key",
         cwd: "D:/repo-one",
       },
     });
-    const bridge = createBridge({ store, codexCatalog });
+    seedProjectBinding(harness.store, {
+      projectId: "local-project-id",
+      name: "Repo One",
+      cwd: "D:/repo-one",
+      chatId: "oc_group_1",
+    });
 
-    const target = (bridge as any).resolveDesktopCompletionRoute({
+    const target = harness.bridge.resolveDesktopCompletionRoute({
+      threadId: "thread-native-1",
+      allowlist: ["ou_owner"],
+    });
+
+    expect(target).toEqual({
+      mode: "project_group",
+      chatId: "oc_group_1",
+    });
+  });
+
+  it("falls back to DM when multiple bound projects match the same cwd", () => {
+    const harness = createRoutingHarness(harnesses, {
+      catalogThread: {
+        threadId: "thread-native-1",
+        projectKey: "catalog-project-key",
+        cwd: "D:/repo-one",
+      },
+    });
+    seedProjectBinding(harness.store, {
+      projectId: "local-project-a",
+      name: "Repo A",
+      cwd: "D:/repo-one",
+      chatId: "oc_group_1",
+    });
+    seedProjectBinding(harness.store, {
+      projectId: "local-project-b",
+      name: "Repo B",
+      cwd: "D:/repo-one",
+      chatId: "oc_group_2",
+    });
+
+    const target = harness.bridge.resolveDesktopCompletionRoute({
       threadId: "thread-native-1",
       allowlist: ["ou_only_owner"],
     });
@@ -91,49 +142,83 @@ describe("desktop completion routing", () => {
     });
   });
 
+  it("falls back to a DM target when no topic or project group binding exists", () => {
+    const harness = createRoutingHarness(harnesses, {
+      catalogThread: {
+        threadId: "thread-native-1",
+        projectKey: "project-key-1",
+        cwd: "D:/repo-one",
+      },
+    });
+
+    const target = harness.bridge.resolveDesktopCompletionRoute({
+      threadId: "thread-native-1",
+      allowlist: ["ou_only_owner"],
+    });
+
+    expect(target).toEqual({
+      mode: "dm",
+      peerId: "ou_only_owner",
+    });
+  });
+
+  it("throws an explicit error when DM fallback is ambiguous", () => {
+    const harness = createRoutingHarness(harnesses);
+
+    expect(() => harness.bridge.resolveDesktopCompletionRoute({
+      threadId: "thread-native-1",
+      allowlist: ["ou_first", "ou_second"],
+    })).toThrowError("FEISHU_DESKTOP_OWNER_OPEN_ID_REQUIRED_FOR_DM_FALLBACK");
+  });
+
   it.each([
     {
       name: "an invalid exact topic binding",
-      store: createStoreDouble({
-        thread: {
+      setup: (harness: RoutingHarness) => {
+        seedProjectBinding(harness.store, {
+          projectId: "proj-a",
+          name: "Repo One",
+          cwd: "D:/repo-one",
+          chatId: "oc_group_1",
+        });
+        seedThreadBinding(harness.store, {
           threadId: "thread-native-1",
           projectId: "proj-a",
           chatId: "oc_group_1",
           feishuThreadId: "omt_topic_1",
-        },
-      }),
-      codexCatalog: createCatalogDouble(),
+        });
+      },
     },
     {
       name: "an invalid project group binding",
-      store: createStoreDouble({
-        projects: [{
+      setup: (harness: RoutingHarness) => {
+        seedProjectBinding(harness.store, {
           projectId: "project-key-1",
           name: "Repo One",
+          cwd: "D:/repo-one",
           chatId: "oc_group_1",
-          updatedAt: "2026-04-20T10:00:00.000Z",
-        }],
-        projectRecords: {
-          "project-key-1": {
-            projectId: "project-key-1",
-            name: "Repo One",
-            cwd: "D:/repo-one",
-            repoRoot: "D:/repo-one",
-          },
-        },
-      }),
-      codexCatalog: createCatalogDouble({
-        thread: {
+        });
+        harness.codexCatalog.getThread.mockReturnValue({
           threadId: "thread-native-1",
           projectKey: "project-key-1",
           cwd: "D:/repo-one",
-        },
-      }),
+          displayName: "Repo One",
+          title: "Thread Title",
+          source: "user",
+          archived: false,
+          updatedAt: "2026-04-20T10:00:00.000Z",
+          createdAt: "2026-04-20T09:00:00.000Z",
+          gitBranch: "main",
+          cliVersion: "0.0.0",
+          rolloutPath: "D:/repo-one/.codex/rollout.jsonl",
+        });
+      },
     },
-  ])("falls back to DM for $name", ({ store, codexCatalog }) => {
-    const bridge = createBridge({ store, codexCatalog });
+  ])("falls back to DM for $name", ({ setup }) => {
+    const harness = createRoutingHarness(harnesses);
+    setup(harness);
 
-    const target = (bridge as any).resolveDesktopCompletionRoute({
+    const target = harness.bridge.resolveDesktopCompletionRoute({
       threadId: "thread-native-1",
       allowlist: ["ou_first", "ou_second"],
       desktopOwnerOpenId: "ou_desktop_owner",
@@ -147,95 +232,122 @@ describe("desktop completion routing", () => {
   });
 });
 
-function createBridge(input?: {
-  store?: ReturnType<typeof createStoreDouble>;
-  codexCatalog?: ReturnType<typeof createCatalogDouble>;
-}) {
-  return new BridgeService({
-    store: input?.store ?? createStoreDouble(),
+interface RoutingHarness {
+  rootDir: string;
+  store: SessionStore;
+  bridge: BridgeService;
+  codexCatalog: {
+    getThread: ReturnType<typeof vi.fn>;
+  };
+}
+
+function createRoutingHarness(
+  harnesses: RoutingHarness[],
+  input?: {
+    catalogThread?: {
+      threadId: string;
+      projectKey: string;
+      cwd: string;
+    };
+  },
+): RoutingHarness {
+  const rootDir = mkdtempSync(path.join(tmpdir(), "desktop-routing-"));
+  const store = new SessionStore(path.join(rootDir, "bridge.db"));
+  const codexCatalog = createCatalogDouble(input?.catalogThread);
+  const bridge = new BridgeService({
+    store,
     runner: {} as any,
-    codexCatalog: input?.codexCatalog as any,
+    codexCatalog: codexCatalog as any,
+  });
+  const harness = {
+    rootDir,
+    store,
+    bridge,
+    codexCatalog,
+  };
+  harnesses.push(harness);
+  return harness;
+}
+
+function seedProjectBinding(
+  store: SessionStore,
+  input: {
+    projectId: string;
+    name: string;
+    cwd: string;
+    chatId: string;
+    updatedAt?: string;
+  },
+): void {
+  const createdAt = input.updatedAt ?? "2026-04-20T10:00:00.000Z";
+  const updatedAt = input.updatedAt ?? createdAt;
+  store.createProject({
+    projectId: input.projectId,
+    name: input.name,
+    cwd: input.cwd,
+    repoRoot: input.cwd,
+    createdAt,
+    updatedAt,
+  });
+  store.upsertProjectChat({
+    projectId: input.projectId,
+    chatId: input.chatId,
+    groupMessageType: "thread",
+    title: `Codex | ${input.name}`,
+    createdAt,
+    updatedAt,
   });
 }
 
-function createStoreDouble(input?: {
-  thread?: {
+function seedThreadBinding(
+  store: SessionStore,
+  input: {
     threadId: string;
     projectId: string;
     chatId: string;
     feishuThreadId: string;
-  };
-  projects?: Array<{
-    projectId: string;
-    name: string;
-    chatId: string | null;
-    updatedAt: string;
-  }>;
-  projectRecords?: Record<string, {
-    projectId: string;
-    name: string;
-    cwd: string;
-    repoRoot: string;
-  }>;
-}) {
-  const projects = input?.projects ?? [];
-  const projectRecords = input?.projectRecords ?? {};
-  return {
-    getThread: vi.fn().mockReturnValue(
-      input?.thread
-        ? {
-            ...input.thread,
-            title: "Thread Title",
-            sessionName: input.thread.threadId,
-            status: "warm",
-            ownerOpenId: "ou_owner",
-            anchorMessageId: "om_anchor",
-            latestMessageId: "om_latest",
-            lastRunId: null,
-            lastActivityAt: "2026-04-20T10:00:00.000Z",
-            updatedAt: "2026-04-20T10:00:00.000Z",
-            archivedAt: null,
-          }
-        : undefined,
-    ),
-    listProjects: vi.fn().mockReturnValue(projects),
-    getProject: vi.fn((projectId: string) => projectRecords[projectId]),
-    getProjectChat: vi.fn((projectId: string) => {
-      const project = projects.find(item => item.projectId === projectId && item.chatId);
-      if (!project?.chatId) {
-        return undefined;
-      }
-
-      return {
-        projectId,
-        chatId: project.chatId,
-        groupMessageType: "thread",
-        title: project.name,
-        isActive: true,
-        createdAt: "2026-04-20T10:00:00.000Z",
-        updatedAt: project.updatedAt,
-      };
-    }),
-  } as any;
+    createdAt?: string;
+    updatedAt?: string;
+  },
+): void {
+  const createdAt = input.createdAt ?? "2026-04-20T10:00:00.000Z";
+  const updatedAt = input.updatedAt ?? createdAt;
+  store.createCodexThread({
+    threadId: input.threadId,
+    projectId: input.projectId,
+    feishuThreadId: input.feishuThreadId,
+    chatId: input.chatId,
+    anchorMessageId: `om_anchor_${input.feishuThreadId}`,
+    latestMessageId: `om_latest_${input.feishuThreadId}`,
+    sessionName: input.threadId,
+    title: input.feishuThreadId,
+    ownerOpenId: "ou_owner",
+    status: "warm",
+    lastRunId: null,
+    lastActivityAt: updatedAt,
+    createdAt,
+    updatedAt,
+    archivedAt: null,
+  });
 }
 
-function createCatalogDouble(input?: {
+function createCatalogDouble(
   thread?: {
     threadId: string;
     projectKey: string;
     cwd: string;
-  };
-}) {
+  },
+) {
   return {
     getThread: vi.fn((threadId: string) => {
-      if (!input?.thread || input.thread.threadId !== threadId) {
+      if (!thread || thread.threadId !== threadId) {
         return undefined;
       }
 
       return {
-        threadId: input.thread.threadId,
-        projectKey: input.thread.projectKey,
-        cwd: input.thread.cwd,
+        threadId: thread.threadId,
+        projectKey: thread.projectKey,
+        cwd: thread.cwd,
         displayName: "Repo One",
         title: "Thread Title",
         source: "user",
@@ -244,7 +356,7 @@ function createCatalogDouble(input?: {
         createdAt: "2026-04-20T09:00:00.000Z",
         gitBranch: "main",
         cliVersion: "0.0.0",
-        rolloutPath: "D:/repo-one/.codex/rollout.jsonl",
+        rolloutPath: `${thread.cwd}/.codex/rollout.jsonl`,
       };
     }),
   };

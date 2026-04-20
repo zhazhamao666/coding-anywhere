@@ -177,7 +177,7 @@ export class BridgeService {
     routeValidator?: (target: DesktopCompletionRouteTarget) => boolean;
   }): DesktopCompletionRouteTarget {
     const validateTarget = input.routeValidator ?? (() => true);
-    const existingSurface = this.dependencies.store.getThread(input.threadId);
+    const existingSurface = this.dependencies.store.getPreferredCodexThreadBinding(input.threadId);
     if (existingSurface?.chatId && existingSurface.feishuThreadId) {
       const threadTarget: DesktopCompletionRouteTarget = {
         mode: "thread",
@@ -3098,17 +3098,6 @@ export class BridgeService {
   private resolveDesktopCompletionProjectGroupRoute(
     threadId: string,
   ): DesktopCompletionRouteTarget | undefined {
-    const existingSurface = this.dependencies.store.getThread(threadId);
-    if (existingSurface) {
-      const projectChat = this.dependencies.store.getProjectChat(existingSurface.projectId);
-      if (projectChat?.chatId) {
-        return {
-          mode: "project_group",
-          chatId: projectChat.chatId,
-        };
-      }
-    }
-
     const catalogThread = this.dependencies.codexCatalog?.getThread(threadId);
     if (!catalogThread) {
       return undefined;
@@ -3124,16 +3113,16 @@ export class BridgeService {
       };
     }
 
-    const cwdBinding = bindings.find(binding =>
+    const cwdMatches = bindings.filter(binding =>
       normalizePathKey(binding.cwd) === normalizePathKey(catalogThread.cwd)
     );
-    if (!cwdBinding?.chatId) {
+    if (cwdMatches.length !== 1 || !cwdMatches[0]?.chatId) {
       return undefined;
     }
 
     return {
       mode: "project_group",
-      chatId: cwdBinding.chatId,
+      chatId: cwdMatches[0].chatId,
     };
   }
 
