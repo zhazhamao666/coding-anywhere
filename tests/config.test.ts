@@ -155,4 +155,47 @@ idleTtlHours = 24
     expect(config.feishu.reconnectIntervalSeconds).toBe(45);
     expect(config.feishu.reconnectNonceSeconds).toBe(5);
   });
+
+  it("parses an explicit desktop owner open id for desktop completion fallback", () => {
+    const configPath = path.join(rootDir, "config.toml");
+
+    writeFileSync(
+      configPath,
+      `
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[storage]
+sqlitePath = "data/bridge.db"
+logDir = "logs"
+
+[codex]
+command = "codex"
+
+[feishu]
+appId = "cli_xxx"
+appSecret = "secret"
+websocketUrl = "wss://example.invalid/ws"
+apiBaseUrl = "https://open.feishu.cn/open-apis"
+allowlist = ["ou_a", "ou_b"]
+desktopOwnerOpenId = "ou_desktop_owner"
+
+[root]
+id = "main"
+name = "Main Root"
+cwd = "D:/repos"
+repoRoot = "D:/repos"
+branchPolicy = "reuse"
+permissionMode = "workspace-write"
+envAllowlist = ["PATH"]
+idleTtlHours = 24
+`,
+      "utf8",
+    );
+
+    const config = loadConfig(configPath);
+
+    expect((config.feishu as any).desktopOwnerOpenId).toBe("ou_desktop_owner");
+  });
 });

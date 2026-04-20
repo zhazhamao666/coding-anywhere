@@ -117,7 +117,7 @@
 - 完整的线程级前端管理页面
 - 飞书侧仍看不到 Codex 5 小时额度 / 周额度
 - 飞书侧还不能直接查看和切换更多 profile 级高级参数
-- 桌面侧原生 Codex thread 完成通知目前只完成了本地 rollout completion 提取模块，尚未接入 runtime 轮询、路由决策和飞书投递
+- 桌面侧原生 Codex thread 完成通知目前已完成本地 rollout completion 提取模块，以及“优先已绑定话题、否则项目群、最后 DM”的本地路由决策；但仍未接入 runtime 轮询、卡片渲染和飞书投递
 
 也就是说，群线程运行链路已经具备，并且现在可以用命令注册项目群和创建线程，但还没有做成完整的飞书导航型产品界面。
 
@@ -291,6 +291,7 @@ Windows 停止入口模块。
 - 为导航卡按钮编码回放命令上下文
 - 在 DM 中执行项目切换时主动解除旧线程绑定，并对“已选项目”和“已绑线程”的跨项目冲突做自动清理
 - 为计划模式表单和计划选择按钮编码 bridge 动作上下文
+- 为未来的桌面 completion 通知提供纯本地路由解析：优先已有 native thread -> 飞书话题绑定，其次项目群绑定，最后 DM fallback
 - root 上下文封装
 - 同 surface 待处理图片的消费与 prompt 附件清单封装
 - run 生命周期组织
@@ -799,6 +800,9 @@ channel + peer_id -> codex_thread_id
 - `feishu.requireGroupMention`
   - 群线程兜底模式
   - 为 `true` 时，只有带 mention 的线程消息才会进入 Codex
+- `feishu.desktopOwnerOpenId`
+  - 桌面 completion 通知在无法路由到已有话题或项目群时，用于显式指定 DM fallback 的目标 open_id
+  - 当 `feishu.allowlist` 只有 1 个 open_id 时可省略；若 allowlist 有多个候选，则 DM fallback 必须依赖该字段才能安全选人
 - `feishu.encryptKey`
   - 飞书长连接消息或回调启用加密推送时使用的解密密钥
 - `feishu.reconnectCount`
@@ -906,6 +910,7 @@ channel + peer_id -> codex_thread_id
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
 - 普通对话 run 的终态投递策略当前固定为“摘要卡 + 完整正文消息”，尚未开放配置；如后续确有分场景需求，可再扩展为可配置策略，但当前记为低优先级后续计划
 - 现在的“计划模式”是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，不等同于官方交互式 CLI `/plan` 原语
+- 桌面 completion 通知虽然已有本地路由决策和 DM owner 配置解析，但 runtime 轮询、实际消息发送和 continue handoff 还没有接通
 - 当前只支持文本 + 图片；通用文件、语音仍未接通
 - outbound 图片必须位于当前 run `cwd` 或 bridge 受管资产目录下；超出范围的路径会被拒绝并退回文本错误
 - 真实飞书网页版 live smoke 当前采用“首次人工登录 + 持久 profile 复用”模型；如果租户启用了 SSO、验证码或二次验证，登录刷新仍需要人工介入
@@ -1003,6 +1008,7 @@ channel + peer_id -> codex_thread_id
 12. `tests/bridge-real-codex.test.ts` 现在也会用同一批 fixture 校验 bridge 层的等待态、工具调用观测和最终回复，不要求额外真实 Codex 调用
 13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式表单卡、todo list 展示、待回答计划选择题和续跑同一 native thread 的桥接链路
 14. `tests/codex-desktop-completion-observer.test.ts` 会回放 `desktop-completion-single.jsonl` 与 `desktop-completion-repeat.jsonl`，校验本地 rollout completion 提取器的 offset 读取、`task_complete` 检测、最终 assistant 正文提取和稳定 `completionKey` 生成
+15. `tests/desktop-completion-routing.test.ts` 会用小型 store/catalog double 校验桌面 completion 的本地投递目标解析：已绑定话题优先，其次项目群，最后 DM fallback；并覆盖无效话题/群时退回 DM 的规则
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 

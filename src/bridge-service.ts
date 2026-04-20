@@ -150,6 +150,13 @@ interface EffectiveCodexPreferences {
   source: "thread" | "surface" | "default";
 }
 
+interface DesktopCompletionRouteTarget {
+  mode: "thread" | "project_group" | "dm";
+  peerId?: string;
+  chatId?: string;
+  surfaceRef?: string;
+}
+
 export class BridgeService {
   public constructor(
     private readonly dependencies: {
@@ -162,6 +169,39 @@ export class BridgeService {
       codexPreferences?: CodexPreferenceCatalog;
     },
   ) {}
+
+  public resolveDesktopCompletionRoute(input: {
+    threadId: string;
+    allowlist: string[];
+    desktopOwnerOpenId?: string;
+    routeValidator?: (target: DesktopCompletionRouteTarget) => boolean;
+  }): DesktopCompletionRouteTarget {
+    const validateTarget = input.routeValidator ?? (() => true);
+    const existingSurface = this.dependencies.store.getThread(input.threadId);
+    if (existingSurface?.chatId && existingSurface.feishuThreadId) {
+      const threadTarget: DesktopCompletionRouteTarget = {
+        mode: "thread",
+        chatId: existingSurface.chatId,
+        surfaceRef: existingSurface.feishuThreadId,
+      };
+      if (validateTarget(threadTarget)) {
+        return threadTarget;
+      }
+
+      return buildDesktopCompletionDmTarget(input);
+    }
+
+    const groupTarget = this.resolveDesktopCompletionProjectGroupRoute(input.threadId);
+    if (groupTarget) {
+      if (validateTarget(groupTarget)) {
+        return groupTarget;
+      }
+
+      return buildDesktopCompletionDmTarget(input);
+    }
+
+    return buildDesktopCompletionDmTarget(input);
+  }
 
   public async handleMessage(input: BridgeMessageInput, options?: {
     onProgress?: (snapshot: ProgressCardState) => Promise<void> | void;
@@ -3055,6 +3095,48 @@ export class BridgeService {
     return Boolean(this.dependencies.codexCatalog.getThread(threadId));
   }
 
+  private resolveDesktopCompletionProjectGroupRoute(
+    threadId: string,
+  ): DesktopCompletionRouteTarget | undefined {
+    const existingSurface = this.dependencies.store.getThread(threadId);
+    if (existingSurface) {
+      const projectChat = this.dependencies.store.getProjectChat(existingSurface.projectId);
+      if (projectChat?.chatId) {
+        return {
+          mode: "project_group",
+          chatId: projectChat.chatId,
+        };
+      }
+    }
+
+    const catalogThread = this.dependencies.codexCatalog?.getThread(threadId);
+    if (!catalogThread) {
+      return undefined;
+    }
+
+    const bindings = this.listCatalogProjectChatBindings()
+      .filter(binding => Boolean(binding.chatId));
+    const exactProjectBinding = bindings.find(binding => binding.projectId === catalogThread.projectKey);
+    if (exactProjectBinding?.chatId) {
+      return {
+        mode: "project_group",
+        chatId: exactProjectBinding.chatId,
+      };
+    }
+
+    const cwdBinding = bindings.find(binding =>
+      normalizePathKey(binding.cwd) === normalizePathKey(catalogThread.cwd)
+    );
+    if (!cwdBinding?.chatId) {
+      return undefined;
+    }
+
+    return {
+      mode: "project_group",
+      chatId: cwdBinding.chatId,
+    };
+  }
+
   private listCatalogProjectChatBindings(): CatalogProjectChatBinding[] {
     return this.dependencies.store.listProjects()
       .map(project => {
@@ -3507,6 +3589,28 @@ function normalizePathKey(value: string): string {
     .replace(/\\/g, "/")
     .replace(/\/+/g, "/")
     .toLowerCase();
+}
+
+function buildDesktopCompletionDmTarget(input: {
+  allowlist: string[];
+  desktopOwnerOpenId?: string;
+}): DesktopCompletionRouteTarget {
+  const explicitOwnerOpenId = input.desktopOwnerOpenId?.trim();
+  if (explicitOwnerOpenId) {
+    return {
+      mode: "dm",
+      peerId: explicitOwnerOpenId,
+    };
+  }
+
+  if (input.allowlist.length === 1 && input.allowlist[0]) {
+    return {
+      mode: "dm",
+      peerId: input.allowlist[0],
+    };
+  }
+
+  throw new Error("FEISHU_DESKTOP_OWNER_OPEN_ID_REQUIRED_FOR_DM_FALLBACK");
 }
 
 function findFinalAssistantText(events: RunnerEvent[]): string {
