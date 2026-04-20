@@ -194,13 +194,65 @@ export class SessionStore {
 
   public upsertCodexThreadWatchState(input: {
     threadId: string;
-    rolloutPath: string;
-    rolloutMtime: string;
-    lastReadOffset: number;
+    rolloutPath?: string;
+    rolloutMtime?: string;
+    lastReadOffset?: number;
     lastCompletionKey?: string | null;
     lastNotifiedCompletionKey?: string | null;
   }): void {
     const updatedAt = new Date().toISOString();
+    const params = {
+      ...input,
+      rolloutPath: input.rolloutPath ?? null,
+      rolloutPathProvided: Object.prototype.hasOwnProperty.call(input, "rolloutPath") ? 1 : 0,
+      rolloutMtime: input.rolloutMtime ?? null,
+      rolloutMtimeProvided: Object.prototype.hasOwnProperty.call(input, "rolloutMtime") ? 1 : 0,
+      lastReadOffset: input.lastReadOffset ?? null,
+      lastReadOffsetProvided: Object.prototype.hasOwnProperty.call(input, "lastReadOffset") ? 1 : 0,
+      lastCompletionKey: input.lastCompletionKey ?? null,
+      lastCompletionKeyProvided: Object.prototype.hasOwnProperty.call(input, "lastCompletionKey") ? 1 : 0,
+      lastNotifiedCompletionKey: input.lastNotifiedCompletionKey ?? null,
+      lastNotifiedCompletionKeyProvided:
+        Object.prototype.hasOwnProperty.call(input, "lastNotifiedCompletionKey") ? 1 : 0,
+      updatedAt,
+    };
+
+    const updateResult = this.db.prepare(`
+      UPDATE codex_thread_watch_state
+      SET
+        rollout_path = CASE
+          WHEN @rolloutPathProvided = 1 THEN @rolloutPath
+          ELSE rollout_path
+        END,
+        rollout_mtime = CASE
+          WHEN @rolloutMtimeProvided = 1 THEN @rolloutMtime
+          ELSE rollout_mtime
+        END,
+        last_read_offset = CASE
+          WHEN @lastReadOffsetProvided = 1 THEN @lastReadOffset
+          ELSE last_read_offset
+        END,
+        last_completion_key = CASE
+          WHEN @lastCompletionKeyProvided = 1 THEN @lastCompletionKey
+          ELSE last_completion_key
+        END,
+        last_notified_completion_key = CASE
+          WHEN @lastNotifiedCompletionKeyProvided = 1 THEN @lastNotifiedCompletionKey
+          ELSE last_notified_completion_key
+        END,
+        updated_at = @updatedAt
+      WHERE thread_id = @threadId
+    `).run(params);
+
+    if (updateResult.changes > 0) {
+      return;
+    }
+
+    if (params.rolloutPathProvided === 0 || params.rolloutMtimeProvided === 0 || params.lastReadOffsetProvided === 0) {
+      throw new RangeError(
+        "New codex thread watch state rows require rolloutPath, rolloutMtime, and lastReadOffset",
+      );
+    }
 
     this.db.prepare(`
       INSERT INTO codex_thread_watch_state (
@@ -220,28 +272,7 @@ export class SessionStore {
         @lastNotifiedCompletionKey,
         @updatedAt
       )
-      ON CONFLICT(thread_id) DO UPDATE SET
-        rollout_path = excluded.rollout_path,
-        rollout_mtime = excluded.rollout_mtime,
-        last_read_offset = excluded.last_read_offset,
-        last_completion_key = CASE
-          WHEN @lastCompletionKeyProvided = 1 THEN @lastCompletionKey
-          ELSE last_completion_key
-        END,
-        last_notified_completion_key = CASE
-          WHEN @lastNotifiedCompletionKeyProvided = 1 THEN @lastNotifiedCompletionKey
-          ELSE last_notified_completion_key
-        END,
-        updated_at = excluded.updated_at
-    `).run({
-      ...input,
-      lastCompletionKey: input.lastCompletionKey ?? null,
-      lastCompletionKeyProvided: Object.prototype.hasOwnProperty.call(input, "lastCompletionKey") ? 1 : 0,
-      lastNotifiedCompletionKey: input.lastNotifiedCompletionKey ?? null,
-      lastNotifiedCompletionKeyProvided:
-        Object.prototype.hasOwnProperty.call(input, "lastNotifiedCompletionKey") ? 1 : 0,
-      updatedAt,
-    });
+    `).run(params);
   }
 
   public getCodexThreadWatchState(threadId: string): CodexThreadWatchStateRecord | undefined {

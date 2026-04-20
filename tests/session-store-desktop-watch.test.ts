@@ -100,4 +100,31 @@ describe("SessionStore desktop watch persistence", () => {
       lastNotifiedCompletionKey: "thread-1:notified-2",
     });
   });
+
+  it("supports notification-only updates without overwriting stored watch progress", () => {
+    const sessionStore = createSessionStore();
+
+    sessionStore.upsertCodexThreadWatchState({
+      threadId: "thread-1",
+      rolloutPath: "C:/Users/demo/.codex/sessions/rollout-1.jsonl",
+      rolloutMtime: "2026-04-20T10:05:00.000Z",
+      lastReadOffset: 456,
+      lastCompletionKey: "thread-1:completion-2",
+      lastNotifiedCompletionKey: "thread-1:notified-1",
+    });
+
+    sessionStore.upsertCodexThreadWatchState({
+      threadId: "thread-1",
+      lastNotifiedCompletionKey: "thread-1:notified-2",
+    });
+
+    expect(sessionStore.getCodexThreadWatchState("thread-1")).toMatchObject({
+      threadId: "thread-1",
+      rolloutPath: "C:/Users/demo/.codex/sessions/rollout-1.jsonl",
+      rolloutMtime: "2026-04-20T10:05:00.000Z",
+      lastReadOffset: 456,
+      lastCompletionKey: "thread-1:completion-2",
+      lastNotifiedCompletionKey: "thread-1:notified-2",
+    });
+  });
 });
