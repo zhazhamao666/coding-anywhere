@@ -264,10 +264,22 @@ function byteOffsetForLineCount(fileName: string, lineCount: number): number {
     return 0;
   }
 
-  const selected = readFixtureLines(fileName)
-    .slice(0, lineCount)
-    .map(line => `${line}\n`)
-    .join("");
+  const content = readFileSync(fixturePath(fileName), "utf8");
+  let matchedLineCount = 0;
+  let byteOffset = 0;
 
-  return Buffer.byteLength(selected, "utf8");
+  for (const segment of content.matchAll(/.*(?:\r?\n|$)/g)) {
+    const chunk = segment[0];
+    if (!chunk) {
+      continue;
+    }
+
+    byteOffset += Buffer.byteLength(chunk, "utf8");
+    matchedLineCount += 1;
+    if (matchedLineCount >= lineCount) {
+      break;
+    }
+  }
+
+  return byteOffset;
 }
