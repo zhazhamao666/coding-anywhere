@@ -1572,7 +1572,15 @@ export class BridgeService {
           title: thread.title,
           codexThreadId: thread.threadId,
         });
-        return [this.buildThreadCreatedCardReply(linkedThread)];
+        const recentConversation = this.dependencies.codexCatalog.listRecentConversation(thread.threadId);
+        return [
+          this.buildCodexThreadLinkedCardReply(
+            input,
+            project,
+            linkedThread,
+            selectSwitchCardConversation(recentConversation),
+          ),
+        ];
       }
     }
 
@@ -2182,6 +2190,66 @@ export class BridgeService {
           {
             label: "新会话",
             value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} new`),
+          },
+        ],
+      }),
+    };
+  }
+
+  private buildCodexThreadLinkedCardReply(
+    input: BridgeMessageInput,
+    project: CodexCatalogProject,
+    linkedThread: {
+      threadId: string;
+      chatId: string;
+      title: string;
+      status?: string;
+    },
+    recentConversation: CodexCatalogConversationItem[],
+  ): BridgeReply {
+    const conversationItems = recentConversation.length > 0
+      ? recentConversation.map(item => `${item.role === "user" ? "用户" : "助手"}：${item.text}`)
+      : ["暂未读取到可展示的最近对话。"];
+
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: "线程已绑定",
+        summaryLines: [
+          "**视图**：线程已绑定",
+          `**当前项目**：${project.displayName}`,
+          `**路径**：${project.cwd}`,
+          `**当前线程**：${formatCurrentThreadLabel(linkedThread.title, linkedThread.threadId)}`,
+          `线程 ID：${linkedThread.threadId}`,
+          `**群聊**：${linkedThread.chatId}`,
+          `**状态**：${linkedThread.status ?? "provisioned"}`,
+        ],
+        sections: [
+          {
+            title: "最近对话",
+            items: conversationItems,
+          },
+          {
+            title: "下一步",
+            items: [
+              "已在本群创建新的飞书话题，并把它绑定到这个现有 Codex 线程。",
+              "进入新话题后直接发送普通消息，后续内容会继续进入这个 Codex 线程。",
+            ],
+          },
+        ],
+        actions: [
+          {
+            label: "导航",
+            type: "primary",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
+          },
+          {
+            label: "当前项目",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
+          },
+          {
+            label: "线程列表",
+            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
         ],
       }),

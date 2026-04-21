@@ -2364,7 +2364,38 @@ describe("BridgeService", () => {
               rolloutPath: "D:/rollout",
             }
           : undefined),
-        listRecentConversation: vi.fn(() => []),
+        listRecentConversation: vi.fn(() => [
+          {
+            role: "assistant",
+            text: "更早的助手回复，不应展示",
+            timestamp: "2026-03-27T00:00:00.000Z",
+          },
+          {
+            role: "user",
+            text: "最后一条用户消息，应该在群绑定卡里展示。",
+            timestamp: "2026-03-27T00:00:01.000Z",
+          },
+          {
+            role: "assistant",
+            text: "第二条应展示的助手回复",
+            timestamp: "2026-03-27T00:00:02.000Z",
+          },
+          {
+            role: "assistant",
+            text: "第三条应展示的助手回复",
+            timestamp: "2026-03-27T00:00:03.000Z",
+          },
+          {
+            role: "assistant",
+            text: "第四条应展示的助手回复",
+            timestamp: "2026-03-27T00:00:04.000Z",
+          },
+          {
+            role: "assistant",
+            text: "第五条应展示的助手回复",
+            timestamp: "2026-03-27T00:00:05.000Z",
+          },
+        ]),
       },
     } as any);
 
@@ -2386,6 +2417,16 @@ describe("BridgeService", () => {
     expect(replies[0]).toMatchObject({
       kind: "card",
     });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("线程已绑定");
+    expect(cardText).not.toContain("线程已创建");
+    expect(cardText).toContain("最近对话");
+    expect(cardText).toContain("最后一条用户消息，应该在群绑定卡里展示。");
+    expect(cardText).toContain("第二条应展示的助手回复");
+    expect(cardText).toContain("第三条应展示的助手回复");
+    expect(cardText).toContain("第四条应展示的助手回复");
+    expect(cardText).toContain("第五条应展示的助手回复");
+    expect(cardText).not.toContain("更早的助手回复，不应展示");
   });
 });
 
