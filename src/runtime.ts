@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import type { Logger } from "pino";
@@ -6,9 +6,14 @@ import type { Logger } from "pino";
 import { buildApp } from "./app.js";
 import { BridgeService } from "./bridge-service.js";
 import { CodexCliRunner } from "./codex-cli-runner.js";
+import { observeCodexDesktopCompletion } from "./codex-desktop-completion-observer.js";
 import { resolveCodexPreferenceCatalog } from "./codex-preferences.js";
 import { CodexSqliteCatalog } from "./codex-sqlite-catalog.js";
 import type { BridgeConfig } from "./config.js";
+import {
+  DesktopCompletionNotifier,
+  type DesktopCompletionDeliveryTarget,
+} from "./desktop-completion-notifier.js";
 import { FeishuAdapter, type FeishuApiClientLike, type FeishuEnvelope } from "./feishu-adapter.js";
 import { FeishuApiClient } from "./feishu-api-client.js";
 import { FeishuCardActionService } from "./feishu-card-action-service.js";
@@ -16,6 +21,11 @@ import { FeishuWsClient } from "./feishu-ws-client.js";
 import { ProjectThreadService } from "./project-thread-service.js";
 import { RunWorkerManager } from "./run-worker-manager.js";
 import { resolveExecutable } from "./executable.js";
+import type {
+  CodexCatalogConversationItem,
+  CodexCatalogProject,
+  CodexCatalogThread,
+} from "./types.js";
 import { SessionStore } from "./workspace/session-store.js";
 
 interface WsClientLike {
@@ -27,6 +37,16 @@ interface ThreadReapRunnerLike {
   close(context: { sessionName: string; cwd: string }): Promise<void>;
 }
 
+interface CodexCatalogLike {
+  listProjects(options?: { includeArchived?: boolean }): CodexCatalogProject[];
+  getProject(projectKey: string, options?: { includeArchived?: boolean }): CodexCatalogProject | undefined;
+  listThreads(projectKey: string, options?: { includeArchived?: boolean }): CodexCatalogThread[];
+  getThread(threadId: string): CodexCatalogThread | undefined;
+  listRecentConversation(threadId: string, limit?: number): CodexCatalogConversationItem[];
+}
+
+const DEFAULT_DESKTOP_COMPLETION_POLL_INTERVAL_MS = 15_000;
+
 export async function createRuntime(
   config: BridgeConfig,
   overrides?: {
@@ -37,6 +57,8 @@ export async function createRuntime(
       cardActionService: FeishuCardActionService,
       logger?: Logger,
     ) => WsClientLike;
+    createCodexCatalog?: () => CodexCatalogLike | undefined;
+    desktopCompletionPollIntervalMs?: number;
     logger?: Logger;
   },
 ) {
@@ -55,9 +77,9 @@ export async function createRuntime(
     maxConcurrentRuns: config.scheduler.maxConcurrentRuns,
   });
   const codexPreferences = resolveCodexPreferenceCatalog(config.codex);
-  let codexCatalog: CodexSqliteCatalog | undefined;
+  let codexCatalog: CodexCatalogLike | undefined;
   try {
-    codexCatalog = new CodexSqliteCatalog();
+    codexCatalog = overrides?.createCodexCatalog?.() ?? new CodexSqliteCatalog();
   } catch {
     codexCatalog = undefined;
   }
@@ -92,6 +114,11 @@ export async function createRuntime(
   const wsClient =
     overrides?.createWsClient?.(config, adapter, cardActionService, overrides?.logger) ??
     createDefaultWsClient(config, adapter, cardActionService, overrides?.logger);
+  const desktopCompletionNotifier = new DesktopCompletionNotifier({
+    apiClient,
+    store,
+    codexCatalog,
+  });
   const getRuntimeSnapshot = () => workerManager.getRuntimeSnapshot();
 
   const app = buildApp({
@@ -152,6 +179,32 @@ export async function createRuntime(
   });
 
   let idleReaper: NodeJS.Timeout | undefined;
+  let desktopCompletionPoller: NodeJS.Timeout | undefined;
+  let desktopCompletionPollInFlight = false;
+
+  const runDesktopCompletionPoll = async () => {
+    if (desktopCompletionPollInFlight) {
+      return;
+    }
+
+    desktopCompletionPollInFlight = true;
+    try {
+      await pollDesktopCompletionNotifications({
+        store,
+        codexCatalog,
+        bridgeService,
+        notifier: desktopCompletionNotifier,
+        allowlist: config.feishu.allowlist,
+        desktopOwnerOpenId: config.feishu.desktopOwnerOpenId,
+      });
+    } catch (error) {
+      overrides?.logger?.info?.(
+        `[ca] desktop completion poll failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      desktopCompletionPollInFlight = false;
+    }
+  };
 
   return {
     app,
@@ -173,16 +226,92 @@ export async function createRuntime(
           ttlHours: config.root.idleTtlHours,
         });
       }, 5 * 60 * 1000);
+      desktopCompletionPoller = setInterval(() => {
+        void runDesktopCompletionPoll();
+      }, overrides?.desktopCompletionPollIntervalMs ?? DEFAULT_DESKTOP_COMPLETION_POLL_INTERVAL_MS);
+      void runDesktopCompletionPoll();
     },
     async stop() {
       if (idleReaper) {
         clearInterval(idleReaper);
+      }
+      if (desktopCompletionPoller) {
+        clearInterval(desktopCompletionPoller);
       }
       await wsClient.stop();
       await app.close();
       store.close();
     },
   };
+}
+
+export async function pollDesktopCompletionNotifications(input: {
+  store: SessionStore;
+  codexCatalog?: CodexCatalogLike;
+  bridgeService: Pick<BridgeService, "resolveDesktopCompletionRoute">;
+  notifier: Pick<DesktopCompletionNotifier, "publish">;
+  allowlist: string[];
+  desktopOwnerOpenId?: string;
+}): Promise<void> {
+  if (!input.codexCatalog) {
+    return;
+  }
+
+  for (const thread of listObservedCodexThreads(input.codexCatalog)) {
+    if (!thread.rolloutPath || !existsSync(thread.rolloutPath)) {
+      continue;
+    }
+
+    const rolloutMtime = statSync(thread.rolloutPath).mtime.toISOString();
+    const existingState = input.store.getCodexThreadWatchState(thread.threadId);
+    if (!existingState || existingState.rolloutPath !== thread.rolloutPath) {
+      const bootstrap = observeCodexDesktopCompletion({
+        threadId: thread.threadId,
+        rolloutPath: thread.rolloutPath,
+        offset: 0,
+      });
+      input.store.upsertCodexThreadWatchState({
+        threadId: thread.threadId,
+        rolloutPath: thread.rolloutPath,
+        rolloutMtime,
+        lastReadOffset: bootstrap.nextOffset,
+        lastCompletionKey: bootstrap.completion?.completionKey ?? null,
+        lastNotifiedCompletionKey: bootstrap.completion?.completionKey ?? null,
+      });
+      continue;
+    }
+
+    const observed = observeCodexDesktopCompletion({
+      threadId: thread.threadId,
+      rolloutPath: thread.rolloutPath,
+      offset: existingState.lastReadOffset,
+    });
+    input.store.upsertCodexThreadWatchState({
+      threadId: thread.threadId,
+      rolloutPath: thread.rolloutPath,
+      rolloutMtime,
+      lastReadOffset: observed.nextOffset,
+      ...(observed.completion
+        ? {
+            lastCompletionKey: observed.completion.completionKey,
+          }
+        : {}),
+    });
+
+    if (!observed.completion || observed.completion.completionKey === existingState.lastNotifiedCompletionKey) {
+      continue;
+    }
+
+    const routeTarget = input.bridgeService.resolveDesktopCompletionRoute({
+      threadId: thread.threadId,
+      allowlist: input.allowlist,
+      desktopOwnerOpenId: input.desktopOwnerOpenId,
+    });
+    await input.notifier.publish({
+      completion: observed.completion,
+      target: normalizeDesktopCompletionDeliveryTarget(routeTarget),
+    });
+  }
 }
 
 export async function runRuntimeMaintenance(input: {
@@ -264,4 +393,57 @@ function createDefaultWsClient(
     reconnectNonceMs: config.feishu.reconnectNonceSeconds * 1000,
     logger,
   });
+}
+
+function listObservedCodexThreads(codexCatalog: CodexCatalogLike): CodexCatalogThread[] {
+  const threadsById = new Map<string, CodexCatalogThread>();
+  for (const project of codexCatalog.listProjects({ includeArchived: false })) {
+    for (const thread of codexCatalog.listThreads(project.projectKey, { includeArchived: false })) {
+      const existing = threadsById.get(thread.threadId);
+      if (!existing || thread.updatedAt >= existing.updatedAt) {
+        threadsById.set(thread.threadId, thread);
+      }
+    }
+  }
+
+  return [...threadsById.values()].sort((left, right) => left.threadId.localeCompare(right.threadId));
+}
+
+function normalizeDesktopCompletionDeliveryTarget(
+  target: {
+    mode: "thread" | "project_group" | "dm";
+    peerId?: string;
+    chatId?: string;
+    surfaceRef?: string;
+    anchorMessageId?: string;
+  },
+): DesktopCompletionDeliveryTarget {
+  switch (target.mode) {
+    case "dm":
+      if (!target.peerId) {
+        throw new Error("FEISHU_DESKTOP_DM_TARGET_PEER_REQUIRED");
+      }
+      return {
+        mode: "dm",
+        peerId: target.peerId,
+      };
+    case "project_group":
+      if (!target.chatId) {
+        throw new Error("FEISHU_DESKTOP_GROUP_TARGET_CHAT_REQUIRED");
+      }
+      return {
+        mode: "project_group",
+        chatId: target.chatId,
+      };
+    case "thread":
+      if (!target.chatId || !target.surfaceRef || !target.anchorMessageId) {
+        throw new Error("FEISHU_DESKTOP_THREAD_TARGET_CONTEXT_REQUIRED");
+      }
+      return {
+        mode: "thread",
+        chatId: target.chatId,
+        surfaceRef: target.surfaceRef,
+        anchorMessageId: target.anchorMessageId,
+      };
+  }
 }

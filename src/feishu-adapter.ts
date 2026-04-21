@@ -48,6 +48,10 @@ export interface FeishuApiClientLike {
   sendImageMessage?(peerId: string, imageKey: string): Promise<string>;
   replyImageMessage?(messageId: string, imageKey: string): Promise<string>;
   sendInteractiveCard(peerId: string, card: Record<string, unknown>): Promise<string>;
+  sendInteractiveCardToChat?(
+    chatId: string,
+    card: Record<string, unknown>,
+  ): Promise<{ messageId: string; threadId: string }>;
   replyInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<string>;
   updateInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<void>;
   createCardEntity(card: Record<string, unknown>): Promise<string>;

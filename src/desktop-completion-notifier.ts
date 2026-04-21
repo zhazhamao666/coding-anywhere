@@ -29,7 +29,7 @@ export type DesktopCompletionDeliveryTarget =
 interface DesktopCompletionNotifierApiClientLike {
   sendTextMessage(peerId: string, text: string): Promise<string>;
   sendInteractiveCard(peerId: string, card: Record<string, unknown>): Promise<string>;
-  sendInteractiveCardToChat(
+  sendInteractiveCardToChat?(
     chatId: string,
     card: Record<string, unknown>,
   ): Promise<{ messageId: string; threadId: string }>;
@@ -114,6 +114,9 @@ export class DesktopCompletionNotifier {
         await this.dependencies.apiClient.sendInteractiveCard(target.peerId, card);
         return undefined;
       case "project_group": {
+        if (!this.dependencies.apiClient.sendInteractiveCardToChat) {
+          throw new Error("FEISHU_GROUP_INTERACTIVE_CARD_SEND_UNAVAILABLE");
+        }
         const created = await this.dependencies.apiClient.sendInteractiveCardToChat(target.chatId, card);
         return created.messageId;
       }

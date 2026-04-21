@@ -118,7 +118,7 @@
 - 完整的线程级前端管理页面
 - 飞书侧仍看不到 Codex 5 小时额度 / 周额度
 - 飞书侧还不能直接查看和切换更多 profile 级高级参数
-- 桌面侧原生 Codex thread 完成通知现在已经具备“本地 rollout completion 提取 + 本地路由决策 + 飞书通知投递器”三段式基础能力：在拿到 completion event 和已解析投递目标后，能按 DM / 已有话题 / 项目群三种模式发送完成通知卡，并紧跟发送完整 assistant 正文；主按钮 `continue_desktop_thread` 也已能分别完成 DM 接管、既有话题原地继续、以及项目群新话题接管，但 runtime 轮询、history/mute 回调和自动修复仍未接通
+- 桌面侧原生 Codex thread 完成通知现在已经接通“runtime 轮询 + 本地 rollout completion 提取 + 本地路由决策 + 飞书通知投递器”整条链路：runtime 会枚举本地 catalog 中的 rollout，首次建 watch state 时跳过历史 completion，只对后续新 completion 发送通知卡和完整 assistant 正文；但 history/mute 回调、bridge-originated completion 抑制和自动修复仍未接通
 
 也就是说，群线程运行链路已经具备，并且现在可以用命令注册项目群和创建线程，但还没有做成完整的飞书导航型产品界面。
 
@@ -204,6 +204,7 @@ Browser / script
 - 把 `SessionStore` 的历史观测数据和 `RunWorkerManager` 的实时调度态拼装成统一的 `/ops/overview` / `/ops/runtime`
 - 为 ops 侧取消动作补齐 queued run 的取消元数据落库与事件时间线
 - 启动时把上次服务异常退出后残留的非终态 run 收口为明确终态，避免历史观测与 live runtime 脱节
+- 启动桌面 completion 轮询定时器：扫描本地 Codex catalog 的 native thread rollout，bootstrap `codex_thread_watch_state`，首次观察时跳过历史 completion，只把后续新 `task_complete` 通过 `DesktopCompletionNotifier` 投递到飞书
 - 启动线程空闲回收和待处理图片过期清理定时器
 
 ### 5.1.1 `src/windows-console.ts`
@@ -1049,6 +1050,7 @@ channel + peer_id -> codex_thread_id
 16. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面完成通知卡的 DM / 项目群主动作差异、完成摘要字段，以及“通知卡而非导航卡”的展示约束
 17. `tests/desktop-completion-notifier.test.ts` 会校验桌面 completion 投递器在 DM / 已绑定话题 / 项目群三种目标下的消息顺序、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及最终 assistant 正文继续复用现有 Markdown 卡 / 纯文本回退策略
 18. `tests/desktop-completion-dm-handoff.test.ts` 会用真实 `BridgeService` + `FeishuCardActionService` harness 校验 DM 通知卡主按钮 `continue_desktop_thread`：点击后会把 DM 绑定到目标 native thread、回调直接返回标准“当前会话”卡，且下一条普通 DM 文本会续跑同一线程
+19. `tests/runtime-desktop-completion-notifier.test.ts` 会校验 runtime 启动后真的开始轮询本地 rollout：首次 bootstrap watch state 时不会回放历史 completion，unchanged `completionKey` 不会重复推送，而新的 completion 会触发一张新通知卡并推进 watch state
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 
