@@ -84,30 +84,119 @@ describe("runtime desktop completion notifier", () => {
       ),
     });
   });
+
+  it("ignores subagent-thread completions and only watches top-level desktop threads", async () => {
+    const harness = await createHarness(harnesses, {
+      threads: [
+        {
+          threadId: "thread-parent-1",
+          title: "Main Desktop Thread",
+          source: "desktop",
+        },
+        {
+          threadId: "thread-child-1",
+          title: "Review Task 1 implementation",
+          source: JSON.stringify({
+            subagent: {
+              thread_spawn: {
+                parent_thread_id: "thread-parent-1",
+                depth: 1,
+                agent_nickname: "review worker",
+                agent_role: "worker",
+              },
+            },
+          }),
+          sourceInfo: {
+            kind: "subagent",
+            label: "子 agent",
+            parentThreadId: "thread-parent-1",
+            depth: 1,
+            agentNickname: "review worker",
+            agentRole: "worker",
+          },
+        },
+      ],
+    });
+
+    await harness.runtime.start();
+
+    await vi.waitFor(() => {
+      expect(harness.runtime.store.getCodexThreadWatchState("thread-parent-1")).toBeDefined();
+    });
+    expect(harness.runtime.store.getCodexThreadWatchState("thread-child-1")).toBeUndefined();
+
+    appendCompletion(
+      harness.rolloutPaths["thread-child-1"],
+      "2026-04-21T09:20:00.000Z",
+      "2026-04-21T09:20:01.000Z",
+      "child thread done",
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(harness.apiClient.sendInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+
+    appendCompletion(
+      harness.rolloutPaths["thread-parent-1"],
+      "2026-04-21T09:21:00.000Z",
+      "2026-04-21T09:21:01.000Z",
+      "parent thread done",
+    );
+
+    await vi.waitFor(() => {
+      expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledTimes(1);
+      expect(harness.apiClient.sendTextMessage).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 interface RuntimeHarness {
   rootDir: string;
   rolloutPath: string;
+  rolloutPaths: Record<string, string>;
   runtime: Awaited<ReturnType<typeof createRuntime>>;
   apiClient: ReturnType<typeof createApiClientDouble>;
 }
 
-async function createHarness(harnesses: RuntimeHarness[]): Promise<RuntimeHarness> {
+async function createHarness(
+  harnesses: RuntimeHarness[],
+  input?: {
+    threads?: Array<{
+      threadId: string;
+      title: string;
+      source: string;
+      sourceInfo?: CodexCatalogThread["sourceInfo"];
+    }>;
+  },
+): Promise<RuntimeHarness> {
   const rootDir = mkdtempSync(path.join(tmpdir(), "runtime-desktop-completion-"));
-  const rolloutPath = path.join(rootDir, "thread-native-1.jsonl");
-  writeFileSync(
-    rolloutPath,
-    [
-      buildSessionMetaLine("thread-native-1"),
-      buildFinalAnswerLine("2026-04-21T09:00:00.000Z", "historical completion"),
-      buildTaskCompleteLine("2026-04-21T09:00:01.000Z"),
-    ].join("\n") + "\n",
-    "utf8",
-  );
+  const threadDefinitions = input?.threads ?? [{
+    threadId: "thread-native-1",
+    title: "Desktop Thread",
+    source: "desktop",
+  }];
+  const rolloutPaths: Record<string, string> = {};
+  for (const thread of threadDefinitions) {
+    const rolloutPath = path.join(rootDir, `${thread.threadId}.jsonl`);
+    rolloutPaths[thread.threadId] = rolloutPath;
+    writeFileSync(
+      rolloutPath,
+      [
+        buildSessionMetaLine(thread.threadId, thread.source),
+        buildFinalAnswerLine("2026-04-21T09:00:00.000Z", `historical completion for ${thread.threadId}`),
+        buildTaskCompleteLine("2026-04-21T09:00:01.000Z"),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+  }
 
   const apiClient = createApiClientDouble();
-  const codexCatalog = createCatalogDouble(rolloutPath);
+  const codexCatalog = createCatalogDouble(
+    threadDefinitions.map(thread => ({
+      ...thread,
+      rolloutPath: rolloutPaths[thread.threadId],
+    })),
+  );
   const runtime = await createRuntime(buildConfig(rootDir), {
     createApiClient: () => apiClient,
     createWsClient: () => ({
@@ -120,7 +209,8 @@ async function createHarness(harnesses: RuntimeHarness[]): Promise<RuntimeHarnes
 
   const harness: RuntimeHarness = {
     rootDir,
-    rolloutPath,
+    rolloutPath: rolloutPaths[threadDefinitions[0].threadId],
+    rolloutPaths,
     runtime,
     apiClient,
   };
@@ -169,33 +259,40 @@ function buildConfig(rootDir: string): BridgeConfig {
   };
 }
 
-function createCatalogDouble(rolloutPath: string): {
+function createCatalogDouble(input: Array<{
+  threadId: string;
+  title: string;
+  source: string;
+  rolloutPath: string;
+  sourceInfo?: CodexCatalogThread["sourceInfo"];
+}>): {
   listProjects: () => CodexCatalogProject[];
   getProject: (projectKey: string) => CodexCatalogProject | undefined;
   listThreads: (projectKey: string) => CodexCatalogThread[];
   getThread: (threadId: string) => CodexCatalogThread | undefined;
   listRecentConversation: (threadId: string, limit?: number) => CodexCatalogConversationItem[];
 } {
-  const thread: CodexCatalogThread = {
-    threadId: "thread-native-1",
+  const threads: CodexCatalogThread[] = input.map(thread => ({
+    threadId: thread.threadId,
     projectKey: "project-key-1",
     cwd: "D:/repo-one",
     displayName: "Repo One",
-    title: "Desktop Thread",
-    source: "desktop",
+    title: thread.title,
+    source: thread.source,
+    sourceInfo: thread.sourceInfo,
     archived: false,
     updatedAt: "2026-04-21T09:00:01.000Z",
     createdAt: "2026-04-21T08:50:00.000Z",
     gitBranch: "main",
     cliVersion: "0.0.0",
-    rolloutPath,
-  };
+    rolloutPath: thread.rolloutPath,
+  }));
   const project: CodexCatalogProject = {
     projectKey: "project-key-1",
     cwd: "D:/repo-one",
     displayName: "Repo One",
-    threadCount: 1,
-    activeThreadCount: 1,
+    threadCount: threads.length,
+    activeThreadCount: threads.length,
     lastUpdatedAt: "2026-04-21T09:00:01.000Z",
     gitBranch: "main",
   };
@@ -203,8 +300,8 @@ function createCatalogDouble(rolloutPath: string): {
   return {
     listProjects: () => [project],
     getProject: projectKey => projectKey === project.projectKey ? project : undefined,
-    listThreads: projectKey => projectKey === project.projectKey ? [thread] : [],
-    getThread: threadId => threadId === thread.threadId ? thread : undefined,
+    listThreads: projectKey => projectKey === project.projectKey ? threads : [],
+    getThread: threadId => threads.find(thread => thread.threadId === threadId),
     listRecentConversation: () => [{
       role: "user",
       text: "请在我离开电脑时告诉我结果。",
@@ -247,7 +344,7 @@ function appendCompletion(
   );
 }
 
-function buildSessionMetaLine(threadId: string): string {
+function buildSessionMetaLine(threadId: string, source = "desktop"): string {
   return JSON.stringify({
     timestamp: "2026-04-21T08:50:00.000Z",
     type: "session_meta",
@@ -256,7 +353,7 @@ function buildSessionMetaLine(threadId: string): string {
       timestamp: "2026-04-21T08:50:00.000Z",
       cwd: "D:\\Repos\\Demo",
       cli_version: "0.116.0",
-      source: "desktop",
+      source,
     },
   });
 }

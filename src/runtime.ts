@@ -9,6 +9,7 @@ import { CodexCliRunner } from "./codex-cli-runner.js";
 import { observeCodexDesktopCompletion } from "./codex-desktop-completion-observer.js";
 import { resolveCodexPreferenceCatalog } from "./codex-preferences.js";
 import { CodexSqliteCatalog } from "./codex-sqlite-catalog.js";
+import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
 import type { BridgeConfig } from "./config.js";
 import {
   DesktopCompletionNotifier,
@@ -399,6 +400,10 @@ function listObservedCodexThreads(codexCatalog: CodexCatalogLike): CodexCatalogT
   const threadsById = new Map<string, CodexCatalogThread>();
   for (const project of codexCatalog.listProjects({ includeArchived: false })) {
     for (const thread of codexCatalog.listThreads(project.projectKey, { includeArchived: false })) {
+      const sourceInfo = thread.sourceInfo ?? parseCodexThreadSourceInfo(thread.source);
+      if (sourceInfo.kind === "subagent") {
+        continue;
+      }
       const existing = threadsById.get(thread.threadId);
       if (!existing || thread.updatedAt >= existing.updatedAt) {
         threadsById.set(thread.threadId, thread);
