@@ -95,7 +95,7 @@ describe("DesktopCompletionNotifier", () => {
     expect(collectButtons(notificationCard)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          label: "在当前话题继续",
+          label: "在飞书继续",
           value: expect.objectContaining({
             chatId: "oc_group_1",
             surfaceType: "thread",

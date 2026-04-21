@@ -258,18 +258,19 @@ export class BridgeService {
       peerId: input.peerId,
       thread: selection.thread,
     });
-
-    const replies = await this.handleMessage({
-      channel: input.channel,
-      peerId: input.peerId,
-      text: `${BRIDGE_COMMAND_PREFIX} session`,
-    });
+    const recentConversation = this.dependencies.codexCatalog?.listRecentConversation(selection.thread.threadId) ?? [];
 
     return {
-      reply: replies[0] ?? {
-        kind: "system",
-        text: "[ca] current session unavailable",
-      },
+      reply: this.buildCodexThreadSwitchedCardReply(
+        {
+          channel: input.channel,
+          peerId: input.peerId,
+          text: `${BRIDGE_COMMAND_PREFIX} thread switch ${selection.thread.threadId}`,
+        },
+        selection.project,
+        selection.thread,
+        selectSwitchCardConversation(recentConversation),
+      ),
     };
   }
 
@@ -315,21 +316,22 @@ export class BridgeService {
       title: selection.thread.title,
       status: "warm",
     });
-
-    const replies = await this.handleMessage({
-      channel: input.channel,
-      peerId: input.peerId,
-      chatId: input.chatId,
-      surfaceType: "thread",
-      surfaceRef: input.surfaceRef,
-      text: `${BRIDGE_COMMAND_PREFIX} session`,
-    });
+    const recentConversation = this.dependencies.codexCatalog?.listRecentConversation(selection.thread.threadId) ?? [];
 
     return {
-      reply: replies[0] ?? {
-        kind: "system",
-        text: "[ca] current session unavailable",
-      },
+      reply: this.buildCodexThreadSwitchedCardReply(
+        {
+          channel: input.channel,
+          peerId: input.peerId,
+          chatId: input.chatId,
+          surfaceType: "thread",
+          surfaceRef: input.surfaceRef,
+          text: `${BRIDGE_COMMAND_PREFIX} thread switch ${selection.thread.threadId}`,
+        },
+        selection.project,
+        selection.thread,
+        selectSwitchCardConversation(recentConversation),
+      ),
     };
   }
 
@@ -380,14 +382,7 @@ export class BridgeService {
       title: selection.thread.title,
       codexThreadId: selection.thread.threadId,
     });
-    const topicReplies = await this.handleMessage({
-      channel: input.channel,
-      peerId: input.peerId,
-      chatId: linkedThread.chatId,
-      surfaceType: "thread",
-      surfaceRef: linkedThread.feishuThreadId,
-      text: `${BRIDGE_COMMAND_PREFIX} session`,
-    });
+    const recentConversation = this.dependencies.codexCatalog?.listRecentConversation(selection.thread.threadId) ?? [];
 
     return {
       reply: this.buildDesktopContinuationMovedToTopicCardReply({
@@ -397,10 +392,19 @@ export class BridgeService {
       }),
       topicReply: {
         anchorMessageId: linkedThread.anchorMessageId,
-        reply: topicReplies[0] ?? {
-          kind: "system",
-          text: "[ca] current session unavailable",
-        },
+        reply: this.buildCodexThreadSwitchedCardReply(
+          {
+            channel: input.channel,
+            peerId: input.peerId,
+            chatId: linkedThread.chatId,
+            surfaceType: "thread",
+            surfaceRef: linkedThread.feishuThreadId,
+            text: `${BRIDGE_COMMAND_PREFIX} thread switch ${selection.thread.threadId}`,
+          },
+          selection.project,
+          selection.thread,
+          selectSwitchCardConversation(recentConversation),
+        ),
       },
     };
   }
@@ -2264,16 +2268,16 @@ export class BridgeService {
     return {
       kind: "card",
       card: buildBridgeHubCard({
-        title: "已转到话题继续",
+        title: "已在飞书继续",
         summaryLines: [
-          "**视图**：已转到话题继续",
+          "**视图**：已在飞书继续",
           `**当前线程**：${formatCurrentThreadLabel(input.threadTitle, input.threadId)}`,
-          "当前会话卡已发送到新的飞书话题。",
+          "已把这个线程接到新的飞书话题。",
         ],
         sections: [
           {
             title: "下一步",
-            items: ["已在新的飞书话题里发送“当前会话”卡，请进入该话题继续。"],
+            items: ["已在新的飞书话题里发送“线程已切换”卡，请进入该话题继续。"],
           },
         ],
         actions: [

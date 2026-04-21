@@ -22,7 +22,7 @@ describe("desktop completion DM handoff", () => {
     }
   });
 
-  it("binds the DM to the native thread and returns the normal current-session card for continue_desktop_thread", async () => {
+  it("binds the DM to the native thread and returns the thread-switched card for continue_desktop_thread", async () => {
     const harness = createHarness(harnesses);
 
     const response = await harness.cardActionService.handleAction({
@@ -45,23 +45,12 @@ describe("desktop completion DM handoff", () => {
       projectKey: "project-alpha",
     });
 
-    const expectedSessionReplies = await harness.bridge.handleMessage({
-      channel: "feishu",
-      peerId: "ou_demo",
-      text: "/ca session",
-    });
-
-    expect(response).toEqual({
-      card: {
-        type: "raw",
-        data: (expectedSessionReplies[0] as { card: Record<string, unknown> }).card,
-      },
-    });
-
     const cardText = JSON.stringify(response);
-    expect(cardText).toContain("当前会话");
+    expect(cardText).toContain("线程已切换");
+    expect(cardText).toContain("Alpha follow-up");
     expect(cardText).toContain("thread-alpha-2");
-    expect(cardText).not.toContain("线程已切换");
+    expect(cardText).toContain("直接发送普通消息，后续内容会进入这个 Codex 线程。");
+    expect(cardText).not.toContain("Codex 设置");
     expect(cardText).not.toContain("命令已提交");
   });
 

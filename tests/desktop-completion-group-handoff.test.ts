@@ -23,7 +23,7 @@ describe("desktop completion group/topic handoff", () => {
     }
   });
 
-  it("keeps an existing Feishu topic on the same surface and returns the normal current-session card", async () => {
+  it("keeps an existing Feishu topic on the same surface and returns the thread-switched card", async () => {
     const harness = createHarness(harnesses);
     seedExistingTopicBinding(harness.store);
 
@@ -43,27 +43,15 @@ describe("desktop completion group/topic handoff", () => {
       },
     });
 
-    const expectedSessionReplies = await harness.bridge.handleMessage({
-      channel: "feishu",
-      peerId: "ou_demo",
-      chatId: "oc_chat_alpha",
-      surfaceType: "thread",
-      surfaceRef: "omt_existing_topic_alpha",
-      text: "/ca session",
-    });
-
-    expect(response).toEqual({
-      card: {
-        type: "raw",
-        data: (expectedSessionReplies[0] as { card: Record<string, unknown> }).card,
-      },
-    });
     expect(harness.apiClient.replyInteractiveCard).not.toHaveBeenCalled();
-    expect(JSON.stringify(response)).toContain("当前会话");
+    expect(JSON.stringify(response)).toContain("线程已切换");
+    expect(JSON.stringify(response)).toContain("Alpha follow-up");
+    expect(JSON.stringify(response)).toContain("直接发送普通消息，后续内容会进入这个 Codex 线程。");
+    expect(JSON.stringify(response)).not.toContain("Codex 设置");
     expect(JSON.stringify(response)).not.toContain("命令已提交");
   });
 
-  it("creates a new group topic for the native thread, sends the normal current-session card there, and replaces the notification card with a moved notice", async () => {
+  it("creates a new group topic for the native thread, sends the thread-switched card there, and replaces the notification card with an in-feishu notice", async () => {
     const harness = createHarness(harnesses);
 
     const response = await harness.cardActionService.handleAction({
@@ -89,7 +77,7 @@ describe("desktop completion group/topic handoff", () => {
       expect.objectContaining({
         header: expect.objectContaining({
           title: expect.objectContaining({
-            content: "当前会话",
+            content: "线程已切换",
           }),
         }),
       }),
@@ -100,7 +88,7 @@ describe("desktop completion group/topic handoff", () => {
         data: {
           header: {
             title: {
-              content: "已转到话题继续",
+              content: "已在飞书继续",
             },
           },
         },
@@ -108,6 +96,8 @@ describe("desktop completion group/topic handoff", () => {
     });
     expect(JSON.stringify(response)).toContain("Alpha follow-up");
     expect(JSON.stringify(response)).toContain("新的飞书话题");
+    expect(JSON.stringify(response)).toContain("已在飞书继续");
+    expect(JSON.stringify(response)).not.toContain("当前会话卡已发送");
     expect(JSON.stringify(response)).not.toContain("命令已提交");
 
     expect(harness.store.getCodexThreadBySurface("oc_chat_alpha", "omt_linked_topic_alpha")).toMatchObject({

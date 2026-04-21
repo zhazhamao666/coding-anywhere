@@ -106,7 +106,7 @@
 77. DM 中执行 `/ca project switch <projectKey>` 时，如果当前窗口还绑定着旧的 native Codex thread，bridge 现在会先解除这条旧绑定，再把“当前项目”切到目标项目；后续普通消息会在新项目下创建 fresh thread，而不是继续误跑旧项目
 78. 如果 DM 当前保存了“已选项目”和“已绑线程”两个互相冲突的跨项目状态，bridge 现在会优先相信显式项目选择，并自动清理那条旧线程绑定，避免继续把普通消息送进错误项目
 79. Playwright 版真实飞书 live smoke 现在支持通过 `FEISHU_LIVE_PROJECT_KEY` 先强制切到指定测试项目，再发送 smoke 指令，降低在业务项目上误跑真实验证的风险
-80. 桌面 completion 通知卡的主按钮 `continue_desktop_thread` 现在已经覆盖三种接管路径：DM 中会直接把当前 DM 窗口绑定到目标 native Codex thread 并返回标准“当前会话”卡；已绑定飞书话题中的通知会原地切成同一话题下的“当前会话”卡；项目群主时间线中的通知会为目标 native thread 创建或绑定新的飞书话题，把标准“当前会话”卡发进该话题，再把原通知卡替换成“已转到话题继续”的状态卡
+80. 桌面 completion 通知卡的主按钮文案现在统一为“在飞书继续”，`continue_desktop_thread` 也已经覆盖三种接管路径：DM、已绑定飞书话题和项目群主时间线都会把目标 native Codex thread 接到对应飞书 surface，并统一落到“线程已切换”卡；其中项目群主时间线会先为目标线程创建或绑定新的飞书话题，把“线程已切换”卡发进该话题，再把原通知卡更新成“已在飞书继续”
 81. 在项目群主时间线把现有 native Codex thread 绑定到新飞书话题时，回执卡现在会明确显示为“线程已绑定”，并附带该线程最近对话预览，不再误写成“线程已创建”
 
 ### 2.3 当前仍未打通的部分
@@ -315,7 +315,7 @@ Windows 停止入口模块。
 - 在 DM 中执行项目切换时主动解除旧线程绑定，并对“已选项目”和“已绑线程”的跨项目冲突做自动清理
 - 为计划模式表单和计划选择按钮编码 bridge 动作上下文
 - 为未来的桌面 completion 通知提供纯本地路由解析：优先 native thread 的首选话题绑定，并把稳定 `anchorMessageId` 一起带入 thread target；其次精确项目绑定或唯一 cwd 命中的项目群，最后 DM fallback；cwd 命中多个项目时不会猜测路由目标
-- 处理桌面 completion 的 DM continue handoff：把当前 DM 窗口重绑到目标 native thread，并直接复用标准“当前会话”卡作为回调响应
+- 处理桌面 completion 的 continue handoff：DM、已绑定话题和项目群三条路径都会把目标 native thread 接到对应飞书 surface，并统一复用“线程已切换”卡；项目群主时间线的原通知卡会更新成“已在飞书继续”
 - root 上下文封装
 - 同 surface 待处理图片的消费与 prompt 附件清单封装
 - run 生命周期组织
@@ -950,7 +950,7 @@ channel + peer_id -> codex_thread_id
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
 - 普通对话 run 的终态投递策略当前固定为“摘要卡 + 完整正文消息”，尚未开放配置；如后续确有分场景需求，可再扩展为可配置策略，但当前记为低优先级后续计划
 - 现在的“计划模式”是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，不等同于官方交互式 CLI `/plan` 原语
-- 桌面 completion 通知虽然已经有本地路由决策、DM owner 配置解析、实际消息发送器和 DM continue handoff，但 runtime 轮询、group/topic continue、history/mute 回调以及“同一 completion 失败后自动修复”还没有接通
+- 桌面 completion 通知虽然已经有本地路由决策、DM owner 配置解析、实际消息发送器、runtime 轮询，以及 DM / group / topic continue handoff，但 history/mute 回调以及“同一 completion 失败后自动修复”还没有接通
 - 当前只支持文本 + 图片；通用文件、语音仍未接通
 - outbound 图片必须位于当前 run `cwd` 或 bridge 受管资产目录下；超出范围的路径会被拒绝并退回文本错误
 - 真实飞书网页版 live smoke 当前采用“首次人工登录 + 持久 profile 复用”模型；如果租户启用了 SSO、验证码或二次验证，登录刷新仍需要人工介入

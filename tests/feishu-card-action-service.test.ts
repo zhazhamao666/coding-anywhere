@@ -372,7 +372,7 @@ describe("FeishuCardActionService", () => {
       header: {
         title: {
           tag: "plain_text",
-          content: "当前会话",
+          content: "线程已切换",
         },
       },
       body: {
@@ -427,13 +427,13 @@ describe("FeishuCardActionService", () => {
     });
   });
 
-  it("posts the standard current-session card into the linked topic when continueDesktopThread returns a handoff result", async () => {
+  it("posts the thread-switched card into the linked topic when continueDesktopThread returns a handoff result", async () => {
     const statusCard = {
       schema: "2.0",
       header: {
         title: {
           tag: "plain_text",
-          content: "已转到话题继续",
+          content: "已在飞书继续",
         },
       },
       body: {
@@ -445,7 +445,7 @@ describe("FeishuCardActionService", () => {
       header: {
         title: {
           tag: "plain_text",
-          content: "当前会话",
+          content: "线程已切换",
         },
       },
       body: {

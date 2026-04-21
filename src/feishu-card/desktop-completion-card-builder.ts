@@ -172,11 +172,9 @@ function buildActions(input: DesktopCompletionCardInput): Array<{
 function resolvePrimaryActionLabel(mode: DesktopCompletionCardInput["mode"]): string {
   switch (mode) {
     case "dm":
-      return "在飞书继续";
     case "thread":
-      return "在当前话题继续";
     case "project_group":
-      return "在群里开话题继续";
+      return "在飞书继续";
   }
 }
 

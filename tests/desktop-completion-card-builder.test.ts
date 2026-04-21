@@ -62,7 +62,7 @@ describe("desktop completion card builder", () => {
     );
   });
 
-  it("uses a group-specific primary label, caps actions at one primary plus two secondary buttons, and preserves group context", () => {
+  it("uses the same Feishu-first primary label for project-group delivery and preserves group context", () => {
     const input: DesktopCompletionCardInput = {
       mode: "project_group",
       projectName: "Beta Project",
@@ -80,7 +80,7 @@ describe("desktop completion card builder", () => {
     expect(buttons).toHaveLength(3);
     expect(primaryButtons).toEqual([
       expect.objectContaining({
-        label: "在群里开话题继续",
+        label: "在飞书继续",
         value: expect.objectContaining({
           bridgeAction: "continue_desktop_thread",
           threadId: "thread_native_group_456",
@@ -105,7 +105,7 @@ describe("desktop completion card builder", () => {
     ]);
   });
 
-  it("uses a topic-specific primary label for existing-topic delivery and preserves thread context on all actions", () => {
+  it("uses the same Feishu-first primary label for existing-topic delivery and preserves thread context on all actions", () => {
     const input: DesktopCompletionCardInput = {
       mode: "thread",
       projectName: "Gamma Project",
@@ -123,7 +123,7 @@ describe("desktop completion card builder", () => {
 
     expect(buttons.filter(button => button.type === "primary")).toEqual([
       expect.objectContaining({
-        label: "在当前话题继续",
+        label: "在飞书继续",
         value: expect.objectContaining({
           mode: "thread",
           threadId: "thread_native_topic_321",
