@@ -47,6 +47,7 @@ interface CodexCatalogLike {
 }
 
 const DEFAULT_DESKTOP_COMPLETION_POLL_INTERVAL_MS = 15_000;
+const DESKTOP_COMPLETION_BRIDGE_SUPPRESSION_WINDOW_MS = 30_000;
 
 export async function createRuntime(
   config: BridgeConfig,
@@ -303,6 +304,18 @@ export async function pollDesktopCompletionNotifications(input: {
       continue;
     }
 
+    if (shouldSuppressDesktopCompletionForRecentFeishuRun({
+      store: input.store,
+      threadId: thread.threadId,
+      completedAt: observed.completion.completedAt,
+    })) {
+      input.store.upsertCodexThreadWatchState({
+        threadId: thread.threadId,
+        lastNotifiedCompletionKey: observed.completion.completionKey,
+      });
+      continue;
+    }
+
     const routeTarget = input.bridgeService.resolveDesktopCompletionRoute({
       threadId: thread.threadId,
       allowlist: input.allowlist,
@@ -412,6 +425,38 @@ function listObservedCodexThreads(codexCatalog: CodexCatalogLike): CodexCatalogT
   }
 
   return [...threadsById.values()].sort((left, right) => left.threadId.localeCompare(right.threadId));
+}
+
+function shouldSuppressDesktopCompletionForRecentFeishuRun(input: {
+  store: SessionStore;
+  threadId: string;
+  completedAt: string;
+}): boolean {
+  const completionMs = Date.parse(input.completedAt);
+  if (!Number.isFinite(completionMs)) {
+    return false;
+  }
+
+  for (const run of input.store.listThreadRuns(input.threadId, 10)) {
+    if (run.channel !== "feishu" || !run.finishedAt || !isTerminalRunStatus(run.status)) {
+      continue;
+    }
+
+    const finishedAtMs = Date.parse(run.finishedAt);
+    if (!Number.isFinite(finishedAtMs)) {
+      continue;
+    }
+
+    if (Math.abs(finishedAtMs - completionMs) <= DESKTOP_COMPLETION_BRIDGE_SUPPRESSION_WINDOW_MS) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isTerminalRunStatus(status: string): boolean {
+  return status === "done" || status === "error" || status === "canceled";
 }
 
 function normalizeDesktopCompletionDeliveryTarget(

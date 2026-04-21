@@ -148,6 +148,63 @@ describe("runtime desktop completion notifier", () => {
       expect(harness.apiClient.sendTextMessage).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("suppresses desktop completion cards for recently finished Feishu-originated runs on the same thread", async () => {
+    const harness = await createHarness(harnesses);
+
+    await harness.runtime.start();
+    await vi.waitFor(() => {
+      expect(harness.runtime.store.getCodexThreadWatchState("thread-native-1")).toBeDefined();
+    });
+
+    harness.runtime.store.createRun({
+      runId: "run-feishu-1",
+      channel: "feishu",
+      peerId: "ou_demo",
+      threadId: "thread-native-1",
+      sessionName: "thread-native-1",
+      rootId: "main",
+      status: "running",
+      stage: "text",
+      latestPreview: "working",
+      startedAt: "2026-04-21T09:29:50.000Z",
+      updatedAt: "2026-04-21T09:30:00.000Z",
+    });
+    harness.runtime.store.completeRun({
+      runId: "run-feishu-1",
+      status: "done",
+      stage: "done",
+      latestPreview: "finished in Feishu",
+      finishedAt: "2026-04-21T09:30:02.000Z",
+    });
+
+    appendCompletion(
+      harness.rolloutPath,
+      "2026-04-21T09:30:01.000Z",
+      "2026-04-21T09:30:01.500Z",
+      "should be suppressed",
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(harness.apiClient.sendInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.runtime.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
+      lastCompletionKey: expect.stringContaining("thread-native-1:2026-04-21T09:30:01.500Z:"),
+      lastNotifiedCompletionKey: expect.stringContaining("thread-native-1:2026-04-21T09:30:01.500Z:"),
+    });
+
+    appendCompletion(
+      harness.rolloutPath,
+      "2026-04-21T09:32:30.000Z",
+      "2026-04-21T09:32:31.000Z",
+      "desktop-only completion",
+    );
+
+    await vi.waitFor(() => {
+      expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledTimes(1);
+      expect(harness.apiClient.sendTextMessage).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 interface RuntimeHarness {
