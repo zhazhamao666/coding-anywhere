@@ -172,6 +172,90 @@ describe("FeishuAdapter", () => {
     expect(apiClient.sendTextMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards plain text from a registered project group chat without requiring a thread surface", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [{ kind: "assistant", text: "收到群聊消息" } satisfies BridgeReply]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+      isCodexGroupChat: chatId => chatId === "oc_chat_bound",
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-group-plain-1",
+      },
+      event: {
+        message: {
+          message_id: "om_group_plain_1",
+          chat_id: "oc_chat_bound",
+          chat_type: "group",
+          message_type: "text",
+          content: JSON.stringify({ text: "继续这个群里的线程" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_bound",
+        text: "继续这个群里的线程",
+      },
+      {
+        onProgress: expect.any(Function),
+      },
+    );
+    expect(apiClient.replyTextMessage).toHaveBeenCalledWith("om_group_plain_1", "收到群聊消息");
+  });
+
+  it("still ignores plain text from an unrelated group chat", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [{ kind: "assistant", text: "不应触发" } satisfies BridgeReply]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+      isCodexGroupChat: () => false,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-group-plain-2",
+      },
+      event: {
+        message: {
+          message_id: "om_group_plain_2",
+          chat_id: "oc_chat_other",
+          chat_type: "group",
+          message_type: "text",
+          content: JSON.stringify({ text: "这条消息不应进入 Codex" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+    expect(apiClient.replyTextMessage).not.toHaveBeenCalled();
+  });
+
   it("downloads inbound DM images, stages them, and replies with an acknowledgment", async () => {
     const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-image-"));
 

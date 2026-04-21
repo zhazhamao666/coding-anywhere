@@ -128,6 +128,7 @@ export class FeishuAdapter {
         anchorMessageId?: string;
       }) => StreamingCardControllerLike;
       inboundAssetRootDir?: string;
+      isCodexGroupChat?: (chatId: string) => boolean;
       requireGroupMention?: boolean;
       logger?: {
         info?: (message: string) => void;
@@ -184,13 +185,18 @@ export class FeishuAdapter {
 
     const isDm = message.chat_type === "p2p";
     const isGroupThread = message.chat_type === "group" && !!message.thread_id && !!message.chat_id;
+    const isRegisteredGroupChat =
+      message.chat_type === "group" &&
+      !!message.chat_id &&
+      !message.thread_id &&
+      (this.dependencies.isCodexGroupChat?.(message.chat_id) ?? false);
     const isGroupCommand =
       message.chat_type === "group" &&
       !!message.chat_id &&
       !message.thread_id &&
       isBridgeCommandMessage(parsedContent.text);
 
-    if (!isDm && !isGroupThread && !isGroupCommand) {
+    if (!isDm && !isGroupThread && !isGroupCommand && !isRegisteredGroupChat) {
       return;
     }
 
@@ -226,7 +232,7 @@ export class FeishuAdapter {
               surfaceRef: message.thread_id,
               text: parsedContent.text,
             }
-          : isGroupCommand
+          : (isGroupCommand || isRegisteredGroupChat)
             ? {
                 channel: "feishu",
                 peerId,

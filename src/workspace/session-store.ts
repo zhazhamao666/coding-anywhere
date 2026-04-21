@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 
 import type {
   BridgeAssetRecord,
+  CodexChatBinding,
   CodexPreferenceRecord,
   CodexProjectSelection,
   CodexThreadWatchStateRecord,
@@ -151,6 +152,45 @@ export class SessionStore {
       DELETE FROM codex_window_bindings
       WHERE channel = ? AND peer_id = ?
     `).run(channel, peerId);
+  }
+
+  public bindCodexChat(input: {
+    channel: string;
+    chatId: string;
+    codexThreadId: string;
+  }): void {
+    const updatedAt = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT INTO codex_chat_bindings (
+        channel, chat_id, codex_thread_id, updated_at
+      ) VALUES (
+        @channel, @chatId, @codexThreadId, @updatedAt
+      )
+      ON CONFLICT(channel, chat_id) DO UPDATE SET
+        codex_thread_id = excluded.codex_thread_id,
+        updated_at = excluded.updated_at
+    `).run({
+      ...input,
+      updatedAt,
+    });
+  }
+
+  public getCodexChatBinding(channel: string, chatId: string): CodexChatBinding | undefined {
+    const row = this.db.prepare(`
+      SELECT channel, chat_id, codex_thread_id, updated_at
+      FROM codex_chat_bindings
+      WHERE channel = ? AND chat_id = ?
+    `).get(channel, chatId) as CodexChatBindingRow | undefined;
+
+    return row ? rowToCodexChatBinding(row) : undefined;
+  }
+
+  public clearCodexChatBinding(channel: string, chatId: string): void {
+    this.db.prepare(`
+      DELETE FROM codex_chat_bindings
+      WHERE channel = ? AND chat_id = ?
+    `).run(channel, chatId);
   }
 
   public setCodexProjectSelection(input: {
@@ -2195,6 +2235,14 @@ export class SessionStore {
         PRIMARY KEY (channel, peer_id)
       );
 
+      CREATE TABLE IF NOT EXISTS codex_chat_bindings (
+        channel TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        codex_thread_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (channel, chat_id)
+      );
+
       CREATE TABLE IF NOT EXISTS codex_thread_watch_state (
         thread_id TEXT PRIMARY KEY,
         rollout_path TEXT NOT NULL,
@@ -2570,6 +2618,13 @@ interface CodexWindowBindingRow {
   updated_at: string;
 }
 
+interface CodexChatBindingRow {
+  channel: string;
+  chat_id: string;
+  codex_thread_id: string;
+  updated_at: string;
+}
+
 interface CodexProjectSelectionRow {
   channel: string;
   peer_id: string;
@@ -2927,6 +2982,15 @@ function rowToCodexWindowBinding(row: CodexWindowBindingRow): CodexWindowBinding
   return {
     channel: row.channel,
     peerId: row.peer_id,
+    codexThreadId: row.codex_thread_id,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToCodexChatBinding(row: CodexChatBindingRow): CodexChatBinding {
+  return {
+    channel: row.channel,
+    chatId: row.chat_id,
     codexThreadId: row.codex_thread_id,
     updatedAt: row.updated_at,
   };

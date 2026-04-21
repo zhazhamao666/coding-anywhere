@@ -1538,7 +1538,8 @@ describe("BridgeService", () => {
     expect(cardText).toContain("项目已绑定");
     expect(cardText).toContain("Alpha");
     expect(cardText).toContain("oc_chat_current");
-    expect(cardText).toContain("/ca thread create-current");
+    expect(cardText).toContain("/ca thread list-current");
+    expect(cardText).toContain("直接在本群发送普通消息");
   });
 
   it("switches the current group chat binding to an unbound Codex catalog project", async () => {
@@ -2300,7 +2301,7 @@ describe("BridgeService", () => {
     });
   });
 
-  it("links a selected native thread from the project chat into a new feishu topic", async () => {
+  it("binds the current project chat directly to a selected native thread", async () => {
     store.createProject({
       projectId: "proj-current",
       name: "Current Project",
@@ -2406,11 +2407,10 @@ describe("BridgeService", () => {
       text: "/ca thread switch thread-native-current",
     });
 
-    expect(projectThreadService.linkThread).toHaveBeenCalledWith({
-      projectId: "proj-current",
+    expect(projectThreadService.linkThread).not.toHaveBeenCalled();
+    expect(store.getCodexChatBinding("feishu", "oc_chat_current")).toMatchObject({
+      channel: "feishu",
       chatId: "oc_chat_current",
-      ownerOpenId: "ou_demo",
-      title: "native follow-up",
       codexThreadId: "thread-native-current",
     });
     expect(replies).toHaveLength(1);
@@ -2418,8 +2418,7 @@ describe("BridgeService", () => {
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("线程已绑定");
-    expect(cardText).not.toContain("线程已创建");
+    expect(cardText).toContain("线程已切换");
     expect(cardText).toContain("最近对话");
     expect(cardText).toContain("最后一条用户消息，应该在群绑定卡里展示。");
     expect(cardText).toContain("第二条应展示的助手回复");
@@ -2427,6 +2426,100 @@ describe("BridgeService", () => {
     expect(cardText).toContain("第四条应展示的助手回复");
     expect(cardText).toContain("第五条应展示的助手回复");
     expect(cardText).not.toContain("更早的助手回复，不应展示");
+    expect(cardText).toContain("直接发送普通消息，后续内容会进入这个 Codex 线程。");
+  });
+
+  it("resumes the same native thread on the next plain group message after switching the current project chat", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.upsertProjectChat({
+      projectId: "proj-current",
+      chatId: "oc_chat_current",
+      groupMessageType: "thread",
+      title: "Codex | Current Project",
+    });
+
+    const runner = createRunnerDouble([
+      { type: "text", content: "群聊续跑已经进入 thread-native-current" },
+      { type: "done", content: "群聊续跑已经进入 thread-native-current" },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+      codexCatalog: {
+        listProjects: vi.fn(() => []),
+        getProject: vi.fn((projectKey: string) => projectKey === "proj-native"
+          ? {
+              projectKey: "proj-native",
+              cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+              displayName: "coding-anywhere",
+              threadCount: 2,
+              activeThreadCount: 2,
+              lastUpdatedAt: "2026-03-28T00:00:00.000Z",
+              gitBranch: "main",
+            }
+          : undefined),
+        listThreads: vi.fn(() => []),
+        getThread: vi.fn((threadId: string) => threadId === "thread-native-current"
+          ? {
+              threadId: "thread-native-current",
+              projectKey: "proj-native",
+              cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+              displayName: "coding-anywhere",
+              title: "native follow-up",
+              source: "vscode",
+              archived: false,
+              updatedAt: "2026-03-28T00:00:00.000Z",
+              createdAt: "2026-03-27T00:00:00.000Z",
+              gitBranch: "main",
+              cliVersion: "0.116.0",
+              rolloutPath: "D:/rollout",
+            }
+          : undefined),
+        listRecentConversation: vi.fn(() => []),
+      },
+    });
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca thread switch thread-native-current",
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "继续处理当前专利线程",
+    });
+
+    expect(runner.ensureSession).toHaveBeenCalledWith({
+      targetKind: "codex_thread",
+      threadId: "thread-native-current",
+      sessionName: "thread-native-current",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    expect(runner.submitVerbatim).toHaveBeenCalledWith(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-native-current",
+        sessionName: "thread-native-current",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      },
+      expect.stringContaining("继续处理当前专利线程"),
+      expect.any(Function),
+    );
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "群聊续跑已经进入 thread-native-current",
+      },
+    ]);
   });
 });
 

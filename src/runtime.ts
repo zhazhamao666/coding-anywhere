@@ -105,6 +105,7 @@ export async function createRuntime(
     bridgeService,
     apiClient,
     pendingAssetStore: store,
+    isCodexGroupChat: chatId => Boolean(store.getProjectChatByChatId(chatId)),
     requireGroupMention: config.feishu.requireGroupMention,
     logger: overrides?.logger,
   });

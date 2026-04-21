@@ -51,7 +51,7 @@ describe("desktop completion group/topic handoff", () => {
     expect(JSON.stringify(response)).not.toContain("命令已提交");
   });
 
-  it("creates a new group topic for the native thread, sends the thread-switched card there, and replaces the notification card with an in-feishu notice", async () => {
+  it("binds the current group chat directly to the native thread and returns the thread-switched card", async () => {
     const harness = createHarness(harnesses);
 
     const response = await harness.cardActionService.handleAction({
@@ -68,42 +68,19 @@ describe("desktop completion group/topic handoff", () => {
       },
     });
 
-    expect(harness.apiClient.sendTextMessageToChat).toHaveBeenCalledWith(
-      "oc_chat_alpha",
-      expect.stringContaining("Alpha follow-up"),
-    );
-    expect(harness.apiClient.replyInteractiveCard).toHaveBeenCalledWith(
-      "om_linked_topic_alpha",
-      expect.objectContaining({
-        header: expect.objectContaining({
-          title: expect.objectContaining({
-            content: "线程已切换",
-          }),
-        }),
-      }),
-    );
-    expect(response).toMatchObject({
-      card: {
-        type: "raw",
-        data: {
-          header: {
-            title: {
-              content: "已在飞书继续",
-            },
-          },
-        },
-      },
+    expect(harness.apiClient.sendTextMessageToChat).not.toHaveBeenCalled();
+    expect(harness.apiClient.replyInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.store.getCodexChatBinding("feishu", "oc_chat_alpha")).toMatchObject({
+      channel: "feishu",
+      chatId: "oc_chat_alpha",
+      codexThreadId: "thread-alpha-2",
     });
     expect(JSON.stringify(response)).toContain("Alpha follow-up");
-    expect(JSON.stringify(response)).toContain("新的飞书话题");
-    expect(JSON.stringify(response)).toContain("已在飞书继续");
-    expect(JSON.stringify(response)).not.toContain("当前会话卡已发送");
+    expect(JSON.stringify(response)).toContain("线程已切换");
+    expect(JSON.stringify(response)).toContain("直接发送普通消息，后续内容会进入这个 Codex 线程。");
+    expect(JSON.stringify(response)).not.toContain("新的飞书话题");
+    expect(JSON.stringify(response)).not.toContain("已在飞书继续");
     expect(JSON.stringify(response)).not.toContain("命令已提交");
-
-    expect(harness.store.getCodexThreadBySurface("oc_chat_alpha", "omt_linked_topic_alpha")).toMatchObject({
-      threadId: "thread-alpha-2",
-      anchorMessageId: "om_linked_topic_alpha",
-    });
   });
 });
 

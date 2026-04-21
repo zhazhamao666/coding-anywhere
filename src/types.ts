@@ -234,6 +234,13 @@ export interface CodexWindowBinding {
   updatedAt: string;
 }
 
+export interface CodexChatBinding {
+  channel: string;
+  chatId: string;
+  codexThreadId: string;
+  updatedAt: string;
+}
+
 export interface CodexProjectSelection {
   channel: string;
   peerId: string;
