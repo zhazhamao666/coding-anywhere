@@ -9,6 +9,7 @@ import type {
   CodexCatalogConversationItem,
   CodexCatalogProject,
   CodexCatalogThread,
+  CodexDesktopDisplaySnapshot,
 } from "./types.js";
 
 interface CodexThreadRow {
@@ -160,6 +161,15 @@ export class CodexSqliteCatalog {
     }
 
     return readRecentConversation(thread.rolloutPath, limit);
+  }
+
+  public getDesktopDisplaySnapshot(threadId: string): CodexDesktopDisplaySnapshot | undefined {
+    const thread = this.getThread(threadId);
+    if (!thread || !thread.rolloutPath || !existsSync(thread.rolloutPath)) {
+      return undefined;
+    }
+
+    return readDesktopDisplaySnapshot(thread.rolloutPath);
   }
 
   private readThreads(options?: { includeArchived?: boolean }): CodexCatalogThread[] {
@@ -510,6 +520,60 @@ function readRecentConversation(filePath: string, limit?: number): CodexCatalogC
   }
 
   return typeof limit === "number" ? items.slice(-limit) : items;
+}
+
+function readDesktopDisplaySnapshot(filePath: string): CodexDesktopDisplaySnapshot | undefined {
+  const content = readFileSync(filePath, "utf8");
+  let latestTaskStartedAt: string | undefined;
+  const userMessages: Array<{ text: string; timestamp: string }> = [];
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+
+    if (parsed?.type === "event_msg" && parsed?.payload?.type === "task_started") {
+      latestTaskStartedAt = typeof parsed?.timestamp === "string" ? parsed.timestamp : undefined;
+      continue;
+    }
+
+    if (parsed?.type !== "response_item" || parsed?.payload?.type !== "message" || parsed?.payload?.role !== "user") {
+      continue;
+    }
+
+    const text = extractConversationText(parsed?.payload?.content);
+    if (!text) {
+      continue;
+    }
+
+    userMessages.push({
+      text,
+      timestamp: typeof parsed?.timestamp === "string" ? parsed.timestamp : new Date(0).toISOString(),
+    });
+  }
+
+  if (userMessages.length === 0) {
+    return undefined;
+  }
+
+  const latestRunPrompt = latestTaskStartedAt
+    ? [...userMessages]
+      .reverse()
+      .find(item => item.timestamp <= latestTaskStartedAt)
+    : undefined;
+  const fallback = userMessages[userMessages.length - 1];
+
+  return {
+    lastHumanUserText: latestRunPrompt?.text ?? fallback?.text,
+  };
 }
 
 function extractConversationText(content: unknown): string {

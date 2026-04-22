@@ -171,6 +171,7 @@ export interface DesktopCompletionCardInput {
   startedAt?: string;
   completedAt?: string;
   summaryLines?: string[];
+  resultText?: string;
   reminderText?: string;
   progressText?: string;
   planTodos?: PlanTodoItem[];
@@ -224,6 +225,10 @@ export interface CodexThreadWatchStateRecord {
   lastCompletionKey: string | null;
   lastNotifiedCompletionKey: string | null;
   updatedAt: string;
+}
+
+export interface CodexDesktopDisplaySnapshot {
+  lastHumanUserText?: string;
 }
 
 export interface CodexThreadDesktopNotificationStateRecord {

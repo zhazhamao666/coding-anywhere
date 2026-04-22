@@ -24,7 +24,7 @@ describe("DesktopCompletionNotifier", () => {
     }
   });
 
-  it("sends a DM notification card, follows with the full result, and advances the notified key", async () => {
+  it("sends a DM completion card without a second full-result message and advances the notified key", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
       threadId: "thread-native-1",
@@ -52,13 +52,9 @@ describe("DesktopCompletionNotifier", () => {
         }),
       }),
     );
-    expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith(
-      "ou_demo",
-      "任务已经处理完成。",
-    );
-    expect(firstCallOrder(harness.apiClient.sendInteractiveCard)).toBeLessThan(
-      firstCallOrder(harness.apiClient.sendTextMessage),
-    );
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.apiClient.replyTextMessage).not.toHaveBeenCalled();
+    expect(harness.apiClient.replyInteractiveCard).not.toHaveBeenCalled();
     expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
       lastNotifiedCompletionKey: "thread-native-1:completion-new",
     });
@@ -110,7 +106,7 @@ describe("DesktopCompletionNotifier", () => {
     });
   });
 
-  it("patches an existing running card into a completed card and then sends the final result", async () => {
+  it("patches an existing running card into a completed card without sending an extra final result message", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
       threadId: "thread-native-1",
@@ -154,10 +150,9 @@ describe("DesktopCompletionNotifier", () => {
         }),
       }),
     );
-    expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith(
-      "ou_demo",
-      "Task 1 已完成，测试和文档也已同步。",
-    );
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.apiClient.replyTextMessage).not.toHaveBeenCalled();
+    expect(harness.apiClient.replyInteractiveCard).not.toHaveBeenCalled();
     expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
       lastNotifiedCompletionKey: "thread-native-1:completion-new",
     });
@@ -171,7 +166,7 @@ describe("DesktopCompletionNotifier", () => {
     });
   });
 
-  it("replies card and full result into an existing Feishu topic via the stored thread anchor", async () => {
+  it("replies only a completion card into an existing Feishu topic via the stored thread anchor", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
       threadId: "thread-native-1",
@@ -244,16 +239,13 @@ describe("DesktopCompletionNotifier", () => {
         }),
       ]),
     );
-    expect(harness.apiClient.replyTextMessage).toHaveBeenCalledWith(
-      "om_anchor_topic_1",
-      "线程内结果已经就位。",
-    );
+    expect(harness.apiClient.replyTextMessage).not.toHaveBeenCalled();
     expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
       lastNotifiedCompletionKey: "thread-native-1:completion-new",
     });
   });
 
-  it("posts a project-group notification card to the timeline and replies with the full result under the new root", async () => {
+  it("posts a project-group notification card to the timeline without replying a second full result message", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
       threadId: "thread-native-1",
@@ -297,23 +289,17 @@ describe("DesktopCompletionNotifier", () => {
         }),
       }),
     ]);
-    expect(harness.apiClient.replyTextMessage).toHaveBeenCalledWith(
-      "om_group_root_card_1",
-      "项目群里的完整结果也发好了。",
-    );
-    expect(firstCallOrder(harness.apiClient.sendInteractiveCardToChat)).toBeLessThan(
-      firstCallOrder(harness.apiClient.replyTextMessage),
-    );
+    expect(harness.apiClient.replyTextMessage).not.toHaveBeenCalled();
     expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
       lastNotifiedCompletionKey: "thread-native-1:completion-new",
     });
   });
 
-  it("does not advance the notified key when the full-result send fails after the notification card succeeds", async () => {
+  it("does not advance the notified key when the completion card itself fails to send", async () => {
     const harness = createHarness(harnesses, {
       apiClientOverrides: {
-        sendTextMessage: vi.fn(async () => {
-          throw new Error("FEISHU_FULL_RESULT_SEND_FAILED");
+        sendInteractiveCard: vi.fn(async () => {
+          throw new Error("FEISHU_DESKTOP_NOTIFICATION_SEND_FAILED");
         }),
       },
     });
@@ -330,7 +316,7 @@ describe("DesktopCompletionNotifier", () => {
         mode: "dm",
         peerId: "ou_demo",
       },
-    })).rejects.toThrow("FEISHU_FULL_RESULT_SEND_FAILED");
+    })).rejects.toThrow("FEISHU_DESKTOP_NOTIFICATION_SEND_FAILED");
 
     expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledTimes(1);
     expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
@@ -338,7 +324,7 @@ describe("DesktopCompletionNotifier", () => {
     });
   });
 
-  it("reuses the standard assistant markdown-card delivery policy for the final result", async () => {
+  it("renders markdown-style final result directly inside the completion card", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
       threadId: "thread-native-1",
@@ -358,35 +344,21 @@ describe("DesktopCompletionNotifier", () => {
       },
     });
 
-    expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledTimes(2);
+    expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledTimes(1);
+    const notificationCard = harness.apiClient.sendInteractiveCard.mock.calls[0]?.[1] as Record<string, unknown>;
+    const visibleText = collectVisibleText(notificationCard).join("\n");
     expect(harness.apiClient.sendInteractiveCard).toHaveBeenNthCalledWith(
-      2,
+      1,
       "ou_demo",
-      expect.objectContaining({
-        header: expect.objectContaining({
-          title: expect.objectContaining({
-            content: "完整回复",
-          }),
-        }),
-        config: expect.objectContaining({
-          summary: expect.objectContaining({
-            content: "明确待办",
-          }),
-        }),
-        body: expect.objectContaining({
-          elements: expect.arrayContaining([
-            expect.objectContaining({
-              tag: "markdown",
-              content: expect.stringContaining("**明确待办**"),
-            }),
-          ]),
-        }),
-      }),
+      expect.any(Object),
     );
+    expect(visibleText).toContain("Codex 最终返回了什么");
+    expect(visibleText).toContain("明确待办");
+    expect(visibleText).toContain("收尾桌面完成通知");
     expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
   });
 
-  it("sends a non-empty body-unavailable fallback result when final assistant text is empty and still advances the notified key on success", async () => {
+  it("renders a non-empty body-unavailable fallback inside the completion card when final assistant text is empty", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
       threadId: "thread-native-1",
@@ -403,20 +375,26 @@ describe("DesktopCompletionNotifier", () => {
       },
     });
 
-    expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith(
+    expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledWith(
       "ou_demo",
-      expect.stringContaining("body unavailable"),
+      expect.objectContaining({
+        body: expect.objectContaining({
+          elements: expect.arrayContaining([
+            expect.objectContaining({
+              tag: "markdown",
+              content: expect.stringContaining("body unavailable"),
+            }),
+          ]),
+        }),
+      }),
     );
-    expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith(
-      "ou_demo",
-      expect.not.stringMatching(/^\s*$/),
-    );
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
     expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
       lastNotifiedCompletionKey: "thread-native-1:completion-new",
     });
   });
 
-  it("bounds long single-paragraph completion text to an excerpt budget inside the notification card", async () => {
+  it("keeps long completion content inside the completion card without a second text message", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
       threadId: "thread-native-1",
@@ -442,11 +420,9 @@ describe("DesktopCompletionNotifier", () => {
     const notificationCard = harness.apiClient.sendInteractiveCard.mock.calls[0]?.[1] as Record<string, unknown>;
     const summaryMarkdown = findSummaryMarkdown(notificationCard);
 
-    expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", longParagraph);
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
     expect(summaryMarkdown).toContain("**Codex 最终返回了什么**");
-    expect(summaryMarkdown).not.toContain("尾段标记不应完整出现在通知摘要中");
-    expect(summaryMarkdown.length).toBeGreaterThan(140);
-    expect(summaryMarkdown.length).toBeLessThanOrEqual(320);
+    expect(Buffer.byteLength(JSON.stringify(notificationCard), "utf8")).toBeLessThanOrEqual(30 * 1024);
   });
 
   it("refuses before sending when the watch-state row is missing", async () => {
@@ -493,10 +469,7 @@ describe("DesktopCompletionNotifier", () => {
       "om_stable_anchor",
       expect.any(Object),
     );
-    expect(harness.apiClient.replyTextMessage).toHaveBeenCalledWith(
-      "om_stable_anchor",
-      "使用预解析锚点发送。",
-    );
+    expect(harness.apiClient.replyTextMessage).not.toHaveBeenCalled();
   });
 });
 
@@ -543,6 +516,9 @@ function createHarness(
         timestamp: "2026-04-20T09:59:00.000Z",
       },
     ]),
+    getDesktopDisplaySnapshot: vi.fn(() => ({
+      lastHumanUserText: "请把完整结果发回飞书，并给一个清晰的通知卡。",
+    })),
   };
   const notifier = new DesktopCompletionNotifier({
     apiClient: apiClient as any,
@@ -666,10 +642,6 @@ function seedThreadBinding(
   });
 }
 
-function firstCallOrder(mockFn: ReturnType<typeof vi.fn>): number {
-  return mockFn.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER;
-}
-
 function collectButtons(card: Record<string, unknown>): Array<{
   label: string;
   type: string;
@@ -714,6 +686,44 @@ function collectButtons(card: Record<string, unknown>): Array<{
     }
 
     for (const value of Object.values(node)) {
+      visit(value);
+    }
+  }
+}
+
+function collectVisibleText(card: Record<string, unknown>): string[] {
+  const text: string[] = [];
+  visit(card);
+  return text;
+
+  function visit(node: unknown): void {
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        visit(item);
+      }
+      return;
+    }
+
+    if (!node || typeof node !== "object") {
+      return;
+    }
+
+    const candidate = node as {
+      content?: unknown;
+      text?: {
+        content?: unknown;
+      };
+      elements?: unknown;
+    };
+
+    if (typeof candidate.content === "string") {
+      text.push(candidate.content);
+    }
+    if (typeof candidate.text?.content === "string") {
+      text.push(candidate.text.content);
+    }
+
+    for (const value of Object.values(candidate)) {
       visit(value);
     }
   }

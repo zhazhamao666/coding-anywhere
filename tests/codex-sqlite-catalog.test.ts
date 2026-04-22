@@ -376,6 +376,72 @@ describe("CodexSqliteCatalog", () => {
     ]);
   });
 
+  it("extracts the last human user message for desktop cards without treating synthetic user-like wrappers as human input", () => {
+    const rolloutPath = path.join(rootDir, "alpha-2.jsonl");
+    writeFileSync(
+      rolloutPath,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-22T13:30:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "thread-alpha-2",
+            timestamp: "2026-04-22T13:30:00.000Z",
+            cwd: "D:\\Repos\\Alpha",
+            cli_version: "0.116.0",
+            source: "cli",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-22T13:31:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "请详细总结一下本项目生成的 patent doc skill，然后我们讨论一下如何改进这个 skill。",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-22T13:31:05.000Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-top-level-1",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-22T13:31:30.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "<subagent_notification> {\"status\":\"completed\",\"message\":\"子 agent 已完成\"}",
+              },
+            ],
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    const catalog = new CodexSqliteCatalog({
+      sqlitePath,
+      sessionIndexPath,
+    });
+
+    expect(catalog.getDesktopDisplaySnapshot("thread-alpha-2")).toMatchObject({
+      lastHumanUserText: "请详细总结一下本项目生成的 patent doc skill，然后我们讨论一下如何改进这个 skill。",
+    });
+  });
+
   it("supplements threads from session rollouts when session_index is ahead of the SQLite catalog", () => {
     const sessionDir = path.join(rootDir, "sessions", "2026", "03", "27");
     mkdirSync(sessionDir, { recursive: true });

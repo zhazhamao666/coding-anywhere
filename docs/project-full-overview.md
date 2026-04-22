@@ -109,9 +109,9 @@
 79. Playwright 版真实飞书 live smoke 现在支持通过 `FEISHU_LIVE_PROJECT_KEY` 先强制切到指定测试项目，再发送 smoke 指令，降低在业务项目上误跑真实验证的风险
 80. 桌面 completion 通知卡的主按钮文案现在统一为“在飞书继续”，`continue_desktop_thread` 也已经覆盖三种接管路径：DM、已绑定飞书话题和项目群主时间线都会把目标 native Codex thread 接到对应飞书 surface，并统一落到“线程已切换”卡；其中项目群主时间线现在不再自动创建飞书话题，而是直接把当前群对话绑定到该 native thread
 81. 飞书已绑定项目群主时间线现在和 DM 保持同一套心智：`切换到此线程` / `在飞书继续` 都会把当前对话窗口直接绑定到一个 native Codex thread，后续普通群消息会继续进入这个线程
-82. 桌面侧原生 Codex thread 已经从“完成后单次通知”升级为完整生命周期通知：runtime 会在新一轮顶层 desktop run 发现 `task_started` 后先发一张 `桌面任务进行中` 卡，并在后续轮询里复用同一 `message_id` patch 进度；卡片会展示最近公开进展、结构化计划清单和 `Ran N commands` 命令计数，但不再把 raw shell command 直接暴露给飞书用户；服务重启或恢复轮询时，如果同一线程里同时存在“较早的旧 completion”和“更新的进行中 run”，也会优先恢复最新的进行中态，而不是把旧完成态误推给飞书
-83. 同一轮 desktop run 完成后，bridge 会优先把这张运行态卡原地更新成 `桌面任务已完成`，在卡片里带上“你最后说了什么”“Codex 最终返回了什么”预览、计划快照和命令计数；只有在完成态才展示 `在飞书继续`，同时继续复用现有 assistant Markdown 卡 / 纯文本回退策略补发完整正文
-84. 飞书侧用户可见的运行状态卡、`/ca status` 当前运行摘要和桌面生命周期卡现在统一走“公开进度”模型：计划清单仍然结构化展示，但脚本执行细节不再以 `最近工具：<raw command>` 形式直接出现，而是收口为 `Ran N commands` 这类命令计数摘要
+82. 桌面侧原生 Codex thread 已经从“完成后单次通知”升级为完整生命周期通知：runtime 会在新一轮顶层 desktop run 发现 `task_started` 后先发一张 `桌面任务进行中` 卡，并在后续轮询里复用同一 `message_id` patch 最近公开进展与结构化计划清单；卡片会先展示“你最后说了什么”，再展示当前情况，不再额外放一个独立的 `进度 / Ran N commands` 区块
+83. 同一轮 desktop run 完成后，bridge 会优先把这张运行态卡原地更新成 `桌面任务已完成`，在同一张卡里直接展示“你最后说了什么”和 `Codex 最终返回了什么` 的正文内容，不再额外补发第二张“完整回复”卡或结果消息；`在飞书继续` 也只会出现在完成态
+84. 飞书侧用户可见的运行状态摘要仍然遵循“公开进度”模型：脚本执行细节不再以 `最近工具：<raw command>` 形式直接出现，而是保留结构化进度或必要时折叠为 `Ran N commands` 这类计数摘要；桌面生命周期卡本身则不再单独展示命令计数区块
 85. 桌面 lifecycle 轮询在判定通知来源时，现在不仅会压制“刚刚完成的 Feishu run 回声”，也会压制“当前仍在运行中的 Feishu run”；只要同一 native `thread_id` 上还有 live Feishu run，就不会再额外发出 `桌面任务进行中` 或 `桌面任务已完成` 卡，避免把飞书自己发起的任务误报成桌面任务
 
 ### 2.3 当前仍未打通的部分
@@ -124,7 +124,7 @@
 - 完整的线程级前端管理页面
 - 飞书侧仍看不到 Codex 5 小时额度 / 周额度
 - 飞书侧还不能直接查看和切换更多 profile 级高级参数
-- 桌面侧原生 Codex thread 生命周期通知虽然已经接通“runtime 轮询 + lifecycle observer + 本地路由决策 + 进行中卡创建 / patch + 完成态原卡收口 + 完整 assistant 正文回退”整条链路，但 history/mute 回调和失败后的自动修复仍未接通
+- 桌面侧原生 Codex thread 生命周期通知虽然已经接通“runtime 轮询 + lifecycle observer + 本地路由决策 + 进行中卡创建 / patch + 完成态原卡收口”整条链路，但 history/mute 回调和失败后的自动修复仍未接通
 - 群聊里的“话题承载会话”仍然不是当前主交互模式；虽然项目线程创建与已注册原生话题 surface 仍可用，但“群主时间线直接绑定 thread”和“真正的话题群/话题模式”还没有做成一套完整、清晰的产品交互
 
 也就是说，DM、已绑定项目群主时间线和已注册群线程都已经具备运行链路，但“群聊话题化承载会话”的完整产品方案仍然留待后续单独设计。
@@ -211,8 +211,7 @@ Browser / script
 - 把 `SessionStore` 的历史观测数据和 `RunWorkerManager` 的实时调度态拼装成统一的 `/ops/overview` / `/ops/runtime`
 - 为 ops 侧取消动作补齐 queued run 的取消元数据落库与事件时间线
 - 启动时把上次服务异常退出后残留的非终态 run 收口为明确终态，避免历史观测与 live runtime 脱节
-- 启动桌面 lifecycle 轮询定时器：扫描本地 Codex catalog 的顶层 native thread rollout，跳过 `sourceInfo.kind = subagent` 的子线程；bootstrap `codex_thread_watch_state` 时会跳过纯历史 completion，但如果线程最新状态已经进入新的进行中 run，则会直接恢复为 `桌面任务进行中` 卡；后续轮询会解析 `task_started`、`agent_message`、`update_plan`、`shell_command` 和 `task_complete`，先创建 `桌面任务进行中` 卡，再在同一 `message_id` 上持续 patch 公开进度，并在终态时更新成 `桌面任务已完成`
-- 启动桌面 lifecycle 轮询定时器：扫描本地 Codex catalog 的顶层 native thread rollout，跳过 `sourceInfo.kind = subagent` 的子线程；bootstrap `codex_thread_watch_state` 时会跳过纯历史 completion，但如果线程最新状态已经进入新的进行中 run，则会直接恢复为 `桌面任务进行中` 卡；后续轮询会解析 `task_started`、`agent_message`、`update_plan`、`shell_command` 和 `task_complete`，先创建 `桌面任务进行中` 卡，再在同一 `message_id` 上持续 patch 公开进度，并在终态时更新成 `桌面任务已完成`；同时如果同一 `thread_id` 上存在 live Feishu run，或刚完成的 Feishu run 仍落在抑制窗口内，就不会重复从桌面通知出口推卡
+- 启动桌面 lifecycle 轮询定时器：扫描本地 Codex catalog 的顶层 native thread rollout，跳过 `sourceInfo.kind = subagent` 的子线程；bootstrap `codex_thread_watch_state` 时会跳过纯历史 completion，但如果线程最新状态已经进入新的进行中 run，或同一轮 run 在某次 completion 之后仍继续产生顶层公开进展，则会优先恢复 / 保持 `桌面任务进行中` 卡；后续轮询会解析 `task_started`、`agent_message`、`update_plan`、`shell_command` 和 `task_complete`，先创建 `桌面任务进行中` 卡，再在同一 `message_id` 上持续 patch 公开进度，并在真正终态时更新成 `桌面任务已完成`；同时如果同一 `thread_id` 上存在 live Feishu run，或刚完成的 Feishu run 仍落在抑制窗口内，就不会重复从桌面通知出口推卡
 - 启动线程空闲回收和待处理图片过期清理定时器
 
 ### 5.1.1 `src/windows-console.ts`
@@ -273,19 +272,16 @@ Windows 停止入口模块。
 
 - 接收已经提取好的 desktop lifecycle snapshot 和已经解析好的投递目标，不在这里重新做路由决策
 - `publishRunning` 负责创建 `桌面任务进行中` 卡，并把冻结后的 `message_id`、surface 和公开进度写入 `codex_thread_desktop_notification_state`
-- `updateRunning` 负责复用同一 `message_id` patch 运行态卡，只更新公开进展、计划清单和命令计数
+- `updateRunning` 负责复用同一 `message_id` patch 运行态卡，只更新公开进展和计划清单
 - `publishCompletion` 优先把运行态卡 patch 成完成态；如果当前没有可 patch 的运行态卡，则退回新发一张完成态卡
 - 按目标类型分别执行 DM、已绑定飞书话题回复和项目群主时间线投递
-- 在 DM 中连续发送“运行态 / 完成态通知卡 + 完整正文回退”
 - 在真正发飞书消息之前先校验 `codex_thread_watch_state` 是否已存在，避免“消息已经发出但 watch-state 持久化才报错”的半成功状态
-- 在已绑定飞书话题中复用路由阶段已经解析好的稳定 `anchorMessageId`，把通知卡和完整正文都回复到同一个话题根消息下，避免发送阶段再二次读取可变绑定
-- 在项目群主时间线中先发送新的完成通知卡，再把完整正文作为这张通知卡下的第一条回复，避免生成第二条无关联 root 消息
-- 复用和普通 assistant 回复相同的 Markdown 卡 / 纯文本回退策略，不额外发明第二套正文渲染规则
+- 在已绑定飞书话题中复用路由阶段已经解析好的稳定 `anchorMessageId`，把生命周期卡稳定回复到同一个话题根消息下，避免发送阶段再二次读取可变绑定
 - 当 completion 没有可用的最终正文时，会发送明确的 `body unavailable` 文本回退，而不是落一条空白结果消息
-- 生命周期卡始终展示 `你最后说了什么` 提醒区，优先使用最近一条用户消息，没有时回退到线程标题
-- 完成态卡的单段摘要会保留更接近 220 字左右的可见 excerpt 预算，同时继续做长度截断，避免把整段正文几乎原样塞进通知里
-- 生命周期卡会对 reminder / summary / 标题字段做截断，并在最终 JSON 仍偏大时降级到更紧凑的同结构卡片，确保 interactive payload 保持在可发送大小内
-- 只有在通知卡和完整正文都发送成功后，才推进 `lastNotifiedCompletionKey`
+- 生命周期卡始终展示 `你最后说了什么` 提醒区，优先使用 rollout 里结构化提取的“最后一句顶层人类输入”；拿不到时才回退到最近用户消息或线程标题
+- 完成态卡会把 `Codex 最终返回了什么` 直接内嵌到同一张卡里；若正文过长，则只在这张卡内部做长度收敛，不再额外补发第二条完整结果消息
+- 生命周期卡会对 reminder / result / 标题字段做截断，并在最终 JSON 仍偏大时降级到更紧凑的同结构卡片，确保 interactive payload 保持在可发送大小内
+- 只有在完成态通知卡发送或 patch 成功后，才推进 `lastNotifiedCompletionKey`
 
 ### 5.2 `src/feishu-adapter.ts`
 
@@ -442,10 +438,10 @@ Codex 本地线程目录读取层。
 
 - 为 native Codex thread 在桌面端运行中 / 已完成两种状态构建独立的 JSON 2.0 卡片
 - 统一桌面 lifecycle 通知卡的主按钮文案为“在飞书继续”，并把 DM、已存在话题、项目群主时间线三种 handoff 场景编码进按钮 payload
-- 运行态卡会展示项目名、线程名、开始时间、最近公开进展、结构化计划清单和 `Ran N commands`，且不会显示 `在飞书继续`
-- 完成态卡会展示完成时间、最终结果预览，以及必显的“你最后说了什么”提醒区；提醒区优先使用最近一条用户消息，没有时回退到线程标题
+- 运行态卡会展示项目名、线程名、开始时间、必显的“你最后说了什么”提醒区、最近公开进展和结构化计划清单，且不会显示 `在飞书继续`
+- 完成态卡会展示完成时间、必显的“你最后说了什么”提醒区，以及直接内嵌在同一张卡里的 `Codex 最终返回了什么`
 - 对 project / thread / summary / hint 这类用户或模型衍生文本先做 Markdown 去语法和多行收敛，避免借由 `markdown` 组件改写通知卡结构或摘要预览
-- 对超长单段结果摘要会额外收紧到较短 excerpt 预算，避免通知卡把完整正文几乎原样复写出来
+- 对超长结果正文会在同一张完成态卡里做长度收敛，避免 interactive payload 超限，同时不再额外发“完整回复”卡
 - builder 的输入契约通过 `src/types.ts` 暴露，便于后续 runtime、投递与回调链路复用同一份通知卡输入定义
 - 统一产出后续 handoff 会复用的稳定动作名，如 `continue_desktop_thread`、`view_desktop_thread_history`、`mute_desktop_thread`
 - 当前只负责生命周期卡的展示模型，不在这里重新做 rollout 观察或飞书路由决策
@@ -936,7 +932,7 @@ channel + peer_id -> codex_thread_id
 - 可以在 DM 或已注册飞书线程里直接点击“运行状态”，看到当前 surface 的 live run、耗时、最近工具和摘要；没有 live run 时也能看到空闲态上下文摘要
 - 可以在 DM 或已注册飞书线程里直接点击“停止任务”或发送 `/ca stop`，请求停止当前 surface 上正在执行或排队的任务
 - 可以通过摘要卡快速确认当前项目和新建线程结果
-- 普通对话 run 完成后，不会再在终态卡和普通消息里重复完整展示同一份 assistant 正文；卡片保留摘要，完整正文以下方消息为准
+- 桌面生命周期通知卡完成后，会直接在同一张卡里展示 `Codex 最终返回了什么` 的正文内容，不再额外补一张“完整回复”消息
 - 输入未知子命令时也能自动回到导航卡
 - 可以在群主时间线里直接绑定当前群，而不用手工输入 `chatId`；也可以从项目列表卡中点击未绑定的 Codex 项目完成绑定，不需要知道 `projectId` 或手工复制 `cwd`
 - 可以直接点击卡片按钮回到导航、当前项目和线程列表，而不用重新手输命令
@@ -1076,10 +1072,10 @@ channel + peer_id -> codex_thread_id
 13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式表单卡、todo list 展示、待回答计划选择题和续跑同一 native thread 的桥接链路
 14. `tests/codex-desktop-completion-observer.test.ts` 与 `tests/codex-desktop-lifecycle-observer.test.ts` 会分别锁定 completion 兼容层和完整 lifecycle observer：既覆盖 offset 读取、`task_complete` 检测、最终 assistant 正文提取和稳定 `completionKey`，也覆盖 `task_started` / `agent_message` / `update_plan` / `shell_command` 组合下的公开进度快照、稳定 `runKey` 和跨轮询累计命令计数
 15. `tests/desktop-completion-routing.test.ts` 会用本地 SQLite store + 小型 catalog double 校验桌面 completion 的本地投递目标解析：同一 native thread 有多个话题绑定时会选择首选绑定；项目群 fallback 会先看精确 `projectKey`，再看唯一 cwd 命中；cwd 命中多个项目时不会猜测，而是退回 DM 或明确报出 DM owner 歧义错误
-16. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面生命周期卡在运行中 / 已完成两态下的字段、按钮、计划清单和命令计数展示，以及“通知卡而非导航卡”的展示约束
-17. `tests/desktop-completion-notifier.test.ts` 会校验桌面 lifecycle 投递器在 DM / 已绑定话题 / 项目群三种目标下的运行态卡创建、完成态原卡 patch、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及最终 assistant 正文继续复用现有 Markdown 卡 / 纯文本回退策略
+16. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面生命周期卡在运行中 / 已完成两态下的字段顺序、按钮、计划清单和 payload 预算行为：运行态必须先显示“你最后说了什么”再显示当前情况，完成态则必须先显示提醒区、再显示直接内嵌的最终正文，而且不能再冒出独立的 `进度 / Ran N commands` 区块
+17. `tests/desktop-completion-notifier.test.ts` 会校验桌面 lifecycle 投递器在 DM / 已绑定话题 / 项目群三种目标下的运行态卡创建、完成态原卡 patch、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及完成态正文直接内嵌在同一张卡里而不是额外补发第二条结果消息
 18. `tests/desktop-completion-dm-handoff.test.ts` 会用真实 `BridgeService` + `FeishuCardActionService` harness 校验 DM 通知卡主按钮 `continue_desktop_thread`：点击后会把 DM 绑定到目标 native thread、回调直接返回标准“当前会话”卡，且下一条普通 DM 文本会续跑同一线程
-19. `tests/runtime-desktop-completion-notifier.test.ts` 会校验 runtime 启动后真的开始轮询本地 rollout：首次 bootstrap watch state 时不会回放历史 run / completion，新的顶层 desktop run 会先创建一张运行态卡、在公开进展变化时 patch，并在 `task_complete` 后原地收口为完成态；unchanged `completionKey` 不会重复推送，`sourceInfo.kind = subagent` 的子线程不会触发生命周期通知，近期飞书终态 run 对应的 desktop 回声也不会再额外发卡
+19. `tests/runtime-desktop-completion-notifier.test.ts` 会校验 runtime 启动后真的开始轮询本地 rollout：首次 bootstrap watch state 时不会回放历史 run / completion，新的顶层 desktop run 会先创建一张运行态卡、在公开进展变化时 patch，并在真正 `task_complete` 后原地收口为完成态；如果旧 completion 之后又继续出现同一轮顶层公开进展，就必须优先维持进行中态；unchanged `completionKey` 不会重复推送，`sourceInfo.kind = subagent` 的子线程不会触发生命周期通知，近期飞书终态 run 对应的 desktop 回声也不会再额外发卡
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 

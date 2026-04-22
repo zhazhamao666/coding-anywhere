@@ -345,7 +345,7 @@ export async function pollDesktopCompletionNotifications(input: {
       observed.progressSnapshot &&
       (!notificationState?.activeRunKey || observed.progressSnapshot.runKey !== notificationState.activeRunKey),
     );
-    const shouldPreferRunningProgress = didNewerRunStartAfterCompletion({
+    const shouldPreferRunningProgress = didDesktopLifecycleContinueAfterCompletion({
       completion: observed.completion,
       progressSnapshot: observed.progressSnapshot,
     });
@@ -597,7 +597,7 @@ function didDesktopProgressSnapshotChange(
     JSON.stringify(state.planTodos ?? null) !== JSON.stringify(nextSnapshot.planTodos ?? null);
 }
 
-function didNewerRunStartAfterCompletion(input: {
+function didDesktopLifecycleContinueAfterCompletion(input: {
   completion: {
     completedAt: string;
   } | undefined;
@@ -609,11 +609,12 @@ function didNewerRunStartAfterCompletion(input: {
 
   const completionMs = Date.parse(input.completion.completedAt);
   const startedMs = Date.parse(input.progressSnapshot.startedAt);
-  if (!Number.isFinite(completionMs) || !Number.isFinite(startedMs)) {
+  const lastEventMs = Date.parse(input.progressSnapshot.lastEventAt);
+  if (!Number.isFinite(completionMs) || !Number.isFinite(startedMs) || !Number.isFinite(lastEventMs)) {
     return false;
   }
 
-  return startedMs > completionMs;
+  return startedMs > completionMs || lastEventMs > completionMs;
 }
 
 function shouldResumeRunningDesktopLifecycle(input: {
@@ -630,7 +631,7 @@ function shouldResumeRunningDesktopLifecycle(input: {
     return true;
   }
 
-  return didNewerRunStartAfterCompletion(input);
+  return didDesktopLifecycleContinueAfterCompletion(input);
 }
 
 function isTerminalRunStatus(status: string): boolean {

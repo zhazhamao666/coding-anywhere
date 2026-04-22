@@ -6,13 +6,11 @@ const MAX_PROJECT_NAME_CHARS = 120;
 const MAX_THREAD_TITLE_CHARS = 160;
 const MAX_REMINDER_CHARS = 260;
 const MAX_REMINDER_COMPACT_CHARS = 140;
-const SINGLE_PARAGRAPH_SUMMARY_MAX_CHARS = 220;
-const MULTI_LINE_SUMMARY_MAX_CHARS = 220;
-const COMPACT_SUMMARY_MAX_CHARS = 180;
-const MINIMAL_SUMMARY_MAX_CHARS = 120;
 const DEFAULT_SUMMARY_FALLBACK = "任务已经在桌面端完成，可继续在飞书追问或查看线程记录。";
 const DEFAULT_RUNNING_PROGRESS_FALLBACK = "桌面端正在继续执行该线程，完成后会在此更新结果。";
 const DEFAULT_REMINDER_FALLBACK = "返回飞书继续当前会话。";
+const COMPACT_RESULT_MAX_CHARS = 1600;
+const MINIMAL_RESULT_MAX_CHARS = 900;
 
 export function buildDesktopCompletionCard(
   input: DesktopCompletionCardInput,
@@ -24,15 +22,14 @@ export function buildDesktopCompletionCard(
     projectName: truncateCardText(normalizeCardText(input.projectName), MAX_PROJECT_NAME_CHARS),
     threadTitle: truncateCardText(normalizeCardText(input.threadTitle), MAX_THREAD_TITLE_CHARS),
     progressText: input.progressText ? normalizeCardText(input.progressText) : undefined,
+    resultText: normalizeResultText(input.resultText, input.summaryLines),
     commandCount: input.commandCount ?? 0,
     planTodos: normalizePlanTodos(input.planTodos),
   };
-  const summaryLines = normalizeSummaryLines(input.summaryLines ?? []);
   const reminderText = normalizeReminderText(input.reminderText, normalizedInput.threadTitle);
   const progressText = normalizeProgressText(normalizedInput.progressText);
   const card = buildCardPayload({
     input: normalizedInput,
-    summaryLines,
     reminderText,
     progressText,
   });
@@ -41,8 +38,10 @@ export function buildDesktopCompletionCard(
   }
 
   const compactCard = buildCardPayload({
-    input: normalizedInput,
-    summaryLines: normalizeSummaryLines(summaryLines, COMPACT_SUMMARY_MAX_CHARS),
+    input: {
+      ...normalizedInput,
+      resultText: truncateMarkdownText(normalizedInput.resultText || DEFAULT_SUMMARY_FALLBACK, COMPACT_RESULT_MAX_CHARS),
+    },
     reminderText: truncateCardText(reminderText, MAX_REMINDER_COMPACT_CHARS),
     progressText: truncateCardText(progressText || DEFAULT_RUNNING_PROGRESS_FALLBACK, 160),
   });
@@ -51,8 +50,10 @@ export function buildDesktopCompletionCard(
   }
 
   return buildCardPayload({
-    input: normalizedInput,
-    summaryLines: normalizeSummaryLines(summaryLines, MINIMAL_SUMMARY_MAX_CHARS),
+    input: {
+      ...normalizedInput,
+      resultText: truncateMarkdownText(normalizedInput.resultText || DEFAULT_SUMMARY_FALLBACK, MINIMAL_RESULT_MAX_CHARS),
+    },
     reminderText: truncateCardText(reminderText || DEFAULT_REMINDER_FALLBACK, 80),
     progressText: truncateCardText(progressText || DEFAULT_RUNNING_PROGRESS_FALLBACK, 100),
   });
@@ -60,7 +61,6 @@ export function buildDesktopCompletionCard(
 
 function buildCardPayload(input: {
   input: DesktopCompletionCardInput;
-  summaryLines: string[];
   reminderText: string;
   progressText: string;
 }): Record<string, unknown> {
@@ -75,30 +75,20 @@ function buildCardPayload(input: {
     },
     {
       tag: "markdown",
-      content: status === "running"
-        ? buildProgressMarkdown(input.progressText)
-        : buildSummaryMarkdown(input.summaryLines),
+      content: buildReminderMarkdown(input.reminderText),
     },
     {
       tag: "hr",
     },
     {
       tag: "markdown",
-      content: buildReminderMarkdown(input.reminderText),
+      content: status === "running"
+        ? buildProgressMarkdown(input.progressText)
+        : buildResultMarkdown(input.input.resultText),
     },
   ];
 
-  if ((input.input.commandCount ?? 0) > 0) {
-    elements.push({
-      tag: "hr",
-    });
-    elements.push({
-      tag: "markdown",
-      content: `**进度**\n${formatCommandCountText(input.input.commandCount ?? 0)}`,
-    });
-  }
-
-  if (input.input.planTodos && input.input.planTodos.length > 0) {
+  if (status === "running" && input.input.planTodos && input.input.planTodos.length > 0) {
     elements.push({
       tag: "hr",
     });
@@ -140,7 +130,7 @@ function buildCardPayload(input: {
       wide_screen_mode: true,
       update_multi: true,
       summary: {
-        content: buildCardSummary(input.input, input.summaryLines, input.progressText).slice(0, 120),
+        content: buildCardSummary(input.input, input.progressText).slice(0, 120),
       },
     },
     header: {
@@ -174,10 +164,10 @@ function buildOverviewMarkdown(input: DesktopCompletionCardInput): string {
   return lines.join("\n");
 }
 
-function buildSummaryMarkdown(summaryLines: string[]): string {
+function buildResultMarkdown(resultText: string | undefined): string {
   return [
     "**Codex 最终返回了什么**",
-    ...summaryLines.map(line => `- ${line}`),
+    resultText || DEFAULT_SUMMARY_FALLBACK,
   ].join("\n");
 }
 
@@ -259,24 +249,6 @@ function buildActionValue(
   };
 }
 
-function normalizeSummaryLines(summaryLines: string[], maxChars?: number): string[] {
-  const normalized = summaryLines
-    .map(line => normalizeCardText(line))
-    .filter(line => line.length > 0)
-    .slice(0, 3);
-
-  const bounded = boundSummaryLines(
-    normalized,
-    maxChars ?? (normalized.length <= 1 ? SINGLE_PARAGRAPH_SUMMARY_MAX_CHARS : MULTI_LINE_SUMMARY_MAX_CHARS),
-  );
-
-  if (bounded.length > 0) {
-    return bounded;
-  }
-
-  return [DEFAULT_SUMMARY_FALLBACK];
-}
-
 function normalizePlanTodos(items: PlanTodoItem[] | undefined): PlanTodoItem[] | undefined {
   if (!Array.isArray(items) || items.length === 0) {
     return undefined;
@@ -296,55 +268,15 @@ function normalizeProgressText(progressText: string | undefined): string {
   return normalized || DEFAULT_RUNNING_PROGRESS_FALLBACK;
 }
 
-function boundSummaryLines(lines: string[], maxChars: number): string[] {
-  const bounded: string[] = [];
-  let usedChars = 0;
-
-  for (const line of lines) {
-    const separatorChars = bounded.length > 0 ? 1 : 0;
-    const remainingChars = maxChars - usedChars - separatorChars;
-    if (remainingChars <= 0) {
-      break;
-    }
-
-    const nextLine = truncateSummaryLine(line, remainingChars);
-    if (!nextLine) {
-      break;
-    }
-
-    bounded.push(nextLine);
-    usedChars += separatorChars + nextLine.length;
-
-    if (nextLine !== line) {
-      break;
-    }
-  }
-
-  return bounded;
-}
-
-function truncateSummaryLine(line: string, maxChars: number): string {
-  if (line.length <= maxChars) {
-    return line;
-  }
-
-  if (maxChars <= 3) {
-    return line.slice(0, maxChars);
-  }
-
-  return `${line.slice(0, maxChars - 3).trimEnd()}...`;
-}
-
 function buildCardSummary(
   input: DesktopCompletionCardInput,
-  summaryLines: string[],
   progressText: string,
 ): string {
   return [
     input.projectName,
     input.threadTitle,
     input.status === "running" ? "进行中" : "已完成",
-    input.status === "running" ? progressText : summaryLines[0],
+    input.status === "running" ? progressText : summarizeResultText(input.resultText),
   ].join(" · ");
 }
 
@@ -368,10 +300,6 @@ function formatDateTime(value: string | undefined): string {
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
-function formatCommandCountText(commandCount: number): string {
-  return commandCount === 1 ? "Ran 1 command" : `Ran ${commandCount} commands`;
-}
-
 function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
@@ -391,6 +319,45 @@ function normalizeReminderText(reminderText: string | undefined, fallback: strin
   const normalizedFallback = normalizeCardText(fallback);
   const reminder = normalizedReminder || normalizedFallback || DEFAULT_REMINDER_FALLBACK;
   return truncateCardText(reminder, MAX_REMINDER_CHARS);
+}
+
+function normalizeResultText(resultText: string | undefined, summaryLines: string[] | undefined): string {
+  const rawResultText = typeof resultText === "string" ? resultText.trim() : "";
+  if (rawResultText) {
+    const normalized = normalizeMarkdownToPlainText(rawResultText)
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    return normalized || DEFAULT_SUMMARY_FALLBACK;
+  }
+
+  const normalizedSummary = (summaryLines ?? [])
+    .map(line => normalizeCardText(line))
+    .filter(Boolean)
+    .join("\n");
+  return normalizedSummary || DEFAULT_SUMMARY_FALLBACK;
+}
+
+function summarizeResultText(resultText: string | undefined): string {
+  const firstLine = normalizeMarkdownToPlainText(resultText || DEFAULT_SUMMARY_FALLBACK)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(Boolean);
+  return firstLine || DEFAULT_SUMMARY_FALLBACK;
+}
+
+function truncateMarkdownText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  if (maxChars <= 3) {
+    return text.slice(0, maxChars);
+  }
+
+  return `${text.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
 function truncateCardText(text: string, maxChars: number): string {

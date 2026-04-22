@@ -4,7 +4,7 @@ import { buildDesktopCompletionCard } from "../src/feishu-card/desktop-completio
 import type { DesktopCompletionCardInput } from "../src/types.js";
 
 describe("desktop completion card builder", () => {
-  it("builds a running desktop card with public progress, plan list, and command count but no continue action", () => {
+  it("builds a running desktop card with reminder before progress and no standalone command block", () => {
     const input: DesktopCompletionCardInput = {
       mode: "dm",
       status: "running",
@@ -31,9 +31,11 @@ describe("desktop completion card builder", () => {
     expect(visibleText).toContain("进行中");
     expect(visibleText).toContain("2026-04-22");
     expect(visibleText).toContain("Task 1 已 review 完，我现在补测试和文档。");
-    expect(visibleText).toContain("Ran 3 commands");
     expect(visibleText).toContain("[x] Task 1: Review implementation");
     expect(visibleText).toContain("[ ] Task 2: Add tests");
+    expect(visibleText).not.toContain("Ran 3 commands");
+    expect(visibleText).not.toContain("**进度**");
+    expect(visibleText.indexOf("你最后说了什么")).toBeLessThan(visibleText.indexOf("当前情况"));
     expect(buttons.map(button => button.label)).toEqual([
       "查看线程记录",
       "静音此线程",
@@ -47,7 +49,7 @@ describe("desktop completion card builder", () => {
     );
   });
 
-  it("builds a dm completion notification card with focused completion details", () => {
+  it("builds a dm completion notification card with reminder before final result and no extra progress chrome", () => {
     const input: DesktopCompletionCardInput = {
       mode: "dm",
       status: "completed",
@@ -87,9 +89,10 @@ describe("desktop completion card builder", () => {
     expect(visibleText).toContain("新增定向测试并通过卡片渲染校验。");
     expect(visibleText).toContain("用户希望先收紧通知卡展示，再接回调。");
     expect(visibleText).toContain("你最后说了什么");
-    expect(visibleText).toContain("Ran 4 commands");
-    expect(visibleText).toContain("[x] Task 1: Review implementation");
-    expect(visibleText).toContain("[x] Task 2: Add tests");
+    expect(visibleText).not.toContain("Ran 4 commands");
+    expect(visibleText).not.toContain("**进度**");
+    expect(visibleText).not.toContain("计划清单");
+    expect(visibleText.indexOf("你最后说了什么")).toBeLessThan(visibleText.indexOf("Codex 最终返回了什么"));
     expect(visibleText).not.toContain("项目列表");
     expect(visibleText).not.toContain("导航");
     expect(visibleText).not.toContain("当前项目");
@@ -206,19 +209,19 @@ describe("desktop completion card builder", () => {
     ]);
   });
 
-  it("normalizes markdown-heavy multiline input to plain text and truncates summary lines", () => {
+  it("normalizes markdown-heavy multiline input to plain text while keeping the final result inline", () => {
     const input: DesktopCompletionCardInput = {
       mode: "dm",
       status: "completed",
       projectName: "**Alpha**\n# 注入标题",
       threadTitle: "[继续处理](https://example.com/thread)\n- 伪列表",
       completedAt: "2026-04-20T11:10:00.000Z",
-      summaryLines: [
+      resultText: [
         "```\nconst done = true;\n```",
         "**第二条**\n1. 伪步骤",
         "[第三条](https://example.com/three)\n- 伪条目",
         "第四条不该显示",
-      ],
+      ].join("\n"),
       reminderText: "请先看 `日志`\n> 然后继续",
       threadId: "thread_native_markdown_789",
     };
@@ -230,8 +233,10 @@ describe("desktop completion card builder", () => {
     expect(visibleText).toContain("Alpha 注入标题");
     expect(visibleText).toContain("继续处理 (https://example.com/thread) • 伪列表");
     expect(visibleText).toContain("const done = true;");
-    expect(visibleText).toContain("第二条 1. 伪步骤");
-    expect(visibleText).toContain("第三条 (https://example.com/three) • 伪条目");
+    expect(visibleText).toContain("第二条");
+    expect(visibleText).toContain("1. 伪步骤");
+    expect(visibleText).toContain("第三条 (https://example.com/three)");
+    expect(visibleText).toContain("• 伪条目");
     expect(visibleText).toContain("请先看 日志 > 然后继续");
     expect(visibleText).not.toContain("**Alpha**");
     expect(visibleText).not.toContain("# 注入标题");
@@ -239,7 +244,7 @@ describe("desktop completion card builder", () => {
     expect(visibleText).not.toContain("```");
     expect(visibleText).not.toContain("**第二条**");
     expect(visibleText).not.toContain("[第三条](https://example.com/three)");
-    expect(visibleText).not.toContain("第四条不该显示");
+    expect(visibleText).toContain("第四条不该显示");
     expect(serialized).not.toContain("**Alpha**");
     expect(serialized).not.toContain("[继续处理](https://example.com/thread)");
     expect(serialized).not.toContain("```");
@@ -264,23 +269,21 @@ describe("desktop completion card builder", () => {
     expect(visibleText).not.toContain("上次你的意图");
   });
 
-  it("keeps long paragraph summaries bounded without over-truncating them to the old 80-char budget", () => {
+  it("keeps oversized completion content within the Feishu payload budget", () => {
     const input: DesktopCompletionCardInput = {
       mode: "dm",
       status: "completed",
       projectName: "Budget Project",
       threadTitle: "限制摘要预算",
       completedAt: "2026-04-20T11:15:00.000Z",
-      summaryLines: [
-        [
-          "这是一个超长摘要，用来验证桌面完成通知卡不会把整段正文完整塞进摘要区域。",
-          "它会持续追加很多描述文字，直到明显超过允许的 excerpt 预算。",
-          "这里再补充关于通知顺序、提醒区回退和 payload guard 的背景说明，确保单段摘要仍然保留充足上下文。",
-          "然后继续补上一段关于线程锚点稳定性和结果正文复用策略的描述，把真正的截断点推到更靠后的位置。",
-          "最后再增加一段关于群时间线根卡与首条回复配对关系的说明，用来验证 builder 不会因为预算放宽就丢掉边界控制。",
-          "尾段标记不应完整出现在通知摘要中。",
-        ].join(""),
-      ],
+      resultText: [
+        "这是一个超长摘要，用来验证桌面完成通知卡不会把整段正文完整塞进摘要区域。",
+        "它会持续追加很多描述文字，直到明显超过允许的 excerpt 预算。",
+        "这里再补充关于通知顺序、提醒区回退和 payload guard 的背景说明，确保单段摘要仍然保留充足上下文。",
+        "然后继续补上一段关于线程锚点稳定性和结果正文复用策略的描述，把真正的截断点推到更靠后的位置。",
+        "最后再增加一段关于群时间线根卡与首条回复配对关系的说明，用来验证 builder 不会因为预算放宽就丢掉边界控制。",
+        "尾段标记可能会因为 payload 限制被截断。",
+      ].join("").repeat(20),
       threadId: "thread_native_budget_654",
     };
 
@@ -288,9 +291,7 @@ describe("desktop completion card builder", () => {
     const summaryMarkdown = collectVisibleText(card).find(text => text.includes("Codex 最终返回了什么")) ?? "";
 
     expect(summaryMarkdown).toContain("**Codex 最终返回了什么**");
-    expect(summaryMarkdown).not.toContain("尾段标记不应完整出现在通知摘要中");
-    expect(summaryMarkdown.length).toBeGreaterThan(140);
-    expect(summaryMarkdown.length).toBeLessThanOrEqual(320);
+    expect(Buffer.byteLength(JSON.stringify(card), "utf8")).toBeLessThanOrEqual(30 * 1024);
   });
 
   it("keeps oversized reminder text within Feishu payload budget", () => {

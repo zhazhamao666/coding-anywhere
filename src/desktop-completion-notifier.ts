@@ -4,11 +4,11 @@ import type {
   CodexDesktopCompletionEvent,
   CodexDesktopProgressSnapshot,
 } from "./codex-desktop-completion-observer.js";
-import { resolveFeishuAssistantMessageDelivery } from "./feishu-assistant-message.js";
 import { buildDesktopCompletionCard } from "./feishu-card/desktop-completion-card-builder.js";
 import { normalizeMarkdownToPlainText } from "./markdown-text.js";
 import type {
   CodexCatalogConversationItem,
+  CodexDesktopDisplaySnapshot,
   CodexCatalogThread,
   CodexThreadDesktopNotificationStateRecord,
   CodexThreadWatchStateRecord,
@@ -75,6 +75,7 @@ interface DesktopCompletionNotifierStoreLike {
 interface DesktopCompletionNotifierCodexCatalogLike {
   getThread(threadId: string): CodexCatalogThread | undefined;
   listRecentConversation(threadId: string, limit?: number): CodexCatalogConversationItem[];
+  getDesktopDisplaySnapshot?(threadId: string): CodexDesktopDisplaySnapshot | undefined;
 }
 
 export class DesktopCompletionNotifier {
@@ -101,8 +102,10 @@ export class DesktopCompletionNotifier {
     this.assertWatchStateExists(input.threadId);
 
     const thread = this.dependencies.codexCatalog?.getThread(input.threadId);
-    const reminderText = resolveLastUserReminder(
-      this.dependencies.codexCatalog?.listRecentConversation(input.threadId, 8) ?? [],
+    const reminderText = resolveLastHumanUserText(
+      this.dependencies.codexCatalog,
+      input.threadId,
+      thread?.title,
     );
     const card = buildDesktopCompletionCard({
       ...buildCardRouteContext(input.target),
@@ -113,7 +116,6 @@ export class DesktopCompletionNotifier {
       reminderText,
       progressText: input.progress.latestPublicMessage,
       planTodos: input.progress.planTodos ?? undefined,
-      commandCount: input.progress.commandCount,
       threadId: input.threadId,
     });
     const messageId = await this.sendNotification(input.target, card);
@@ -153,8 +155,10 @@ export class DesktopCompletionNotifier {
     }
 
     const thread = this.dependencies.codexCatalog?.getThread(input.threadId);
-    const reminderText = resolveLastUserReminder(
-      this.dependencies.codexCatalog?.listRecentConversation(input.threadId, 8) ?? [],
+    const reminderText = resolveLastHumanUserText(
+      this.dependencies.codexCatalog,
+      input.threadId,
+      thread?.title,
     );
     const card = buildDesktopCompletionCard({
       ...buildCardRouteContext(resolveFrozenTarget(notificationState)),
@@ -165,7 +169,6 @@ export class DesktopCompletionNotifier {
       reminderText,
       progressText: input.progress.latestPublicMessage,
       planTodos: input.progress.planTodos ?? undefined,
-      commandCount: input.progress.commandCount,
       threadId: input.threadId,
     });
 
@@ -197,8 +200,10 @@ export class DesktopCompletionNotifier {
 
     const resultText = resolveCompletionResultText(input.completion.finalAssistantText);
     const thread = this.dependencies.codexCatalog?.getThread(input.completion.threadId);
-    const reminderText = resolveLastUserReminder(
-      this.dependencies.codexCatalog?.listRecentConversation(input.completion.threadId, 8) ?? [],
+    const reminderText = resolveLastHumanUserText(
+      this.dependencies.codexCatalog,
+      input.completion.threadId,
+      thread?.title,
     );
     const existingState = this.dependencies.store.getCodexThreadDesktopNotificationState(input.completion.threadId);
     const patchableState = existingState?.status === "running_notified" ? existingState : undefined;
@@ -213,10 +218,8 @@ export class DesktopCompletionNotifier {
       projectName: resolveProjectName(thread, input.completion.threadId),
       threadTitle: resolveThreadTitle(thread, input.completion.threadId),
       completedAt: input.completion.completedAt,
-      summaryLines: buildSummaryLines(resultText),
+      resultText,
       reminderText,
-      planTodos: input.progress?.planTodos ?? patchableState?.planTodos ?? undefined,
-      commandCount: input.progress?.commandCount ?? patchableState?.commandCount ?? 0,
       threadId: input.completion.threadId,
     });
 
@@ -229,14 +232,6 @@ export class DesktopCompletionNotifier {
       }
     } else {
       messageId = await this.sendNotification(target, card);
-    }
-
-    const resultAnchor = resolveResultAnchor(patchableState, target, messageId);
-    const delivery = resolveFeishuAssistantMessageDelivery(resultText);
-    if (delivery.kind === "card") {
-      await this.sendCardResult(target, resultAnchor, delivery.card);
-    } else {
-      await this.sendTextResult(target, resultAnchor, delivery.text);
     }
 
     this.dependencies.store.upsertCodexThreadWatchState({
@@ -262,7 +257,6 @@ export class DesktopCompletionNotifier {
       lastRenderHash: buildDesktopNotificationRenderHash({
         status: "completed",
         completion: input.completion,
-        progress: input.progress,
         reminderText,
       }),
       lastCompletionKey: input.completion.completionKey,
@@ -288,42 +282,6 @@ export class DesktopCompletionNotifier {
     }
   }
 
-  private async sendCardResult(
-    target: DesktopCompletionDeliveryTarget,
-    anchorMessageId: string | undefined,
-    card: Record<string, unknown>,
-  ): Promise<void> {
-    switch (target.mode) {
-      case "dm":
-        await this.dependencies.apiClient.sendInteractiveCard(target.peerId, card);
-        return;
-      case "project_group":
-      case "thread":
-        if (!anchorMessageId) {
-          throw new Error("FEISHU_DESKTOP_RESULT_ANCHOR_REQUIRED");
-        }
-        await this.dependencies.apiClient.replyInteractiveCard(anchorMessageId, card);
-    }
-  }
-
-  private async sendTextResult(
-    target: DesktopCompletionDeliveryTarget,
-    anchorMessageId: string | undefined,
-    text: string,
-  ): Promise<void> {
-    switch (target.mode) {
-      case "dm":
-        await this.dependencies.apiClient.sendTextMessage(target.peerId, text);
-        return;
-      case "project_group":
-      case "thread":
-        if (!anchorMessageId) {
-          throw new Error("FEISHU_DESKTOP_RESULT_ANCHOR_REQUIRED");
-        }
-        await this.dependencies.apiClient.replyTextMessage(anchorMessageId, text);
-    }
-  }
-
   private assertWatchStateExists(threadId: string): void {
     if (!this.dependencies.store.getCodexThreadWatchState(threadId)) {
       throw new Error("FEISHU_DESKTOP_WATCH_STATE_NOT_FOUND");
@@ -344,8 +302,11 @@ export function buildDesktopNotificationRenderHash(input: {
       startedAt: input.progress?.startedAt ?? null,
       lastEventAt: input.progress?.lastEventAt ?? null,
       latestPublicMessage: input.progress?.latestPublicMessage ?? null,
-      planTodos: input.progress?.planTodos ?? null,
-      commandCount: input.progress?.commandCount ?? 0,
+      ...(input.status === "running"
+        ? {
+            planTodos: input.progress?.planTodos ?? null,
+          }
+        : {}),
       completionKey: input.completion?.completionKey ?? null,
       reminderText: input.reminderText ?? null,
     }))
@@ -366,7 +327,27 @@ function resolveThreadTitle(
   return thread?.title?.trim() || threadId;
 }
 
-function resolveLastUserReminder(conversation: CodexCatalogConversationItem[]): string | undefined {
+function resolveLastHumanUserText(
+  codexCatalog: DesktopCompletionNotifierCodexCatalogLike | undefined,
+  threadId: string,
+  threadTitleFallback?: string,
+): string | undefined {
+  const snapshot = codexCatalog?.getDesktopDisplaySnapshot?.(threadId);
+  const structuredText = normalizeMarkdownToPlainText(snapshot?.lastHumanUserText ?? "").trim();
+  if (structuredText) {
+    return structuredText;
+  }
+
+  return resolveLastUserReminder(
+    codexCatalog?.listRecentConversation(threadId, 8) ?? [],
+    threadTitleFallback,
+  );
+}
+
+function resolveLastUserReminder(
+  conversation: CodexCatalogConversationItem[],
+  threadTitleFallback?: string,
+): string | undefined {
   for (let index = conversation.length - 1; index >= 0; index -= 1) {
     const item = conversation[index];
     if (item.role !== "user") {
@@ -379,21 +360,8 @@ function resolveLastUserReminder(conversation: CodexCatalogConversationItem[]): 
     }
   }
 
-  return undefined;
-}
-
-function buildSummaryLines(finalAssistantText: string): string[] {
-  const normalized = normalizeMarkdownToPlainText(finalAssistantText)
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .slice(0, 3);
-
-  if (normalized.length > 0) {
-    return normalized;
-  }
-
-  return [BODY_UNAVAILABLE_RESULT_TEXT];
+  const normalizedFallback = normalizeMarkdownToPlainText(threadTitleFallback ?? "").trim();
+  return normalizedFallback || undefined;
 }
 
 function resolveCompletionResultText(finalAssistantText: string): string {
@@ -464,30 +432,4 @@ function resolveFrozenTarget(
     default:
       throw new Error("FEISHU_DESKTOP_NOTIFICATION_STATE_NOT_FOUND");
   }
-}
-
-function resolveResultAnchor(
-  state: CodexThreadDesktopNotificationStateRecord | undefined,
-  target: DesktopCompletionDeliveryTarget,
-  messageId: string | null,
-): string | undefined {
-  if (!state) {
-    if (target.mode === "project_group") {
-      return messageId ?? undefined;
-    }
-    if (target.mode === "thread") {
-      return target.anchorMessageId;
-    }
-    return undefined;
-  }
-
-  if (target.mode === "project_group") {
-    return state.messageId ?? undefined;
-  }
-
-  if (target.mode === "thread") {
-    return state.anchorMessageId ?? undefined;
-  }
-
-  return undefined;
 }
