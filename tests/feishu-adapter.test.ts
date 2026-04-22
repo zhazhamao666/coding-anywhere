@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -530,6 +531,65 @@ describe("FeishuAdapter", () => {
     );
   });
 
+  it("hides git directives from assistant replies and appends a compact file-change summary", async () => {
+    const repoDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-git-directives-"));
+    try {
+      git(repoDir, ["init"]);
+      git(repoDir, ["config", "user.name", "Codex Test"]);
+      git(repoDir, ["config", "user.email", "codex@example.com"]);
+      writeFileSync(path.join(repoDir, "alpha.txt"), "alpha\n", "utf8");
+      writeFileSync(path.join(repoDir, "beta.txt"), "beta\n", "utf8");
+      git(repoDir, ["add", "alpha.txt", "beta.txt"]);
+      git(repoDir, ["commit", "-m", "feat: add files"]);
+
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [{
+          kind: "assistant",
+          text: [
+            "都通过了。当前分支就是 main，提交是 abc123。",
+            `::git-stage{cwd="${repoDir.replace(/\\/g, "/")}"}`,
+            `::git-commit{cwd="${repoDir.replace(/\\/g, "/")}"}`,
+          ].join("\n"),
+        } satisfies BridgeReply]),
+      };
+      const apiClient = createApiClientDouble();
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-assistant-git-directives-1",
+        },
+        event: {
+          message: {
+            chat_type: "p2p",
+            message_type: "text",
+            content: JSON.stringify({ text: "请整理最后结果" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      const serialized = extractAssistantVisiblePayload(apiClient);
+      expect(serialized).toContain("2 个文件已更改");
+      expect(serialized).toContain("都通过了。当前分支就是 main，提交是 abc123。");
+      expect(serialized).not.toContain("::git-stage");
+      expect(serialized).not.toContain("::git-commit");
+      expect(serialized).not.toContain("alpha.txt");
+      expect(serialized).not.toContain("beta.txt");
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it("sends action cards as standard interactive messages", async () => {
     const hubCard = {
       schema: "2.0",
@@ -793,4 +853,21 @@ function createPendingAssetStoreDouble() {
       }) as BridgeAssetRecord,
     ),
   };
+}
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+  }).trim();
+}
+
+function extractAssistantVisiblePayload(apiClient: ReturnType<typeof createApiClientDouble>): string {
+  const cardCalls = apiClient.sendInteractiveCard.mock.calls as unknown[][];
+  const textCalls = apiClient.sendTextMessage.mock.calls as unknown[][];
+  const card = cardCalls[0]?.[1];
+  if (card) {
+    return JSON.stringify(card);
+  }
+
+  return typeof textCalls[0]?.[1] === "string" ? textCalls[0][1] : "";
 }

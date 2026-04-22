@@ -113,6 +113,7 @@
 83. 同一轮 desktop run 完成后，bridge 会优先把这张运行态卡原地更新成 `桌面任务已完成`，在同一张卡里直接展示“你最后说了什么”和 `Codex 最终返回了什么` 的正文内容，不再额外补发第二张“完整回复”卡或结果消息；`在飞书继续` 也只会出现在完成态
 84. 飞书侧用户可见的运行状态摘要仍然遵循“公开进度”模型：脚本执行细节不再以 `最近工具：<raw command>` 形式直接出现，而是保留结构化进度或必要时折叠为 `Ran N commands` 这类计数摘要；桌面生命周期卡本身则不再单独展示命令计数区块
 85. 桌面 lifecycle 轮询在判定通知来源时，现在不仅会压制“刚刚完成的 Feishu run 回声”，也会压制“当前仍在运行中的 Feishu run”；只要同一 native `thread_id` 上还有 live Feishu run，就不会再额外发出 `桌面任务进行中` 或 `桌面任务已完成` 卡，避免把飞书自己发起的任务误报成桌面任务
+86. 飞书侧 assistant 最终结果现在会在发送前解析并隐藏 Codex app 的顶层 `::git-*` directive 行；如果能从对应仓库状态里稳定解析出 git 变更，则会在正文末尾追加一条紧凑摘要，例如 `12 个文件已更改`，但不会暴露具体文件名或 `+/-` 行数统计
 
 ### 2.3 当前仍未打通的部分
 
@@ -301,6 +302,7 @@ Windows 停止入口模块。
 - 保留 CardKit 仅用于流式进度卡，不再把导航卡混入 CardKit/cardId 回写链路
 - 对普通对话 run 的终态保持“摘要卡 + 完整正文消息”分工，避免卡片和消息同时完整展示同一大段 assistant 结果
 - 对 assistant 终态正文里的 Markdown 做飞书适配：结构化内容优先走 JSON 2.0 Markdown 卡，超长内容再降级为去标记纯文本
+- 对 assistant 终态正文里的顶层 Codex app `::git-*` directive 做结构化解析：这些 directive 不再作为可见正文透出给飞书用户，而是转成可选的紧凑 git 变更摘要
 - 这套 assistant 正文渲染策略现在已抽到共享 helper，供普通 bridge reply 和桌面 completion notifier 复用，保证 Markdown 卡 / 纯文本回退行为一致
 
 ### 5.3 `src/bridge-service.ts`
@@ -1076,6 +1078,7 @@ channel + peer_id -> codex_thread_id
 17. `tests/desktop-completion-notifier.test.ts` 会校验桌面 lifecycle 投递器在 DM / 已绑定话题 / 项目群三种目标下的运行态卡创建、完成态原卡 patch、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及完成态正文直接内嵌在同一张卡里而不是额外补发第二条结果消息
 18. `tests/desktop-completion-dm-handoff.test.ts` 会用真实 `BridgeService` + `FeishuCardActionService` harness 校验 DM 通知卡主按钮 `continue_desktop_thread`：点击后会把 DM 绑定到目标 native thread、回调直接返回标准“当前会话”卡，且下一条普通 DM 文本会续跑同一线程
 19. `tests/runtime-desktop-completion-notifier.test.ts` 会校验 runtime 启动后真的开始轮询本地 rollout：首次 bootstrap watch state 时不会回放历史 run / completion，新的顶层 desktop run 会先创建一张运行态卡、在公开进展变化时 patch，并在真正 `task_complete` 后原地收口为完成态；如果旧 completion 之后又继续出现同一轮顶层公开进展，就必须优先维持进行中态；unchanged `completionKey` 不会重复推送，`sourceInfo.kind = subagent` 的子线程不会触发生命周期通知，近期飞书终态 run 对应的 desktop 回声也不会再额外发卡
+20. `tests/codex-app-directive.test.ts`、`tests/feishu-assistant-message.test.ts` 与 `tests/feishu-adapter.test.ts` 会共同锁定飞书 assistant 最终结果里的 Codex app git directive 渲染：顶层 `::git-*` 行必须被隐藏，Feishu-visible 结果应保留自然语言结论，并在可解析时补上一条 `N 个文件已更改` 的紧凑摘要，同时不暴露文件名或 `+/-` 统计
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 
