@@ -31,6 +31,76 @@ describe("runtime desktop completion notifier", () => {
     }
   });
 
+  it("creates one running card, patches it on progress updates, and then patches the same card into completion", async () => {
+    const harness = await createHarness(harnesses);
+
+    await harness.runtime.start();
+    await vi.waitFor(() => {
+      expect(harness.runtime.store.getCodexThreadWatchState("thread-native-1")).toBeDefined();
+    });
+
+    appendRunningProgress(harness.rolloutPath, {
+      startedAt: "2026-04-21T09:05:00.000Z",
+      turnId: "turn-1",
+      commentaryAt: "2026-04-21T09:05:01.000Z",
+      commentary: "Task 1 已 review 完，我现在补测试和文档。",
+      planAt: "2026-04-21T09:05:02.000Z",
+      plan: [
+        { step: "Task 1: Review implementation", status: "completed" },
+        { step: "Task 2: Add tests", status: "in_progress" },
+      ],
+      commandAt: "2026-04-21T09:05:03.000Z",
+    });
+
+    await vi.waitFor(() => {
+      expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledTimes(1);
+    });
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.apiClient.updateInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.runtime.store.getCodexThreadDesktopNotificationState("thread-native-1")).toMatchObject({
+      status: "running_notified",
+      activeRunKey: "thread-native-1:turn-1",
+      messageId: "msg-dm-card",
+      commandCount: 1,
+    });
+
+    appendRunningProgress(harness.rolloutPath, {
+      commentaryAt: "2026-04-21T09:05:10.000Z",
+      commentary: "测试已经补完，我现在同步文档。",
+      commandAt: "2026-04-21T09:05:11.000Z",
+    });
+
+    await vi.waitFor(() => {
+      expect(harness.apiClient.updateInteractiveCard).toHaveBeenCalledTimes(1);
+    });
+    expect(harness.runtime.store.getCodexThreadDesktopNotificationState("thread-native-1")).toMatchObject({
+      status: "running_notified",
+      commandCount: 2,
+      latestPublicMessage: "测试已经补完，我现在同步文档。",
+    });
+
+    appendCompletion(
+      harness.rolloutPath,
+      "2026-04-21T09:05:20.000Z",
+      "2026-04-21T09:05:21.000Z",
+      "Task 1 已完成，测试和文档也已同步。",
+    );
+
+    await vi.waitFor(() => {
+      expect(harness.apiClient.updateInteractiveCard).toHaveBeenCalledTimes(2);
+      expect(harness.apiClient.sendTextMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(harness.runtime.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
+      lastNotifiedCompletionKey: expect.stringContaining("thread-native-1:2026-04-21T09:05:21.000Z:"),
+    });
+    expect(harness.runtime.store.getCodexThreadDesktopNotificationState("thread-native-1")).toMatchObject({
+      status: "completed",
+      messageId: "msg-dm-card",
+      commandCount: 2,
+      lastCompletionKey: expect.stringContaining("thread-native-1:2026-04-21T09:05:21.000Z:"),
+    });
+  });
+
   it("bootstraps watch state, skips historical completions, and publishes only newly completed desktop turns", async () => {
     const harness = await createHarness(harnesses);
 
@@ -401,6 +471,37 @@ function appendCompletion(
   );
 }
 
+function appendRunningProgress(
+  rolloutPath: string,
+  input: {
+    startedAt?: string;
+    turnId?: string;
+    commentaryAt?: string;
+    commentary?: string;
+    planAt?: string;
+    plan?: Array<{ step: string; status: string }>;
+    commandAt?: string;
+  },
+): void {
+  const lines: string[] = [];
+  if (input.startedAt) {
+    lines.push(buildTaskStartedLine(input.startedAt, input.turnId ?? "turn-runtime"));
+  }
+  if (input.commentaryAt && input.commentary) {
+    lines.push(buildAgentMessageLine(input.commentaryAt, input.commentary));
+  }
+  if (input.planAt && input.plan) {
+    lines.push(buildUpdatePlanLine(input.planAt, input.plan));
+  }
+  if (input.commandAt) {
+    lines.push(buildShellCommandLine(input.commandAt));
+  }
+
+  if (lines.length > 0) {
+    appendFileSync(rolloutPath, `${lines.join("\n")}\n`, "utf8");
+  }
+}
+
 function buildSessionMetaLine(threadId: string, source = "desktop"): string {
   return JSON.stringify({
     timestamp: "2026-04-21T08:50:00.000Z",
@@ -439,6 +540,56 @@ function buildTaskCompleteLine(timestamp: string): string {
     type: "event_msg",
     payload: {
       type: "task_complete",
+    },
+  });
+}
+
+function buildTaskStartedLine(timestamp: string, turnId: string): string {
+  return JSON.stringify({
+    timestamp,
+    type: "event_msg",
+    payload: {
+      type: "task_started",
+      turn_id: turnId,
+    },
+  });
+}
+
+function buildAgentMessageLine(timestamp: string, message: string): string {
+  return JSON.stringify({
+    timestamp,
+    type: "event_msg",
+    payload: {
+      type: "agent_message",
+      message,
+      phase: "commentary",
+    },
+  });
+}
+
+function buildUpdatePlanLine(
+  timestamp: string,
+  plan: Array<{ step: string; status: string }>,
+): string {
+  return JSON.stringify({
+    timestamp,
+    type: "response_item",
+    payload: {
+      type: "function_call",
+      name: "update_plan",
+      arguments: JSON.stringify({ plan }),
+    },
+  });
+}
+
+function buildShellCommandLine(timestamp: string): string {
+  return JSON.stringify({
+    timestamp,
+    type: "response_item",
+    payload: {
+      type: "function_call",
+      name: "shell_command",
+      arguments: JSON.stringify({ command: "npm test -- tests/runtime.test.ts" }),
     },
   });
 }

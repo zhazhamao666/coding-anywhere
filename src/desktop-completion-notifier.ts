@@ -201,7 +201,8 @@ export class DesktopCompletionNotifier {
       this.dependencies.codexCatalog?.listRecentConversation(input.completion.threadId, 8) ?? [],
     );
     const existingState = this.dependencies.store.getCodexThreadDesktopNotificationState(input.completion.threadId);
-    const target = existingState ? resolveFrozenTarget(existingState) : input.target;
+    const patchableState = existingState?.status === "running_notified" ? existingState : undefined;
+    const target = patchableState ? resolveFrozenTarget(patchableState) : input.target;
     if (!target) {
       throw new Error("FEISHU_DESKTOP_COMPLETION_TARGET_REQUIRED");
     }
@@ -214,15 +215,15 @@ export class DesktopCompletionNotifier {
       completedAt: input.completion.completedAt,
       summaryLines: buildSummaryLines(resultText),
       reminderText,
-      planTodos: input.progress?.planTodos ?? existingState?.planTodos ?? undefined,
-      commandCount: input.progress?.commandCount ?? existingState?.commandCount ?? 0,
+      planTodos: input.progress?.planTodos ?? patchableState?.planTodos ?? undefined,
+      commandCount: input.progress?.commandCount ?? patchableState?.commandCount ?? 0,
       threadId: input.completion.threadId,
     });
 
-    let messageId = existingState?.messageId ?? null;
-    if (existingState?.messageId) {
+    let messageId = patchableState?.messageId ?? null;
+    if (patchableState?.messageId) {
       try {
-        await this.dependencies.apiClient.updateInteractiveCard(existingState.messageId, card);
+        await this.dependencies.apiClient.updateInteractiveCard(patchableState.messageId, card);
       } catch {
         messageId = await this.sendNotification(target, card);
       }
@@ -230,7 +231,7 @@ export class DesktopCompletionNotifier {
       messageId = await this.sendNotification(target, card);
     }
 
-    const resultAnchor = resolveResultAnchor(existingState, target, messageId);
+    const resultAnchor = resolveResultAnchor(patchableState, target, messageId);
     const delivery = resolveFeishuAssistantMessageDelivery(resultText);
     if (delivery.kind === "card") {
       await this.sendCardResult(target, resultAnchor, delivery.card);
@@ -244,9 +245,9 @@ export class DesktopCompletionNotifier {
     });
     this.dependencies.store.upsertCodexThreadDesktopNotificationState({
       threadId: input.completion.threadId,
-      activeRunKey: input.progress?.runKey ?? existingState?.activeRunKey ?? null,
+      activeRunKey: input.progress?.runKey ?? patchableState?.activeRunKey ?? null,
       status: "completed",
-      startedAt: input.progress?.startedAt ?? existingState?.startedAt ?? null,
+      startedAt: input.progress?.startedAt ?? patchableState?.startedAt ?? null,
       lastEventAt: input.completion.completedAt,
       messageId,
       deliveryMode: target.mode,
@@ -255,9 +256,9 @@ export class DesktopCompletionNotifier {
       surfaceType: target.mode === "thread" ? "thread" : null,
       surfaceRef: target.mode === "thread" ? target.surfaceRef : null,
       anchorMessageId: target.mode === "thread" ? target.anchorMessageId : null,
-      latestPublicMessage: input.progress?.latestPublicMessage ?? existingState?.latestPublicMessage ?? null,
-      planTodos: input.progress?.planTodos ?? existingState?.planTodos ?? null,
-      commandCount: input.progress?.commandCount ?? existingState?.commandCount ?? 0,
+      latestPublicMessage: input.progress?.latestPublicMessage ?? patchableState?.latestPublicMessage ?? null,
+      planTodos: input.progress?.planTodos ?? patchableState?.planTodos ?? null,
+      commandCount: input.progress?.commandCount ?? patchableState?.commandCount ?? 0,
       lastRenderHash: buildDesktopNotificationRenderHash({
         status: "completed",
         completion: input.completion,

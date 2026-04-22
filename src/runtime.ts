@@ -6,7 +6,10 @@ import type { Logger } from "pino";
 import { buildApp } from "./app.js";
 import { BridgeService } from "./bridge-service.js";
 import { CodexCliRunner } from "./codex-cli-runner.js";
-import { observeCodexDesktopCompletion } from "./codex-desktop-completion-observer.js";
+import {
+  observeCodexDesktopLifecycle,
+  type CodexDesktopProgressSnapshot,
+} from "./codex-desktop-completion-observer.js";
 import { resolveCodexPreferenceCatalog } from "./codex-preferences.js";
 import { CodexSqliteCatalog } from "./codex-sqlite-catalog.js";
 import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
@@ -26,6 +29,7 @@ import type {
   CodexCatalogConversationItem,
   CodexCatalogProject,
   CodexCatalogThread,
+  CodexThreadDesktopNotificationStateRecord,
 } from "./types.js";
 import { SessionStore } from "./workspace/session-store.js";
 
@@ -252,7 +256,7 @@ export async function pollDesktopCompletionNotifications(input: {
   store: SessionStore;
   codexCatalog?: CodexCatalogLike;
   bridgeService: Pick<BridgeService, "resolveDesktopCompletionRoute">;
-  notifier: Pick<DesktopCompletionNotifier, "publish">;
+  notifier: Pick<DesktopCompletionNotifier, "publishRunning" | "updateRunning" | "publishCompletion">;
   allowlist: string[];
   desktopOwnerOpenId?: string;
 }): Promise<void> {
@@ -268,7 +272,7 @@ export async function pollDesktopCompletionNotifications(input: {
     const rolloutMtime = statSync(thread.rolloutPath).mtime.toISOString();
     const existingState = input.store.getCodexThreadWatchState(thread.threadId);
     if (!existingState || existingState.rolloutPath !== thread.rolloutPath) {
-      const bootstrap = observeCodexDesktopCompletion({
+      const bootstrap = observeCodexDesktopLifecycle({
         threadId: thread.threadId,
         rolloutPath: thread.rolloutPath,
         offset: 0,
@@ -284,10 +288,12 @@ export async function pollDesktopCompletionNotifications(input: {
       continue;
     }
 
-    const observed = observeCodexDesktopCompletion({
+    const notificationState = input.store.getCodexThreadDesktopNotificationState(thread.threadId);
+    const observed = observeCodexDesktopLifecycle({
       threadId: thread.threadId,
       rolloutPath: thread.rolloutPath,
       offset: existingState.lastReadOffset,
+      activeSnapshot: buildActiveDesktopProgressSnapshot(notificationState),
     });
     input.store.upsertCodexThreadWatchState({
       threadId: thread.threadId,
@@ -301,31 +307,79 @@ export async function pollDesktopCompletionNotifications(input: {
         : {}),
     });
 
-    if (!observed.completion || observed.completion.completionKey === existingState.lastNotifiedCompletionKey) {
-      continue;
-    }
+    const hasActiveRunningState = notificationState?.status === "running_notified" &&
+      notificationState.activeRunKey &&
+      notificationState.messageId;
+    const isSameActiveRun = Boolean(
+      observed.progressSnapshot &&
+      hasActiveRunningState &&
+      observed.progressSnapshot.runKey === notificationState.activeRunKey,
+    );
+    const isNewRun = Boolean(
+      observed.progressSnapshot &&
+      (!notificationState?.activeRunKey || observed.progressSnapshot.runKey !== notificationState.activeRunKey),
+    );
 
-    if (shouldSuppressDesktopCompletionForRecentFeishuRun({
-      store: input.store,
-      threadId: thread.threadId,
-      completedAt: observed.completion.completedAt,
-    })) {
-      input.store.upsertCodexThreadWatchState({
+    if (observed.completion && observed.completion.completionKey !== existingState.lastNotifiedCompletionKey) {
+      if (!hasActiveRunningState && shouldSuppressDesktopLifecycleForRecentFeishuRun({
+        store: input.store,
         threadId: thread.threadId,
-        lastNotifiedCompletionKey: observed.completion.completionKey,
+        eventAt: observed.completion.completedAt,
+      })) {
+        input.store.upsertCodexThreadWatchState({
+          threadId: thread.threadId,
+          lastNotifiedCompletionKey: observed.completion.completionKey,
+        });
+        continue;
+      }
+
+      const routeTarget = hasActiveRunningState
+        ? undefined
+        : normalizeDesktopCompletionDeliveryTarget(input.bridgeService.resolveDesktopCompletionRoute({
+          threadId: thread.threadId,
+          allowlist: input.allowlist,
+          desktopOwnerOpenId: input.desktopOwnerOpenId,
+        }));
+      await input.notifier.publishCompletion({
+        completion: observed.completion,
+        progress: observed.progressSnapshot,
+        ...(routeTarget ? { target: routeTarget } : {}),
       });
       continue;
     }
 
-    const routeTarget = input.bridgeService.resolveDesktopCompletionRoute({
-      threadId: thread.threadId,
-      allowlist: input.allowlist,
-      desktopOwnerOpenId: input.desktopOwnerOpenId,
-    });
-    await input.notifier.publish({
-      completion: observed.completion,
-      target: normalizeDesktopCompletionDeliveryTarget(routeTarget),
-    });
+    if (!observed.progressSnapshot) {
+      continue;
+    }
+
+    if (isNewRun) {
+      if (shouldSuppressDesktopLifecycleForRecentFeishuRun({
+        store: input.store,
+        threadId: thread.threadId,
+        eventAt: observed.progressSnapshot.startedAt,
+      })) {
+        continue;
+      }
+
+      const routeTarget = input.bridgeService.resolveDesktopCompletionRoute({
+        threadId: thread.threadId,
+        allowlist: input.allowlist,
+        desktopOwnerOpenId: input.desktopOwnerOpenId,
+      });
+      await input.notifier.publishRunning({
+        threadId: thread.threadId,
+        progress: observed.progressSnapshot,
+        target: normalizeDesktopCompletionDeliveryTarget(routeTarget),
+      });
+      continue;
+    }
+
+    if (isSameActiveRun && didDesktopProgressSnapshotChange(notificationState, observed.progressSnapshot)) {
+      await input.notifier.updateRunning({
+        threadId: thread.threadId,
+        progress: observed.progressSnapshot,
+      });
+    }
   }
 }
 
@@ -428,12 +482,12 @@ function listObservedCodexThreads(codexCatalog: CodexCatalogLike): CodexCatalogT
   return [...threadsById.values()].sort((left, right) => left.threadId.localeCompare(right.threadId));
 }
 
-function shouldSuppressDesktopCompletionForRecentFeishuRun(input: {
+function shouldSuppressDesktopLifecycleForRecentFeishuRun(input: {
   store: SessionStore;
   threadId: string;
-  completedAt: string;
+  eventAt: string;
 }): boolean {
-  const completionMs = Date.parse(input.completedAt);
+  const completionMs = Date.parse(input.eventAt);
   if (!Number.isFinite(completionMs)) {
     return false;
   }
@@ -454,6 +508,37 @@ function shouldSuppressDesktopCompletionForRecentFeishuRun(input: {
   }
 
   return false;
+}
+
+function buildActiveDesktopProgressSnapshot(
+  state: CodexThreadDesktopNotificationStateRecord | undefined,
+): CodexDesktopProgressSnapshot | undefined {
+  if (!state || state.status !== "running_notified" || !state.activeRunKey || !state.startedAt || !state.lastEventAt) {
+    return undefined;
+  }
+
+  return {
+    runKey: state.activeRunKey,
+    startedAt: state.startedAt,
+    lastEventAt: state.lastEventAt,
+    latestPublicMessage: state.latestPublicMessage ?? undefined,
+    planTodos: state.planTodos ?? undefined,
+    commandCount: state.commandCount ?? 0,
+  };
+}
+
+function didDesktopProgressSnapshotChange(
+  state: CodexThreadDesktopNotificationStateRecord | undefined,
+  nextSnapshot: CodexDesktopProgressSnapshot,
+): boolean {
+  if (!state) {
+    return true;
+  }
+
+  return state.lastEventAt !== nextSnapshot.lastEventAt ||
+    state.latestPublicMessage !== (nextSnapshot.latestPublicMessage ?? null) ||
+    state.commandCount !== nextSnapshot.commandCount ||
+    JSON.stringify(state.planTodos ?? null) !== JSON.stringify(nextSnapshot.planTodos ?? null);
 }
 
 function isTerminalRunStatus(status: string): boolean {

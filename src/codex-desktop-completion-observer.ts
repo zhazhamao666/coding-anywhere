@@ -390,13 +390,15 @@ function extractPlanTodos(parsed: any): PlanTodoItem[] | undefined {
   }
 
   const argumentsPayload = parseFunctionArguments(parsed?.payload?.arguments);
-  const plan = Array.isArray(argumentsPayload?.plan) ? argumentsPayload.plan : undefined;
+  const plan = Array.isArray(argumentsPayload?.plan)
+    ? argumentsPayload.plan as Array<Record<string, unknown>>
+    : undefined;
   if (!plan) {
     return undefined;
   }
 
   return plan
-    .map(item => {
+    .map((item: Record<string, unknown>) => {
       const step = typeof item?.step === "string" ? item.step.trim() : "";
       if (!step) {
         return undefined;
@@ -407,7 +409,7 @@ function extractPlanTodos(parsed: any): PlanTodoItem[] | undefined {
         completed: typeof item?.status === "string" && item.status === "completed",
       } satisfies PlanTodoItem;
     })
-    .filter((item): item is PlanTodoItem => Boolean(item));
+    .filter((item: PlanTodoItem | undefined): item is PlanTodoItem => Boolean(item));
 }
 
 function isShellCommandFunctionCall(parsed: any): boolean {
