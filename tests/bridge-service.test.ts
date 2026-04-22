@@ -687,8 +687,9 @@ describe("BridgeService", () => {
         expect.objectContaining({
           stage: "tool_call",
           status: "tool_active",
-          latestTool: "npm test",
-          preview: "[ca] tool_call: npm test",
+          latestTool: "command_execution",
+          commandCount: 1,
+          preview: "Ran 1 command",
         }),
       ]),
     );
@@ -2525,7 +2526,7 @@ describe("BridgeService", () => {
 
 function createRunnerDouble(
   events: RunnerEvent[] = [
-    { type: "tool_call", toolName: "npm test", content: "npm test" },
+    { type: "tool_call", toolName: "command_execution", content: "command_execution" },
     { type: "text", content: "测试已经执行完成" },
     { type: "done", content: "测试已经执行完成" },
   ],

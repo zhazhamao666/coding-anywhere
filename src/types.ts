@@ -353,6 +353,8 @@ export interface ProgressCardState {
   status: ProgressStatus;
   stage: ProgressStage;
   latestTool?: string;
+  latestPublicMessage?: string;
+  commandCount?: number;
   preview: string;
   planTodos?: PlanTodoItem[];
   planInteraction?: PendingPlanInteractionRecord;

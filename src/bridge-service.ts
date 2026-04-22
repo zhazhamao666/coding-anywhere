@@ -3298,7 +3298,6 @@ export class BridgeService {
     if (currentRun.speed) {
       items.push(`速度：${getCodexSpeedLabel(currentRun.speed)}`);
     }
-    items.push(`最近工具：${currentRun.latestTool ?? "无"}`);
     items.push(`摘要：${normalizeMarkdownToPlainText(currentRun.latestPreview)}`);
     return items;
   }

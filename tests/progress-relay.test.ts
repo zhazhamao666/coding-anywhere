@@ -36,6 +36,8 @@ describe("progress relay reducer", () => {
     expect(next.status).toBe("tool_active");
     expect(next.stage).toBe("tool_call");
     expect(next.latestTool).toBe("npm test");
-    expect(next.preview).toBe("[ca] tool_call: npm test");
+    expect(next.commandCount).toBe(1);
+    expect(next.preview).toBe("Ran 1 command");
+    expect(next.preview).not.toContain("npm test");
   });
 });

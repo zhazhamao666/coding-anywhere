@@ -406,8 +406,8 @@ function parseCodexExecLine(line: string): { event?: RunnerEvent; threadId?: str
         return {
           event: {
             type: "tool_call",
-            toolName: parsed.item.command ?? "command_execution",
-            content: parsed.item.command ?? "command_execution",
+            toolName: "command_execution",
+            content: "command_execution",
           },
         };
       }
@@ -425,8 +425,8 @@ function parseCodexExecLine(line: string): { event?: RunnerEvent; threadId?: str
         return {
           event: {
             type: "tool_call",
-            toolName: parsed.item.tool ?? "collab_tool_call",
-            content: parsed.item.tool ?? "collab_tool_call",
+            toolName: "collab_tool_call",
+            content: "collab_tool_call",
           },
         };
       }

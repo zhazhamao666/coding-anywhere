@@ -90,16 +90,18 @@ describe("feishu card builder", () => {
       reasoningEffort: "xhigh",
       speed: "fast",
       latestTool: "npm test",
+      commandCount: 3,
       preview: "**明确待办**\n- 清理旧包",
     }));
 
     expect(markdown).toContain("工具执行中");
-    expect(markdown).toContain("npm test");
+    expect(markdown).toContain("Ran 3 commands");
     expect(markdown).toContain("codex-main");
     expect(markdown).toContain("GPT-5.4");
     expect(markdown).toContain("超高");
     expect(markdown).toContain("快速");
     expect(markdown).toContain("明确待办");
+    expect(markdown).not.toContain("npm test");
     expect(markdown).not.toContain("**明确待办**");
   });
 

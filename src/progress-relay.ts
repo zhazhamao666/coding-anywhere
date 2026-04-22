@@ -30,6 +30,7 @@ export function createProgressCardState(input: {
     status: "queued",
     stage: "received",
     preview: "[ca] received",
+    commandCount: 0,
     startedAt: Date.now(),
     elapsedMs: 0,
   };
@@ -96,20 +97,24 @@ export function reduceProgressEvent(
   }
 
   switch (event.type) {
-    case "tool_call":
+    case "tool_call": {
+      const nextCommandCount = (state.commandCount ?? 0) + 1;
       return {
         ...state,
         stage: "tool_call",
         status: "tool_active",
         latestTool: event.toolName,
-        preview: `[ca] tool_call: ${event.toolName}`,
+        commandCount: nextCommandCount,
+        preview: formatCommandCountText(nextCommandCount),
         elapsedMs: nextElapsedMs,
       };
+    }
     case "text":
       return {
         ...state,
         stage: "text",
         status: "running",
+        latestPublicMessage: event.content,
         preview: event.content,
         elapsedMs: nextElapsedMs,
       };
@@ -118,6 +123,7 @@ export function reduceProgressEvent(
         ...state,
         stage: "waiting",
         status: "waiting",
+        latestPublicMessage: event.content ?? state.latestPublicMessage,
         preview: event.content ? `[ca] waiting: ${event.content}` : "[ca] waiting",
         planTodos: event.planTodos ?? state.planTodos,
         elapsedMs: nextElapsedMs,
@@ -139,4 +145,8 @@ export function reduceProgressEvent(
         elapsedMs: nextElapsedMs,
       };
   }
+}
+
+function formatCommandCountText(commandCount: number): string {
+  return commandCount === 1 ? "Ran 1 command" : `Ran ${commandCount} commands`;
 }

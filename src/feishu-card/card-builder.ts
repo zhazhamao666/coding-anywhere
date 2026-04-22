@@ -53,10 +53,13 @@ export function buildStreamingCardMarkdown(state: ProgressCardState): string {
   if (state.speed) {
     lines.push(`**速度**：${getCodexSpeedLabel(state.speed)}`);
   }
-  if (state.latestTool) {
-    lines.push(`**最近工具**：${state.latestTool}`);
+  if ((state.commandCount ?? 0) > 0) {
+    lines.push(`**进度**：${formatCommandCountText(state.commandCount ?? 0)}`);
   }
-  lines.push("", formatPreviewForCard(state));
+  const previewText = formatPreviewForCard(state);
+  if (previewText) {
+    lines.push("", previewText);
+  }
 
   return lines.join("\n");
 }
@@ -350,11 +353,16 @@ function buildCardSummary(state: ProgressCardState): string {
 }
 
 function formatPreviewForCard(state: ProgressCardState): string {
-  if (state.status !== "done") {
-    return normalizeMarkdownToPlainText(state.preview);
+  const normalizedPreview = normalizeMarkdownToPlainText(state.preview);
+  if ((state.commandCount ?? 0) > 0 && normalizedPreview.trim() === formatCommandCountText(state.commandCount ?? 0)) {
+    return "";
   }
 
-  const excerpt = summarizeTerminalPreview(normalizeMarkdownToPlainText(state.preview));
+  if (state.status !== "done") {
+    return normalizedPreview;
+  }
+
+  const excerpt = summarizeTerminalPreview(normalizedPreview);
   if (!excerpt) {
     return "完整回复请查看下方消息";
   }
@@ -391,6 +399,10 @@ function buildTodoMarkdown(items: PlanTodoItem[]): string {
     "**计划清单**",
     ...items.map(item => `- ${item.completed ? "[x]" : "[ ]"} ${item.text}`),
   ].join("\n");
+}
+
+function formatCommandCountText(commandCount: number): string {
+  return commandCount === 1 ? "Ran 1 command" : `Ran ${commandCount} commands`;
 }
 
 function buildStopButtonElements(state: ProgressCardState): Array<Record<string, unknown>> {

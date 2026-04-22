@@ -89,8 +89,8 @@ describe("CodexCliRunner", () => {
     expect(seenEvents).toEqual([
       expect.objectContaining({
         type: "tool_call",
-        toolName: expect.stringContaining("Get-Content"),
-        content: expect.stringContaining("Get-Content"),
+        toolName: "command_execution",
+        content: "command_execution",
       }),
       { type: "text", content: "OK" },
       { type: "done", content: "OK" },
@@ -325,19 +325,19 @@ describe("CodexCliRunner", () => {
     expect(seenEvents).toEqual([
       expect.objectContaining({
         type: "tool_call",
-        toolName: expect.stringContaining("git status --short"),
-        content: expect.stringContaining("git status --short"),
+        toolName: "command_execution",
+        content: "command_execution",
       }),
-      { type: "text", content: "RESUMED" },
+      { type: "text", content: "RESUMED", planInteraction: undefined },
       { type: "done", content: "RESUMED" },
     ]);
     expect(outcome.events).toEqual([
       expect.objectContaining({
         type: "tool_call",
-        toolName: expect.stringContaining("git status --short"),
-        content: expect.stringContaining("git status --short"),
+        toolName: "command_execution",
+        content: "command_execution",
       }),
-      { type: "text", content: "RESUMED" },
+      { type: "text", content: "RESUMED", planInteraction: undefined },
       { type: "done", content: "RESUMED" },
     ]);
   });
@@ -527,12 +527,12 @@ describe("CodexCliRunner", () => {
     );
 
     expect(seenEvents).toEqual([
-      { type: "tool_call", toolName: "npm test", content: "npm test" },
+      { type: "tool_call", toolName: "command_execution", content: "command_execution" },
       { type: "error", content: "npm ERR! Test failed" },
       { type: "done", content: undefined },
     ]);
     expect(outcome.events).toEqual([
-      { type: "tool_call", toolName: "npm test", content: "npm test" },
+      { type: "tool_call", toolName: "command_execution", content: "command_execution" },
       { type: "error", content: "npm ERR! Test failed" },
       { type: "done", content: undefined },
     ]);
@@ -649,17 +649,18 @@ describe("CodexCliRunner", () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: "tool_call",
-          toolName: expect.stringContaining("spawn_agent"),
-          content: expect.stringContaining("spawn_agent"),
+          toolName: "collab_tool_call",
+          content: "collab_tool_call",
         }),
         expect.objectContaining({
           type: "tool_call",
-          toolName: expect.stringContaining("wait"),
-          content: expect.stringContaining("wait"),
+          toolName: "collab_tool_call",
+          content: "collab_tool_call",
         }),
         {
           type: "text",
           content: "subagent-fixture",
+          planInteraction: undefined,
         },
         {
           type: "done",
