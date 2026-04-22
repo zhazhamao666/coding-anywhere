@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 
+import { normalizeMarkdownToPlainText } from "./markdown-text.js";
+import type { PlanTodoItem } from "./types.js";
+
 export interface CodexDesktopCompletionEvent {
   threadId: string;
   completedAt: string;
@@ -8,8 +11,23 @@ export interface CodexDesktopCompletionEvent {
   completionKey: string;
 }
 
+export interface CodexDesktopProgressSnapshot {
+  runKey: string;
+  startedAt: string;
+  lastEventAt: string;
+  latestPublicMessage?: string;
+  planTodos?: PlanTodoItem[];
+  commandCount: number;
+}
+
 export interface CodexRolloutAppendResult {
   lines: string[];
+  nextOffset: number;
+}
+
+export interface ObserveCodexDesktopLifecycleResult {
+  progressSnapshot: CodexDesktopProgressSnapshot | undefined;
+  completion: CodexDesktopCompletionEvent | undefined;
   nextOffset: number;
 }
 
@@ -83,11 +101,26 @@ export function observeCodexDesktopCompletion(input: {
   rolloutPath: string;
   offset?: number;
 }): ObserveCodexDesktopCompletionResult {
+  const observed = observeCodexDesktopLifecycle(input);
+
+  return {
+    completion: observed.completion,
+    nextOffset: observed.nextOffset,
+  };
+}
+
+export function observeCodexDesktopLifecycle(input: {
+  threadId: string;
+  rolloutPath: string;
+  offset?: number;
+  activeSnapshot?: CodexDesktopProgressSnapshot;
+}): ObserveCodexDesktopLifecycleResult {
   const readResult = readCodexRolloutRecords(input.rolloutPath, input.offset ?? 0);
   let pendingFinalAssistant: {
     text: string;
     startOffset: number;
   } | undefined;
+  let progressSnapshot = cloneProgressSnapshot(input.activeSnapshot);
   let latestCompletion: {
     completedAt: string;
     finalAssistantText: string;
@@ -97,6 +130,41 @@ export function observeCodexDesktopCompletion(input: {
     const parsed = parseJsonLine(record.line);
     if (!parsed) {
       continue;
+    }
+
+    if (isTaskStartedEvent(parsed)) {
+      const startedAt = resolveRecordTimestamp(parsed);
+      progressSnapshot = {
+        runKey: buildCodexDesktopRunKey(
+          input.threadId,
+          startedAt,
+          typeof parsed?.payload?.turn_id === "string" ? parsed.payload.turn_id : undefined,
+        ),
+        startedAt,
+        lastEventAt: startedAt,
+        commandCount: 0,
+      };
+      pendingFinalAssistant = undefined;
+      continue;
+    }
+
+    if (progressSnapshot) {
+      const publicMessage = extractPublicProgressMessage(parsed);
+      if (publicMessage) {
+        progressSnapshot.latestPublicMessage = publicMessage;
+        progressSnapshot.lastEventAt = resolveRecordTimestamp(parsed);
+      }
+
+      const planTodos = extractPlanTodos(parsed);
+      if (planTodos) {
+        progressSnapshot.planTodos = planTodos;
+        progressSnapshot.lastEventAt = resolveRecordTimestamp(parsed);
+      }
+
+      if (isShellCommandFunctionCall(parsed)) {
+        progressSnapshot.commandCount += 1;
+        progressSnapshot.lastEventAt = resolveRecordTimestamp(parsed);
+      }
     }
 
     if (isFinalAssistantMessage(parsed)) {
@@ -115,12 +183,16 @@ export function observeCodexDesktopCompletion(input: {
       completedAt: typeof parsed.timestamp === "string" ? parsed.timestamp : new Date(0).toISOString(),
       finalAssistantText: pendingFinalAssistant.text,
     };
+    if (progressSnapshot) {
+      progressSnapshot.lastEventAt = latestCompletion.completedAt;
+    }
     pendingFinalAssistant = undefined;
   }
 
   const nextOffset = pendingFinalAssistant?.startOffset ?? readResult.nextOffset;
 
   return {
+    progressSnapshot,
     completion: latestCompletion
       ? {
           threadId: input.threadId,
@@ -135,6 +207,19 @@ export function observeCodexDesktopCompletion(input: {
       : undefined,
     nextOffset,
   };
+}
+
+export function buildCodexDesktopRunKey(
+  threadId: string,
+  startedAt: string,
+  turnId?: string,
+): string {
+  const normalizedTurnId = turnId?.trim();
+  if (normalizedTurnId) {
+    return `${threadId}:${normalizedTurnId}`;
+  }
+
+  return `${threadId}:${startedAt}`;
 }
 
 export function buildCodexDesktopCompletionKey(
@@ -261,6 +346,10 @@ function isTaskCompleteEvent(parsed: any): boolean {
   return parsed?.type === "event_msg" && parsed?.payload?.type === "task_complete";
 }
 
+function isTaskStartedEvent(parsed: any): boolean {
+  return parsed?.type === "event_msg" && parsed?.payload?.type === "task_started";
+}
+
 function extractAssistantText(content: unknown): string {
   if (!Array.isArray(content)) {
     return "";
@@ -278,6 +367,82 @@ function extractAssistantText(content: unknown): string {
     .filter(Boolean)
     .join("\n")
     .trim();
+}
+
+function extractPublicProgressMessage(parsed: any): string | undefined {
+  if (parsed?.type !== "event_msg" || parsed?.payload?.type !== "agent_message") {
+    return undefined;
+  }
+
+  const message = typeof parsed?.payload?.message === "string" ? parsed.payload.message : "";
+  const normalized = normalizeMarkdownToPlainText(message)
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return normalized || undefined;
+}
+
+function extractPlanTodos(parsed: any): PlanTodoItem[] | undefined {
+  if (parsed?.type !== "response_item" ||
+    parsed?.payload?.type !== "function_call" ||
+    parsed?.payload?.name !== "update_plan") {
+    return undefined;
+  }
+
+  const argumentsPayload = parseFunctionArguments(parsed?.payload?.arguments);
+  const plan = Array.isArray(argumentsPayload?.plan) ? argumentsPayload.plan : undefined;
+  if (!plan) {
+    return undefined;
+  }
+
+  return plan
+    .map(item => {
+      const step = typeof item?.step === "string" ? item.step.trim() : "";
+      if (!step) {
+        return undefined;
+      }
+
+      return {
+        text: step,
+        completed: typeof item?.status === "string" && item.status === "completed",
+      } satisfies PlanTodoItem;
+    })
+    .filter((item): item is PlanTodoItem => Boolean(item));
+}
+
+function isShellCommandFunctionCall(parsed: any): boolean {
+  return parsed?.type === "response_item" &&
+    parsed?.payload?.type === "function_call" &&
+    parsed?.payload?.name === "shell_command";
+}
+
+function parseFunctionArguments(argumentsPayload: unknown): any {
+  if (typeof argumentsPayload === "string") {
+    return parseJsonLine(argumentsPayload);
+  }
+
+  if (argumentsPayload && typeof argumentsPayload === "object") {
+    return argumentsPayload;
+  }
+
+  return undefined;
+}
+
+function resolveRecordTimestamp(parsed: any): string {
+  return typeof parsed?.timestamp === "string" ? parsed.timestamp : new Date(0).toISOString();
+}
+
+function cloneProgressSnapshot(
+  snapshot: CodexDesktopProgressSnapshot | undefined,
+): CodexDesktopProgressSnapshot | undefined {
+  if (!snapshot) {
+    return undefined;
+  }
+
+  return {
+    ...snapshot,
+    planTodos: snapshot.planTodos ? snapshot.planTodos.map(item => ({ ...item })) : undefined,
+  };
 }
 
 function decodeCodexJsonlLine(buffer: Buffer): string {
