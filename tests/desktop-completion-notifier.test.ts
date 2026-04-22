@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { CodexDesktopCompletionEvent } from "../src/codex-desktop-completion-observer.js";
+import type {
+  CodexDesktopCompletionEvent,
+  CodexDesktopProgressSnapshot,
+} from "../src/codex-desktop-completion-observer.js";
 import { DesktopCompletionNotifier } from "../src/desktop-completion-notifier.js";
 import { SessionStore } from "../src/workspace/session-store.js";
 
@@ -58,6 +61,113 @@ describe("DesktopCompletionNotifier", () => {
     );
     expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
       lastNotifiedCompletionKey: "thread-native-1:completion-new",
+    });
+  });
+
+  it("creates a running DM card, stores the frozen route, and does not advance the completion key yet", async () => {
+    const harness = createHarness(harnesses);
+    seedWatchState(harness.store, {
+      threadId: "thread-native-1",
+      lastNotifiedCompletionKey: "thread-native-1:notified-old",
+    });
+
+    await harness.notifier.publishRunning({
+      threadId: "thread-native-1",
+      progress: createProgressSnapshot(),
+      target: {
+        mode: "dm",
+        peerId: "ou_demo",
+      },
+    });
+
+    expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledWith(
+      "ou_demo",
+      expect.objectContaining({
+        header: expect.objectContaining({
+          title: expect.objectContaining({
+            content: "桌面任务进行中",
+          }),
+        }),
+      }),
+    );
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
+      lastNotifiedCompletionKey: "thread-native-1:notified-old",
+    });
+    expect(harness.store.getCodexThreadDesktopNotificationState("thread-native-1")).toMatchObject({
+      threadId: "thread-native-1",
+      activeRunKey: "thread-native-1:turn-1",
+      status: "running_notified",
+      messageId: "om_dm_card_1",
+      deliveryMode: "dm",
+      peerId: "ou_demo",
+      latestPublicMessage: "Task 1 已 review 完，我现在补测试和文档。",
+      planTodos: [
+        { text: "Task 1: Review implementation", completed: true },
+        { text: "Task 2: Add tests", completed: false },
+      ],
+      commandCount: 3,
+    });
+  });
+
+  it("patches an existing running card into a completed card and then sends the final result", async () => {
+    const harness = createHarness(harnesses);
+    seedWatchState(harness.store, {
+      threadId: "thread-native-1",
+      lastNotifiedCompletionKey: "thread-native-1:notified-old",
+    });
+    harness.store.upsertCodexThreadDesktopNotificationState({
+      threadId: "thread-native-1",
+      activeRunKey: "thread-native-1:turn-1",
+      status: "running_notified",
+      startedAt: "2026-04-22T10:00:00.000Z",
+      lastEventAt: "2026-04-22T10:00:06.000Z",
+      messageId: "om_running_1",
+      deliveryMode: "dm",
+      peerId: "ou_demo",
+      latestPublicMessage: "Task 1 已 review 完，我现在补测试和文档。",
+      planTodos: [
+        { text: "Task 1: Review implementation", completed: true },
+        { text: "Task 2: Add tests", completed: false },
+      ],
+      commandCount: 3,
+      lastRenderHash: "render-1",
+    });
+
+    await harness.notifier.publishCompletion({
+      completion: createCompletion({
+        finalAssistantText: "Task 1 已完成，测试和文档也已同步。",
+      }),
+      progress: createProgressSnapshot({
+        commandCount: 4,
+        latestPublicMessage: "Task 1 已完成，我现在准备收尾。",
+      }),
+    });
+
+    expect(harness.apiClient.updateInteractiveCard).toHaveBeenCalledWith(
+      "om_running_1",
+      expect.objectContaining({
+        header: expect.objectContaining({
+          title: expect.objectContaining({
+            content: "桌面任务已完成",
+          }),
+        }),
+      }),
+    );
+    expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith(
+      "ou_demo",
+      "Task 1 已完成，测试和文档也已同步。",
+    );
+    expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
+      lastNotifiedCompletionKey: "thread-native-1:completion-new",
+    });
+    expect(harness.store.getCodexThreadDesktopNotificationState("thread-native-1")).toMatchObject({
+      threadId: "thread-native-1",
+      activeRunKey: "thread-native-1:turn-1",
+      status: "completed",
+      messageId: "om_running_1",
+      lastCompletionKey: "thread-native-1:completion-new",
+      commandCount: 4,
     });
   });
 
@@ -333,7 +443,7 @@ describe("DesktopCompletionNotifier", () => {
     const summaryMarkdown = findSummaryMarkdown(notificationCard);
 
     expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", longParagraph);
-    expect(summaryMarkdown).toContain("**结果摘要**");
+    expect(summaryMarkdown).toContain("**Codex 最终返回了什么**");
     expect(summaryMarkdown).not.toContain("尾段标记不应完整出现在通知摘要中");
     expect(summaryMarkdown.length).toBeGreaterThan(140);
     expect(summaryMarkdown.length).toBeLessThanOrEqual(320);
@@ -456,6 +566,7 @@ function createApiClientDouble(
     sendInteractiveCardToChat: ReturnType<typeof vi.fn>;
     replyTextMessage: ReturnType<typeof vi.fn>;
     replyInteractiveCard: ReturnType<typeof vi.fn>;
+    updateInteractiveCard: ReturnType<typeof vi.fn>;
   }>,
 ) {
   return {
@@ -467,6 +578,7 @@ function createApiClientDouble(
     })),
     replyTextMessage: vi.fn(async () => "om_reply_text_1"),
     replyInteractiveCard: vi.fn(async () => "om_reply_card_1"),
+    updateInteractiveCard: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -479,6 +591,23 @@ function createCompletion(
     completedAt: "2026-04-20T12:00:00.000Z",
     finalAssistantText: "任务已经处理完成。",
     completionKey: "thread-native-1:completion-new",
+    ...overrides,
+  };
+}
+
+function createProgressSnapshot(
+  overrides?: Partial<CodexDesktopProgressSnapshot>,
+): CodexDesktopProgressSnapshot {
+  return {
+    runKey: "thread-native-1:turn-1",
+    startedAt: "2026-04-22T10:00:00.000Z",
+    lastEventAt: "2026-04-22T10:00:06.000Z",
+    latestPublicMessage: "Task 1 已 review 完，我现在补测试和文档。",
+    planTodos: [
+      { text: "Task 1: Review implementation", completed: true },
+      { text: "Task 2: Add tests", completed: false },
+    ],
+    commandCount: 3,
     ...overrides,
   };
 }
@@ -592,7 +721,7 @@ function collectButtons(card: Record<string, unknown>): Array<{
 
 function findSummaryMarkdown(card: Record<string, unknown>): string {
   const markdownBlocks = collectMarkdownBlocks(card);
-  return markdownBlocks.find(block => block.includes("**结果摘要**")) ?? "";
+  return markdownBlocks.find(block => block.includes("Codex 最终返回了什么")) ?? "";
 }
 
 function collectMarkdownBlocks(node: unknown): string[] {

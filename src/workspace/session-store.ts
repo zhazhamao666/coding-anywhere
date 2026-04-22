@@ -363,6 +363,9 @@ export class SessionStore {
     surfaceType?: CodexThreadDesktopNotificationStateRecord["surfaceType"];
     surfaceRef?: string | null;
     anchorMessageId?: string | null;
+    latestPublicMessage?: string | null;
+    planTodos?: CodexThreadDesktopNotificationStateRecord["planTodos"];
+    commandCount?: number;
     lastRenderHash?: string | null;
     lastCompletionKey?: string | null;
   }): void {
@@ -391,6 +394,14 @@ export class SessionStore {
       surfaceRefProvided: Object.prototype.hasOwnProperty.call(input, "surfaceRef") ? 1 : 0,
       anchorMessageId: input.anchorMessageId ?? null,
       anchorMessageIdProvided: Object.prototype.hasOwnProperty.call(input, "anchorMessageId") ? 1 : 0,
+      latestPublicMessage: input.latestPublicMessage ?? null,
+      latestPublicMessageProvided: Object.prototype.hasOwnProperty.call(input, "latestPublicMessage") ? 1 : 0,
+      planTodosJson: Object.prototype.hasOwnProperty.call(input, "planTodos")
+        ? JSON.stringify(input.planTodos ?? null)
+        : null,
+      planTodosProvided: Object.prototype.hasOwnProperty.call(input, "planTodos") ? 1 : 0,
+      commandCount: input.commandCount ?? 0,
+      commandCountProvided: Object.prototype.hasOwnProperty.call(input, "commandCount") ? 1 : 0,
       lastRenderHash: input.lastRenderHash ?? null,
       lastRenderHashProvided: Object.prototype.hasOwnProperty.call(input, "lastRenderHash") ? 1 : 0,
       lastCompletionKey: input.lastCompletionKey ?? null,
@@ -445,6 +456,18 @@ export class SessionStore {
           WHEN @anchorMessageIdProvided = 1 THEN @anchorMessageId
           ELSE anchor_message_id
         END,
+        latest_public_message = CASE
+          WHEN @latestPublicMessageProvided = 1 THEN @latestPublicMessage
+          ELSE latest_public_message
+        END,
+        plan_todos_json = CASE
+          WHEN @planTodosProvided = 1 THEN @planTodosJson
+          ELSE plan_todos_json
+        END,
+        command_count = CASE
+          WHEN @commandCountProvided = 1 THEN @commandCount
+          ELSE command_count
+        END,
         last_render_hash = CASE
           WHEN @lastRenderHashProvided = 1 THEN @lastRenderHash
           ELSE last_render_hash
@@ -479,6 +502,9 @@ export class SessionStore {
         surface_type,
         surface_ref,
         anchor_message_id,
+        latest_public_message,
+        plan_todos_json,
+        command_count,
         last_render_hash,
         last_completion_key,
         updated_at
@@ -495,6 +521,9 @@ export class SessionStore {
         @surfaceType,
         @surfaceRef,
         @anchorMessageId,
+        @latestPublicMessage,
+        @planTodosJson,
+        @commandCount,
         @lastRenderHash,
         @lastCompletionKey,
         @updatedAt
@@ -519,6 +548,9 @@ export class SessionStore {
         surface_type,
         surface_ref,
         anchor_message_id,
+        latest_public_message,
+        plan_todos_json,
+        command_count,
         last_render_hash,
         last_completion_key,
         updated_at
@@ -544,6 +576,9 @@ export class SessionStore {
         surface_type,
         surface_ref,
         anchor_message_id,
+        latest_public_message,
+        plan_todos_json,
+        command_count,
         last_render_hash,
         last_completion_key,
         updated_at
@@ -2478,6 +2513,9 @@ export class SessionStore {
         surface_type TEXT,
         surface_ref TEXT,
         anchor_message_id TEXT,
+        latest_public_message TEXT,
+        plan_todos_json TEXT,
+        command_count INTEGER NOT NULL DEFAULT 0,
         last_render_hash TEXT,
         last_completion_key TEXT,
         updated_at TEXT NOT NULL
@@ -2548,6 +2586,7 @@ export class SessionStore {
     this.migrateObservabilityEventSources();
     this.dropObsoleteTables();
     this.ensureCodexThreadIndexes();
+    this.migrateDesktopNotificationStateTable();
     this.migrateCodexPreferenceTables();
   }
 
@@ -2814,6 +2853,33 @@ export class SessionStore {
     }
   }
 
+  private migrateDesktopNotificationStateTable(): void {
+    const columns = this.db.prepare(`PRAGMA table_info(codex_thread_desktop_notification_state)`).all() as Array<{
+      name: string;
+    }>;
+
+    if (columns.some(column => column.name === "latest_public_message") === false) {
+      this.db.exec(`
+        ALTER TABLE codex_thread_desktop_notification_state
+        ADD COLUMN latest_public_message TEXT
+      `);
+    }
+
+    if (columns.some(column => column.name === "plan_todos_json") === false) {
+      this.db.exec(`
+        ALTER TABLE codex_thread_desktop_notification_state
+        ADD COLUMN plan_todos_json TEXT
+      `);
+    }
+
+    if (columns.some(column => column.name === "command_count") === false) {
+      this.db.exec(`
+        ALTER TABLE codex_thread_desktop_notification_state
+        ADD COLUMN command_count INTEGER NOT NULL DEFAULT 0
+      `);
+    }
+  }
+
   private dropObsoleteTables(): void {
     this.db.exec(`
       DROP TABLE IF EXISTS workspaces;
@@ -2888,6 +2954,9 @@ interface CodexThreadDesktopNotificationStateRow {
   surface_type: "thread" | null;
   surface_ref: string | null;
   anchor_message_id: string | null;
+  latest_public_message: string | null;
+  plan_todos_json: string | null;
+  command_count: number;
   last_render_hash: string | null;
   last_completion_key: string | null;
   updated_at: string;
@@ -3284,10 +3353,44 @@ function rowToCodexThreadDesktopNotificationState(
     surfaceType: row.surface_type,
     surfaceRef: row.surface_ref,
     anchorMessageId: row.anchor_message_id,
+    latestPublicMessage: row.latest_public_message,
+    planTodos: parsePlanTodosJson(row.plan_todos_json),
+    commandCount: row.command_count,
     lastRenderHash: row.last_render_hash,
     lastCompletionKey: row.last_completion_key,
     updatedAt: row.updated_at,
   };
+}
+
+function parsePlanTodosJson(raw: string | null): CodexThreadDesktopNotificationStateRecord["planTodos"] {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return null;
+    }
+
+    const items = parsed
+      .map(item => {
+        const text = typeof item?.text === "string" ? item.text.trim() : "";
+        if (!text) {
+          return undefined;
+        }
+
+        return {
+          text,
+          completed: item?.completed === true,
+        };
+      })
+      .filter((item): item is { text: string; completed: boolean } => Boolean(item));
+
+    return items.length > 0 ? items : [];
+  } catch {
+    return null;
+  }
 }
 
 function rowToCodexPreference(row: CodexPreferenceRow): CodexPreferenceRecord {

@@ -44,6 +44,12 @@ describe("SessionStore desktop notification-state persistence", () => {
       messageId: "om_running_1",
       deliveryMode: "dm",
       peerId: "ou_demo",
+      latestPublicMessage: "我先补测试和文档。",
+      planTodos: [
+        { text: "Task 1: Review implementation", completed: true },
+        { text: "Task 2: Add tests", completed: false },
+      ],
+      commandCount: 2,
       lastRenderHash: "render-hash-1",
     });
 
@@ -57,6 +63,12 @@ describe("SessionStore desktop notification-state persistence", () => {
       messageId: "om_running_1",
       deliveryMode: "dm",
       peerId: "ou_demo",
+      latestPublicMessage: "我先补测试和文档。",
+      planTodos: [
+        { text: "Task 1: Review implementation", completed: true },
+        { text: "Task 2: Add tests", completed: false },
+      ],
+      commandCount: 2,
       lastRenderHash: "render-hash-1",
     });
 
@@ -68,6 +80,8 @@ describe("SessionStore desktop notification-state persistence", () => {
       messageId: "om_running_1",
       deliveryMode: "dm",
       peerId: "ou_demo",
+      latestPublicMessage: "测试已经补完，我现在同步文档。",
+      commandCount: 3,
       lastRenderHash: "render-hash-2",
     });
 
@@ -78,6 +92,12 @@ describe("SessionStore desktop notification-state persistence", () => {
       messageId: "om_running_1",
       deliveryMode: "dm",
       peerId: "ou_demo",
+      latestPublicMessage: "测试已经补完，我现在同步文档。",
+      planTodos: [
+        { text: "Task 1: Review implementation", completed: true },
+        { text: "Task 2: Add tests", completed: false },
+      ],
+      commandCount: 3,
       lastEventAt: "2026-04-22T10:00:10.000Z",
       lastRenderHash: "render-hash-2",
     });

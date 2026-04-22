@@ -1,5 +1,5 @@
 import { normalizeMarkdownToPlainText } from "../markdown-text.js";
-import type { DesktopCompletionCardInput } from "../types.js";
+import type { DesktopCompletionCardInput, PlanTodoItem } from "../types.js";
 
 const MAX_CARD_PAYLOAD_BYTES = 30 * 1024;
 const MAX_PROJECT_NAME_CHARS = 120;
@@ -11,22 +11,30 @@ const MULTI_LINE_SUMMARY_MAX_CHARS = 220;
 const COMPACT_SUMMARY_MAX_CHARS = 180;
 const MINIMAL_SUMMARY_MAX_CHARS = 120;
 const DEFAULT_SUMMARY_FALLBACK = "任务已经在桌面端完成，可继续在飞书追问或查看线程记录。";
+const DEFAULT_RUNNING_PROGRESS_FALLBACK = "桌面端正在继续执行该线程，完成后会在此更新结果。";
 const DEFAULT_REMINDER_FALLBACK = "返回飞书继续当前会话。";
 
 export function buildDesktopCompletionCard(
   input: DesktopCompletionCardInput,
 ): Record<string, unknown> {
-  const normalizedInput = {
+  const status = input.status ?? "completed";
+  const normalizedInput: DesktopCompletionCardInput = {
     ...input,
+    status,
     projectName: truncateCardText(normalizeCardText(input.projectName), MAX_PROJECT_NAME_CHARS),
     threadTitle: truncateCardText(normalizeCardText(input.threadTitle), MAX_THREAD_TITLE_CHARS),
+    progressText: input.progressText ? normalizeCardText(input.progressText) : undefined,
+    commandCount: input.commandCount ?? 0,
+    planTodos: normalizePlanTodos(input.planTodos),
   };
-  const summaryLines = normalizeSummaryLines(input.summaryLines);
+  const summaryLines = normalizeSummaryLines(input.summaryLines ?? []);
   const reminderText = normalizeReminderText(input.reminderText, normalizedInput.threadTitle);
+  const progressText = normalizeProgressText(normalizedInput.progressText);
   const card = buildCardPayload({
     input: normalizedInput,
     summaryLines,
     reminderText,
+    progressText,
   });
   if (isWithinPayloadBudget(card)) {
     return card;
@@ -36,6 +44,7 @@ export function buildDesktopCompletionCard(
     input: normalizedInput,
     summaryLines: normalizeSummaryLines(summaryLines, COMPACT_SUMMARY_MAX_CHARS),
     reminderText: truncateCardText(reminderText, MAX_REMINDER_COMPACT_CHARS),
+    progressText: truncateCardText(progressText || DEFAULT_RUNNING_PROGRESS_FALLBACK, 160),
   });
   if (isWithinPayloadBudget(compactCard)) {
     return compactCard;
@@ -45,6 +54,7 @@ export function buildDesktopCompletionCard(
     input: normalizedInput,
     summaryLines: normalizeSummaryLines(summaryLines, MINIMAL_SUMMARY_MAX_CHARS),
     reminderText: truncateCardText(reminderText || DEFAULT_REMINDER_FALLBACK, 80),
+    progressText: truncateCardText(progressText || DEFAULT_RUNNING_PROGRESS_FALLBACK, 100),
   });
 }
 
@@ -52,7 +62,9 @@ function buildCardPayload(input: {
   input: DesktopCompletionCardInput;
   summaryLines: string[];
   reminderText: string;
+  progressText: string;
 }): Record<string, unknown> {
+  const status = input.input.status ?? "completed";
   const elements: Array<Record<string, unknown>> = [
     {
       tag: "markdown",
@@ -63,7 +75,9 @@ function buildCardPayload(input: {
     },
     {
       tag: "markdown",
-      content: buildSummaryMarkdown(input.summaryLines),
+      content: status === "running"
+        ? buildProgressMarkdown(input.progressText)
+        : buildSummaryMarkdown(input.summaryLines),
     },
     {
       tag: "hr",
@@ -72,32 +86,53 @@ function buildCardPayload(input: {
       tag: "markdown",
       content: buildReminderMarkdown(input.reminderText),
     },
-    {
-      tag: "hr",
-    },
-    {
-      tag: "column_set",
-      flex_mode: "flow",
-      background_style: "default",
-      columns: buildActions(input.input).map(action => ({
-        tag: "column",
-        width: "auto",
-        weight: 1,
-        vertical_align: "top",
-        elements: [
-          {
-            tag: "button",
-            text: {
-              tag: "plain_text",
-              content: action.label,
-            },
-            type: action.type,
-            value: action.value,
-          },
-        ],
-      })),
-    },
   ];
+
+  if ((input.input.commandCount ?? 0) > 0) {
+    elements.push({
+      tag: "hr",
+    });
+    elements.push({
+      tag: "markdown",
+      content: `**进度**\n${formatCommandCountText(input.input.commandCount ?? 0)}`,
+    });
+  }
+
+  if (input.input.planTodos && input.input.planTodos.length > 0) {
+    elements.push({
+      tag: "hr",
+    });
+    elements.push({
+      tag: "markdown",
+      content: buildPlanTodoMarkdown(input.input.planTodos),
+    });
+  }
+
+  elements.push({
+    tag: "hr",
+  });
+  elements.push({
+    tag: "column_set",
+    flex_mode: "flow",
+    background_style: "default",
+    columns: buildActions(input.input).map(action => ({
+      tag: "column",
+      width: "auto",
+      weight: 1,
+      vertical_align: "top",
+      elements: [
+        {
+          tag: "button",
+          text: {
+            tag: "plain_text",
+            content: action.label,
+          },
+          type: action.type,
+          value: action.value,
+        },
+      ],
+    })),
+  });
 
   return {
     schema: "2.0",
@@ -105,15 +140,15 @@ function buildCardPayload(input: {
       wide_screen_mode: true,
       update_multi: true,
       summary: {
-        content: buildCardSummary(input.input, input.summaryLines).slice(0, 120),
+        content: buildCardSummary(input.input, input.summaryLines, input.progressText).slice(0, 120),
       },
     },
     header: {
       title: {
         tag: "plain_text",
-        content: "桌面任务已完成",
+        content: status === "running" ? "桌面任务进行中" : "桌面任务已完成",
       },
-      template: "green",
+      template: status === "running" ? "blue" : "green",
     },
     body: {
       elements,
@@ -122,26 +157,48 @@ function buildCardPayload(input: {
 }
 
 function buildOverviewMarkdown(input: DesktopCompletionCardInput): string {
-  return [
-    "**桌面任务已完成**",
+  const status = input.status ?? "completed";
+  const lines = [
+    `**${status === "running" ? "桌面任务进行中" : "桌面任务已完成"}**`,
     `**项目**：${input.projectName}`,
     `**线程**：${input.threadTitle}`,
-    "**状态**：已完成",
-    `**完成时间**：${formatCompletedAt(input.completedAt)}`,
-  ].join("\n");
+    `**状态**：${status === "running" ? "进行中" : "已完成"}`,
+  ];
+
+  if (status === "running") {
+    lines.push(`**开始时间**：${formatDateTime(input.startedAt)}`);
+  } else {
+    lines.push(`**完成时间**：${formatDateTime(input.completedAt)}`);
+  }
+
+  return lines.join("\n");
 }
 
 function buildSummaryMarkdown(summaryLines: string[]): string {
   return [
-    "**结果摘要**",
+    "**Codex 最终返回了什么**",
     ...summaryLines.map(line => `- ${line}`),
+  ].join("\n");
+}
+
+function buildProgressMarkdown(progressText: string): string {
+  return [
+    "**当前情况**",
+    progressText || DEFAULT_RUNNING_PROGRESS_FALLBACK,
   ].join("\n");
 }
 
 function buildReminderMarkdown(reminderText: string): string {
   return [
-    "**你离开前的会话**",
+    "**你最后说了什么**",
     reminderText,
+  ].join("\n");
+}
+
+function buildPlanTodoMarkdown(items: PlanTodoItem[]): string {
+  return [
+    "**计划清单**",
+    ...items.map(item => `- ${item.completed ? "[x]" : "[ ]"} ${item.text}`),
   ].join("\n");
 }
 
@@ -150,23 +207,33 @@ function buildActions(input: DesktopCompletionCardInput): Array<{
   type: "default" | "primary";
   value: Record<string, unknown>;
 }> {
-  return [
-    {
+  const status = input.status ?? "completed";
+  const actions: Array<{
+    label: string;
+    type: "default" | "primary";
+    value: Record<string, unknown>;
+  }> = [];
+
+  if (status === "completed") {
+    actions.push({
       label: resolvePrimaryActionLabel(input.mode),
       type: "primary",
       value: buildActionValue("continue_desktop_thread", input),
-    },
-    {
-      label: "查看线程记录",
-      type: "default",
-      value: buildActionValue("view_desktop_thread_history", input),
-    },
-    {
-      label: "静音此线程",
-      type: "default",
-      value: buildActionValue("mute_desktop_thread", input),
-    },
-  ];
+    });
+  }
+
+  actions.push({
+    label: "查看线程记录",
+    type: "default",
+    value: buildActionValue("view_desktop_thread_history", input),
+  });
+  actions.push({
+    label: "静音此线程",
+    type: "default",
+    value: buildActionValue("mute_desktop_thread", input),
+  });
+
+  return actions;
 }
 
 function resolvePrimaryActionLabel(mode: DesktopCompletionCardInput["mode"]): string {
@@ -210,6 +277,25 @@ function normalizeSummaryLines(summaryLines: string[], maxChars?: number): strin
   return [DEFAULT_SUMMARY_FALLBACK];
 }
 
+function normalizePlanTodos(items: PlanTodoItem[] | undefined): PlanTodoItem[] | undefined {
+  if (!Array.isArray(items) || items.length === 0) {
+    return undefined;
+  }
+
+  return items
+    .map(item => ({
+      text: truncateCardText(normalizeCardText(item.text), 140),
+      completed: item.completed === true,
+    }))
+    .filter(item => item.text.length > 0)
+    .slice(0, 7);
+}
+
+function normalizeProgressText(progressText: string | undefined): string {
+  const normalized = progressText ? normalizeCardText(progressText) : "";
+  return normalized || DEFAULT_RUNNING_PROGRESS_FALLBACK;
+}
+
 function boundSummaryLines(lines: string[], maxChars: number): string[] {
   const bounded: string[] = [];
   let usedChars = 0;
@@ -249,16 +335,24 @@ function truncateSummaryLine(line: string, maxChars: number): string {
   return `${line.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
-function buildCardSummary(input: DesktopCompletionCardInput, summaryLines: string[]): string {
+function buildCardSummary(
+  input: DesktopCompletionCardInput,
+  summaryLines: string[],
+  progressText: string,
+): string {
   return [
     input.projectName,
     input.threadTitle,
-    "已完成",
-    summaryLines[0],
+    input.status === "running" ? "进行中" : "已完成",
+    input.status === "running" ? progressText : summaryLines[0],
   ].join(" · ");
 }
 
-function formatCompletedAt(value: string): string {
+function formatDateTime(value: string | undefined): string {
+  if (!value) {
+    return "-";
+  }
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return normalizeCardText(value);
@@ -272,6 +366,10 @@ function formatCompletedAt(value: string): string {
   const second = pad(date.getSeconds());
 
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function formatCommandCountText(commandCount: number): string {
+  return commandCount === 1 ? "Ran 1 command" : `Ran ${commandCount} commands`;
 }
 
 function pad(value: number): string {

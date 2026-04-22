@@ -4,9 +4,53 @@ import { buildDesktopCompletionCard } from "../src/feishu-card/desktop-completio
 import type { DesktopCompletionCardInput } from "../src/types.js";
 
 describe("desktop completion card builder", () => {
+  it("builds a running desktop card with public progress, plan list, and command count but no continue action", () => {
+    const input: DesktopCompletionCardInput = {
+      mode: "dm",
+      status: "running",
+      projectName: "Alpha Project",
+      threadTitle: "修复桌面进行中卡",
+      startedAt: "2026-04-22T12:00:00.000Z",
+      reminderText: "先把桌面运行态同步到飞书。",
+      progressText: "Task 1 已 review 完，我现在补测试和文档。",
+      planTodos: [
+        { text: "Task 1: Review implementation", completed: true },
+        { text: "Task 2: Add tests", completed: false },
+      ],
+      commandCount: 3,
+      threadId: "thread_native_running_123",
+    };
+
+    const card = buildDesktopCompletionCard(input);
+    const visibleText = collectVisibleText(card).join("\n");
+    const buttons = collectButtons(card);
+
+    expect(visibleText).toContain("桌面任务进行中");
+    expect(visibleText).toContain("Alpha Project");
+    expect(visibleText).toContain("修复桌面进行中卡");
+    expect(visibleText).toContain("进行中");
+    expect(visibleText).toContain("2026-04-22");
+    expect(visibleText).toContain("Task 1 已 review 完，我现在补测试和文档。");
+    expect(visibleText).toContain("Ran 3 commands");
+    expect(visibleText).toContain("[x] Task 1: Review implementation");
+    expect(visibleText).toContain("[ ] Task 2: Add tests");
+    expect(buttons.map(button => button.label)).toEqual([
+      "查看线程记录",
+      "静音此线程",
+    ]);
+    expect(buttons).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "在飞书继续",
+        }),
+      ]),
+    );
+  });
+
   it("builds a dm completion notification card with focused completion details", () => {
     const input: DesktopCompletionCardInput = {
       mode: "dm",
+      status: "completed",
       projectName: "Alpha Project",
       threadTitle: "修复桌面完成通知",
       completedAt: "2026-04-20T10:32:11.000Z",
@@ -15,6 +59,11 @@ describe("desktop completion card builder", () => {
         "新增定向测试并通过卡片渲染校验。",
       ],
       reminderText: "用户希望先收紧通知卡展示，再接回调。",
+      planTodos: [
+        { text: "Task 1: Review implementation", completed: true },
+        { text: "Task 2: Add tests", completed: true },
+      ],
+      commandCount: 4,
       threadId: "thread_native_123",
     };
     const card = buildDesktopCompletionCard(input);
@@ -37,7 +86,10 @@ describe("desktop completion card builder", () => {
     expect(visibleText).toContain("已完成桌面端通知卡的初版实现。");
     expect(visibleText).toContain("新增定向测试并通过卡片渲染校验。");
     expect(visibleText).toContain("用户希望先收紧通知卡展示，再接回调。");
-    expect(visibleText).toContain("你离开前的会话");
+    expect(visibleText).toContain("你最后说了什么");
+    expect(visibleText).toContain("Ran 4 commands");
+    expect(visibleText).toContain("[x] Task 1: Review implementation");
+    expect(visibleText).toContain("[x] Task 2: Add tests");
     expect(visibleText).not.toContain("项目列表");
     expect(visibleText).not.toContain("导航");
     expect(visibleText).not.toContain("当前项目");
@@ -65,6 +117,7 @@ describe("desktop completion card builder", () => {
   it("uses the same Feishu-first primary label for project-group delivery and preserves group context", () => {
     const input: DesktopCompletionCardInput = {
       mode: "project_group",
+      status: "completed",
       projectName: "Beta Project",
       threadTitle: "补齐群通知文案",
       completedAt: "2026-04-20T11:00:00.000Z",
@@ -108,6 +161,7 @@ describe("desktop completion card builder", () => {
   it("uses the same Feishu-first primary label for existing-topic delivery and preserves thread context on all actions", () => {
     const input: DesktopCompletionCardInput = {
       mode: "thread",
+      status: "completed",
       projectName: "Gamma Project",
       threadTitle: "沿用现有话题继续",
       completedAt: "2026-04-20T11:05:00.000Z",
@@ -155,6 +209,7 @@ describe("desktop completion card builder", () => {
   it("normalizes markdown-heavy multiline input to plain text and truncates summary lines", () => {
     const input: DesktopCompletionCardInput = {
       mode: "dm",
+      status: "completed",
       projectName: "**Alpha**\n# 注入标题",
       threadTitle: "[继续处理](https://example.com/thread)\n- 伪列表",
       completedAt: "2026-04-20T11:10:00.000Z",
@@ -193,6 +248,7 @@ describe("desktop completion card builder", () => {
   it("always shows 你离开前的会话 and falls back to the thread title when no recent user reminder exists", () => {
     const input: DesktopCompletionCardInput = {
       mode: "thread",
+      status: "completed",
       projectName: "Fallback Project",
       threadTitle: "继续修复桌面通知",
       completedAt: "2026-04-20T11:12:00.000Z",
@@ -203,7 +259,7 @@ describe("desktop completion card builder", () => {
     const card = buildDesktopCompletionCard(input);
     const visibleText = collectVisibleText(card).join("\n");
 
-    expect(visibleText).toContain("你离开前的会话");
+    expect(visibleText).toContain("你最后说了什么");
     expect(visibleText).toContain("继续修复桌面通知");
     expect(visibleText).not.toContain("上次你的意图");
   });
@@ -211,6 +267,7 @@ describe("desktop completion card builder", () => {
   it("keeps long paragraph summaries bounded without over-truncating them to the old 80-char budget", () => {
     const input: DesktopCompletionCardInput = {
       mode: "dm",
+      status: "completed",
       projectName: "Budget Project",
       threadTitle: "限制摘要预算",
       completedAt: "2026-04-20T11:15:00.000Z",
@@ -228,9 +285,9 @@ describe("desktop completion card builder", () => {
     };
 
     const card = buildDesktopCompletionCard(input);
-    const summaryMarkdown = collectVisibleText(card).find(text => text.includes("**结果摘要**")) ?? "";
+    const summaryMarkdown = collectVisibleText(card).find(text => text.includes("Codex 最终返回了什么")) ?? "";
 
-    expect(summaryMarkdown).toContain("**结果摘要**");
+    expect(summaryMarkdown).toContain("**Codex 最终返回了什么**");
     expect(summaryMarkdown).not.toContain("尾段标记不应完整出现在通知摘要中");
     expect(summaryMarkdown.length).toBeGreaterThan(140);
     expect(summaryMarkdown.length).toBeLessThanOrEqual(320);
@@ -240,6 +297,7 @@ describe("desktop completion card builder", () => {
     const hugeReminder = "提醒内容很长，需要被稳定截断。".repeat(3_000);
     const input: DesktopCompletionCardInput = {
       mode: "dm",
+      status: "completed",
       projectName: "Payload Project",
       threadTitle: "限制卡片体积",
       completedAt: "2026-04-20T11:20:00.000Z",
@@ -251,7 +309,7 @@ describe("desktop completion card builder", () => {
     const card = buildDesktopCompletionCard(input);
     const visibleText = collectVisibleText(card).join("\n");
 
-    expect(visibleText).toContain("你离开前的会话");
+    expect(visibleText).toContain("你最后说了什么");
     expect(Buffer.byteLength(JSON.stringify(card), "utf8")).toBeLessThanOrEqual(30 * 1024);
   });
 });

@@ -165,11 +165,16 @@ export interface BridgeMessageInput {
 
 export interface DesktopCompletionCardInput {
   mode: "dm" | "project_group" | "thread";
+  status?: "running" | "completed";
   projectName: string;
   threadTitle: string;
-  completedAt: string;
-  summaryLines: string[];
+  startedAt?: string;
+  completedAt?: string;
+  summaryLines?: string[];
   reminderText?: string;
+  progressText?: string;
+  planTodos?: PlanTodoItem[];
+  commandCount?: number;
   threadId: string;
   chatId?: string;
   surfaceType?: "thread";
@@ -234,6 +239,9 @@ export interface CodexThreadDesktopNotificationStateRecord {
   surfaceType: "thread" | null;
   surfaceRef: string | null;
   anchorMessageId: string | null;
+  latestPublicMessage: string | null;
+  planTodos: PlanTodoItem[] | null;
+  commandCount: number;
   lastRenderHash: string | null;
   lastCompletionKey: string | null;
   updatedAt: string;
