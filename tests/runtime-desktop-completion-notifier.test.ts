@@ -316,6 +316,79 @@ describe("runtime desktop completion notifier", () => {
     });
   });
 
+  it("suppresses desktop running cards for live Feishu-originated runs on the same thread", async () => {
+    const harness = await createHarness(harnesses);
+
+    await harness.runtime.start();
+    await vi.waitFor(() => {
+      expect(harness.runtime.store.getCodexThreadWatchState("thread-native-1")).toBeDefined();
+    });
+
+    harness.runtime.store.createRun({
+      runId: "run-feishu-live-1",
+      channel: "feishu",
+      peerId: "ou_demo",
+      threadId: "thread-native-1",
+      sessionName: "thread-native-1",
+      rootId: "main",
+      status: "running",
+      stage: "text",
+      latestPreview: "still running in Feishu",
+      startedAt: "2026-04-21T09:40:00.000Z",
+      updatedAt: "2026-04-21T09:40:01.000Z",
+    });
+
+    appendRunningProgress(harness.rolloutPath, {
+      startedAt: "2026-04-21T09:40:00.500Z",
+      turnId: "turn-feishu-live",
+      commentaryAt: "2026-04-21T09:40:02.000Z",
+      commentary: "这轮任务是从飞书发起的，仍在继续执行。",
+      commandAt: "2026-04-21T09:40:03.000Z",
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(harness.apiClient.sendInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.apiClient.updateInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.runtime.store.getCodexThreadDesktopNotificationState("thread-native-1")).toBeUndefined();
+  });
+
+  it("does not restore a desktop running card when the latest running turn belongs to Feishu", async () => {
+    const harness = await createHarness(harnesses);
+
+    harness.runtime.store.createRun({
+      runId: "run-feishu-live-bootstrap",
+      channel: "feishu",
+      peerId: "ou_demo",
+      threadId: "thread-native-1",
+      sessionName: "thread-native-1",
+      rootId: "main",
+      status: "running",
+      stage: "text",
+      latestPreview: "still running in Feishu",
+      startedAt: "2026-04-22T11:05:00.000Z",
+      updatedAt: "2026-04-22T11:05:01.000Z",
+    });
+
+    appendRunningProgress(harness.rolloutPath, {
+      startedAt: "2026-04-22T11:05:00.500Z",
+      turnId: "turn-feishu-bootstrap",
+      commentaryAt: "2026-04-22T11:05:10.000Z",
+      commentary: "这轮仍然由飞书发起，不应该被恢复成桌面任务卡。",
+      commandAt: "2026-04-22T11:05:20.000Z",
+    });
+
+    await harness.runtime.start();
+
+    await vi.waitFor(() => {
+      expect(harness.runtime.store.getCodexThreadWatchState("thread-native-1")).toBeDefined();
+    });
+    expect(harness.apiClient.sendInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.apiClient.updateInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.runtime.store.getCodexThreadDesktopNotificationState("thread-native-1")).toBeUndefined();
+  });
+
   it("prefers a newer running turn over an older unseen completion when the service resumes polling", async () => {
     const harness = await createHarness(harnesses);
 

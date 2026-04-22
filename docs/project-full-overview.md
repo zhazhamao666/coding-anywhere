@@ -112,6 +112,7 @@
 82. 桌面侧原生 Codex thread 已经从“完成后单次通知”升级为完整生命周期通知：runtime 会在新一轮顶层 desktop run 发现 `task_started` 后先发一张 `桌面任务进行中` 卡，并在后续轮询里复用同一 `message_id` patch 进度；卡片会展示最近公开进展、结构化计划清单和 `Ran N commands` 命令计数，但不再把 raw shell command 直接暴露给飞书用户；服务重启或恢复轮询时，如果同一线程里同时存在“较早的旧 completion”和“更新的进行中 run”，也会优先恢复最新的进行中态，而不是把旧完成态误推给飞书
 83. 同一轮 desktop run 完成后，bridge 会优先把这张运行态卡原地更新成 `桌面任务已完成`，在卡片里带上“你最后说了什么”“Codex 最终返回了什么”预览、计划快照和命令计数；只有在完成态才展示 `在飞书继续`，同时继续复用现有 assistant Markdown 卡 / 纯文本回退策略补发完整正文
 84. 飞书侧用户可见的运行状态卡、`/ca status` 当前运行摘要和桌面生命周期卡现在统一走“公开进度”模型：计划清单仍然结构化展示，但脚本执行细节不再以 `最近工具：<raw command>` 形式直接出现，而是收口为 `Ran N commands` 这类命令计数摘要
+85. 桌面 lifecycle 轮询在判定通知来源时，现在不仅会压制“刚刚完成的 Feishu run 回声”，也会压制“当前仍在运行中的 Feishu run”；只要同一 native `thread_id` 上还有 live Feishu run，就不会再额外发出 `桌面任务进行中` 或 `桌面任务已完成` 卡，避免把飞书自己发起的任务误报成桌面任务
 
 ### 2.3 当前仍未打通的部分
 
@@ -211,6 +212,7 @@ Browser / script
 - 为 ops 侧取消动作补齐 queued run 的取消元数据落库与事件时间线
 - 启动时把上次服务异常退出后残留的非终态 run 收口为明确终态，避免历史观测与 live runtime 脱节
 - 启动桌面 lifecycle 轮询定时器：扫描本地 Codex catalog 的顶层 native thread rollout，跳过 `sourceInfo.kind = subagent` 的子线程；bootstrap `codex_thread_watch_state` 时会跳过纯历史 completion，但如果线程最新状态已经进入新的进行中 run，则会直接恢复为 `桌面任务进行中` 卡；后续轮询会解析 `task_started`、`agent_message`、`update_plan`、`shell_command` 和 `task_complete`，先创建 `桌面任务进行中` 卡，再在同一 `message_id` 上持续 patch 公开进度，并在终态时更新成 `桌面任务已完成`
+- 启动桌面 lifecycle 轮询定时器：扫描本地 Codex catalog 的顶层 native thread rollout，跳过 `sourceInfo.kind = subagent` 的子线程；bootstrap `codex_thread_watch_state` 时会跳过纯历史 completion，但如果线程最新状态已经进入新的进行中 run，则会直接恢复为 `桌面任务进行中` 卡；后续轮询会解析 `task_started`、`agent_message`、`update_plan`、`shell_command` 和 `task_complete`，先创建 `桌面任务进行中` 卡，再在同一 `message_id` 上持续 patch 公开进度，并在终态时更新成 `桌面任务已完成`；同时如果同一 `thread_id` 上存在 live Feishu run，或刚完成的 Feishu run 仍落在抑制窗口内，就不会重复从桌面通知出口推卡
 - 启动线程空闲回收和待处理图片过期清理定时器
 
 ### 5.1.1 `src/windows-console.ts`

@@ -526,13 +526,30 @@ function shouldSuppressDesktopLifecycleForRecentFeishuRun(input: {
   threadId: string;
   eventAt: string;
 }): boolean {
-  const completionMs = Date.parse(input.eventAt);
-  if (!Number.isFinite(completionMs)) {
+  const eventAtMs = Date.parse(input.eventAt);
+  if (!Number.isFinite(eventAtMs)) {
     return false;
   }
 
   for (const run of input.store.listThreadRuns(input.threadId, 10)) {
-    if (run.channel !== "feishu" || !run.finishedAt || !isTerminalRunStatus(run.status)) {
+    if (run.channel !== "feishu") {
+      continue;
+    }
+
+    if (!isTerminalRunStatus(run.status)) {
+      const startedAtMs = Date.parse(run.startedAt);
+      if (!Number.isFinite(startedAtMs)) {
+        return true;
+      }
+
+      if (startedAtMs <= eventAtMs) {
+        return true;
+      }
+
+      continue;
+    }
+
+    if (!run.finishedAt) {
       continue;
     }
 
@@ -541,7 +558,7 @@ function shouldSuppressDesktopLifecycleForRecentFeishuRun(input: {
       continue;
     }
 
-    if (Math.abs(finishedAtMs - completionMs) <= DESKTOP_COMPLETION_BRIDGE_SUPPRESSION_WINDOW_MS) {
+    if (Math.abs(finishedAtMs - eventAtMs) <= DESKTOP_COMPLETION_BRIDGE_SUPPRESSION_WINDOW_MS) {
       return true;
     }
   }
