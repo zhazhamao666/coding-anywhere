@@ -277,6 +277,10 @@ export async function pollDesktopCompletionNotifications(input: {
         rolloutPath: thread.rolloutPath,
         offset: 0,
       });
+      const shouldResumeRunning = shouldResumeRunningDesktopLifecycle({
+        completion: bootstrap.completion,
+        progressSnapshot: bootstrap.progressSnapshot,
+      });
       input.store.upsertCodexThreadWatchState({
         threadId: thread.threadId,
         rolloutPath: thread.rolloutPath,
@@ -284,6 +288,28 @@ export async function pollDesktopCompletionNotifications(input: {
         lastReadOffset: bootstrap.nextOffset,
         lastCompletionKey: bootstrap.completion?.completionKey ?? null,
         lastNotifiedCompletionKey: bootstrap.completion?.completionKey ?? null,
+      });
+      if (!shouldResumeRunning || !bootstrap.progressSnapshot) {
+        continue;
+      }
+
+      if (shouldSuppressDesktopLifecycleForRecentFeishuRun({
+        store: input.store,
+        threadId: thread.threadId,
+        eventAt: bootstrap.progressSnapshot.startedAt,
+      })) {
+        continue;
+      }
+
+      const routeTarget = input.bridgeService.resolveDesktopCompletionRoute({
+        threadId: thread.threadId,
+        allowlist: input.allowlist,
+        desktopOwnerOpenId: input.desktopOwnerOpenId,
+      });
+      await input.notifier.publishRunning({
+        threadId: thread.threadId,
+        progress: bootstrap.progressSnapshot,
+        target: normalizeDesktopCompletionDeliveryTarget(routeTarget),
       });
       continue;
     }
@@ -319,8 +345,21 @@ export async function pollDesktopCompletionNotifications(input: {
       observed.progressSnapshot &&
       (!notificationState?.activeRunKey || observed.progressSnapshot.runKey !== notificationState.activeRunKey),
     );
+    const shouldPreferRunningProgress = didNewerRunStartAfterCompletion({
+      completion: observed.completion,
+      progressSnapshot: observed.progressSnapshot,
+    });
 
-    if (observed.completion && observed.completion.completionKey !== existingState.lastNotifiedCompletionKey) {
+    if (shouldPreferRunningProgress && observed.completion) {
+      input.store.upsertCodexThreadWatchState({
+        threadId: thread.threadId,
+        lastNotifiedCompletionKey: observed.completion.completionKey,
+      });
+    }
+
+    if (!shouldPreferRunningProgress &&
+      observed.completion &&
+      observed.completion.completionKey !== existingState.lastNotifiedCompletionKey) {
       if (!hasActiveRunningState && shouldSuppressDesktopLifecycleForRecentFeishuRun({
         store: input.store,
         threadId: thread.threadId,
@@ -539,6 +578,42 @@ function didDesktopProgressSnapshotChange(
     state.latestPublicMessage !== (nextSnapshot.latestPublicMessage ?? null) ||
     state.commandCount !== nextSnapshot.commandCount ||
     JSON.stringify(state.planTodos ?? null) !== JSON.stringify(nextSnapshot.planTodos ?? null);
+}
+
+function didNewerRunStartAfterCompletion(input: {
+  completion: {
+    completedAt: string;
+  } | undefined;
+  progressSnapshot: CodexDesktopProgressSnapshot | undefined;
+}): boolean {
+  if (!input.completion || !input.progressSnapshot) {
+    return false;
+  }
+
+  const completionMs = Date.parse(input.completion.completedAt);
+  const startedMs = Date.parse(input.progressSnapshot.startedAt);
+  if (!Number.isFinite(completionMs) || !Number.isFinite(startedMs)) {
+    return false;
+  }
+
+  return startedMs > completionMs;
+}
+
+function shouldResumeRunningDesktopLifecycle(input: {
+  completion: {
+    completedAt: string;
+  } | undefined;
+  progressSnapshot: CodexDesktopProgressSnapshot | undefined;
+}): boolean {
+  if (!input.progressSnapshot) {
+    return false;
+  }
+
+  if (!input.completion) {
+    return true;
+  }
+
+  return didNewerRunStartAfterCompletion(input);
 }
 
 function isTerminalRunStatus(status: string): boolean {

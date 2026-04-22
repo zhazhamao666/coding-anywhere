@@ -155,6 +155,46 @@ describe("runtime desktop completion notifier", () => {
     });
   });
 
+  it("bootstraps an already-running latest turn instead of surfacing an older completed turn", async () => {
+    const harness = await createHarness(harnesses);
+
+    appendCompletion(
+      harness.rolloutPath,
+      "2026-04-22T11:01:53.000Z",
+      "2026-04-22T11:01:54.000Z",
+      "旧的一轮已经完成。",
+    );
+    appendRunningProgress(harness.rolloutPath, {
+      startedAt: "2026-04-22T11:05:00.000Z",
+      turnId: "turn-bootstrap-running",
+      commentaryAt: "2026-04-22T11:05:10.000Z",
+      commentary: "我正在继续整理 patent doc skill，并准备给出新的改进方案。",
+      planAt: "2026-04-22T11:05:12.000Z",
+      plan: [
+        { step: "总结当前 skill 结构", status: "completed" },
+        { step: "提出改进方案", status: "in_progress" },
+      ],
+      commandAt: "2026-04-22T11:05:20.000Z",
+    });
+
+    await harness.runtime.start();
+
+    await vi.waitFor(() => {
+      expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledTimes(1);
+      expect(harness.runtime.store.getCodexThreadDesktopNotificationState("thread-native-1")).toMatchObject({
+        status: "running_notified",
+        activeRunKey: "thread-native-1:turn-bootstrap-running",
+        latestPublicMessage: "我正在继续整理 patent doc skill，并准备给出新的改进方案。",
+        commandCount: 1,
+      });
+    });
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.runtime.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
+      lastCompletionKey: expect.stringContaining("thread-native-1:2026-04-22T11:01:54.000Z:"),
+      lastNotifiedCompletionKey: expect.stringContaining("thread-native-1:2026-04-22T11:01:54.000Z:"),
+    });
+  });
+
   it("ignores subagent-thread completions and only watches top-level desktop threads", async () => {
     const harness = await createHarness(harnesses, {
       threads: [
@@ -273,6 +313,65 @@ describe("runtime desktop completion notifier", () => {
     await vi.waitFor(() => {
       expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledTimes(1);
       expect(harness.apiClient.sendTextMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("prefers a newer running turn over an older unseen completion when the service resumes polling", async () => {
+    const harness = await createHarness(harnesses);
+
+    const bootstrapOffset = Buffer.byteLength(
+      [
+        buildSessionMetaLine("thread-native-1", "desktop"),
+        buildFinalAnswerLine("2026-04-21T09:00:00.000Z", "historical completion for thread-native-1"),
+        buildTaskCompleteLine("2026-04-21T09:00:01.000Z"),
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    harness.runtime.store.upsertCodexThreadWatchState({
+      threadId: "thread-native-1",
+      rolloutPath: harness.rolloutPath,
+      rolloutMtime: "2026-04-21T09:00:01.000Z",
+      lastReadOffset: bootstrapOffset,
+      lastCompletionKey: null,
+      lastNotifiedCompletionKey: null,
+    });
+
+    appendCompletion(
+      harness.rolloutPath,
+      "2026-04-22T11:01:53.000Z",
+      "2026-04-22T11:01:54.000Z",
+      "上一轮对话已经完成。",
+    );
+    appendRunningProgress(harness.rolloutPath, {
+      startedAt: "2026-04-22T11:05:00.000Z",
+      turnId: "turn-2",
+      commentaryAt: "2026-04-22T11:05:10.000Z",
+      commentary: "我正在继续分析 patent doc skill 的结构和改进方向。",
+      planAt: "2026-04-22T11:05:12.000Z",
+      plan: [
+        { step: "总结当前 patent doc skill", status: "completed" },
+        { step: "梳理改进方向", status: "in_progress" },
+      ],
+      commandAt: "2026-04-22T11:05:20.000Z",
+    });
+
+    await harness.runtime.start();
+
+    await vi.waitFor(() => {
+      expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledTimes(1);
+      expect(harness.runtime.store.getCodexThreadDesktopNotificationState("thread-native-1")).toMatchObject({
+        status: "running_notified",
+        activeRunKey: "thread-native-1:turn-2",
+        latestPublicMessage: "我正在继续分析 patent doc skill 的结构和改进方向。",
+        commandCount: 1,
+      });
+    });
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.apiClient.updateInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.runtime.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
+      lastCompletionKey: expect.stringContaining("thread-native-1:2026-04-22T11:01:54.000Z:"),
+      lastNotifiedCompletionKey: expect.stringContaining("thread-native-1:2026-04-22T11:01:54.000Z:"),
     });
   });
 });
