@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -182,6 +183,91 @@ describe("BridgeService", () => {
       }),
       expect.any(Function),
     );
+  });
+
+  it("hides git app directives in the DM current session card and keeps only the compact git summary", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-current",
+    });
+
+    const repoDir = createGitRepo(rootDir, "bridge-session-git");
+    writeFileSync(path.join(repoDir, "alpha.txt"), "alpha\n", "utf8");
+    writeFileSync(path.join(repoDir, "beta.txt"), "beta\n", "utf8");
+    git(repoDir, ["add", "alpha.txt", "beta.txt"]);
+    git(repoDir, ["commit", "-m", "feat: add two files"]);
+    const repoCwd = repoDir.replace(/\\/g, "/");
+
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: {
+        listProjects: vi.fn(() => []),
+        getProject: vi.fn((projectKey: string) => projectKey === "proj-current"
+          ? {
+              projectKey: "proj-current",
+              cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+              displayName: "coding-anywhere",
+              threadCount: 1,
+              activeThreadCount: 1,
+              lastUpdatedAt: "2026-03-30T00:00:00.000Z",
+              gitBranch: "main",
+            }
+          : undefined),
+        listThreads: vi.fn(() => []),
+        getThread: vi.fn((threadId: string) => threadId === "thread-current"
+          ? {
+              threadId: "thread-current",
+              projectKey: "proj-current",
+              cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+              displayName: "coding-anywhere",
+              title: "follow-up",
+              source: "vscode",
+              archived: false,
+              updatedAt: "2026-03-30T00:00:00.000Z",
+              createdAt: "2026-03-29T00:00:00.000Z",
+              gitBranch: "main",
+              cliVersion: "0.116.0",
+              rolloutPath: "D:/rollout",
+            }
+          : undefined),
+        listRecentConversation: vi.fn(() => [
+          {
+            role: "user" as const,
+            text: "请把这轮改动同步到当前会话卡里。",
+            timestamp: "2026-04-20T10:05:00.000Z",
+          },
+          {
+            role: "assistant" as const,
+            text: [
+              "都通过了。当前分支就是 main，提交是 24e5edd，工作区干净。",
+              `::git-stage{cwd=\"${repoCwd}\"}`,
+              `::git-commit{cwd=\"${repoCwd}\"}`,
+            ].join("\n"),
+            timestamp: "2026-04-20T10:10:00.000Z",
+          },
+        ]),
+      },
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca session",
+    });
+
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("都通过了。当前分支就是 main，提交是 24e5edd，工作区干净。");
+    expect(cardText).toContain("2 个文件已更改");
+    expect(cardText).not.toContain("::git-stage");
+    expect(cardText).not.toContain("::git-commit");
   });
 
   it("shows the current live run for the same surface and stops it on /ca stop", async () => {
@@ -2560,6 +2646,20 @@ function createRunnerDouble(
       };
     }),
   };
+}
+
+function createGitRepo(rootDir: string, prefix: string): string {
+  const repoDir = mkdtempSync(path.join(rootDir, `${prefix}-`));
+  git(repoDir, ["init"]);
+  git(repoDir, ["config", "user.name", "Codex Test"]);
+  git(repoDir, ["config", "user.email", "codex@example.com"]);
+  return repoDir;
+}
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+  }).trim();
 }
 
 function readCardSummaryMarkdown(card: Record<string, unknown>): string {

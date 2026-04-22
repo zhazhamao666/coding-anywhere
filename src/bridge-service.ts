@@ -17,6 +17,7 @@ import {
   normalizeReasoningEffort,
 } from "./codex-preferences.js";
 import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
+import { buildFeishuVisibleAssistantText } from "./feishu-assistant-message.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import { normalizeMarkdownToPlainText } from "./markdown-text.js";
 import type { ProjectThreadService } from "./project-thread-service.js";
@@ -2314,7 +2315,7 @@ export class BridgeService {
     recentConversation: CodexCatalogConversationItem[],
   ): BridgeReply {
     const conversationItems = recentConversation.length > 0
-      ? recentConversation.map(item => `${item.role === "user" ? "用户" : "助手"}：${item.text}`)
+      ? recentConversation.map(item => this.formatConversationPreviewItem(item))
       : ["暂未读取到可展示的最近对话。"];
 
     return {
@@ -2662,7 +2663,7 @@ export class BridgeService {
     const currentRun = this.findCurrentRunByThreadId(thread.threadId, `codex-thread:${thread.threadId}`);
     const actionContext = this.buildCardActionContext(input);
     const conversationItems = recentConversation.length > 0
-      ? recentConversation.map(item => `${item.role === "user" ? "用户" : "助手"}：${item.text}`)
+      ? recentConversation.map(item => this.formatConversationPreviewItem(item))
       : ["暂未读取到可展示的最近对话。"];
 
     const sections: Array<{
@@ -2918,7 +2919,7 @@ export class BridgeService {
     recentConversation: CodexCatalogConversationItem[],
   ): BridgeReply {
     const conversationItems = recentConversation.length > 0
-      ? recentConversation.map(item => `${item.role === "user" ? "用户" : "助手"}：${item.text}`)
+      ? recentConversation.map(item => this.formatConversationPreviewItem(item))
       : ["暂未读取到可展示的最近对话。"];
 
     return {
@@ -3300,6 +3301,14 @@ export class BridgeService {
     }
     items.push(`摘要：${normalizeMarkdownToPlainText(currentRun.latestPreview)}`);
     return items;
+  }
+
+  private formatConversationPreviewItem(item: CodexCatalogConversationItem): string {
+    const visibleText = item.role === "assistant"
+      ? buildFeishuVisibleAssistantText(item.text)
+      : item.text;
+    const normalizedText = normalizeMarkdownToPlainText(visibleText).trim() || "（无可展示内容）";
+    return `${item.role === "user" ? "用户" : "助手"}：${normalizedText}`;
   }
 
   private maybePushStopAction(
