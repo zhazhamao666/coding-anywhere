@@ -221,6 +221,24 @@ export interface CodexThreadWatchStateRecord {
   updatedAt: string;
 }
 
+export interface CodexThreadDesktopNotificationStateRecord {
+  threadId: string;
+  activeRunKey: string | null;
+  status: "running_notified" | "completed";
+  startedAt: string | null;
+  lastEventAt: string | null;
+  messageId: string | null;
+  deliveryMode: "dm" | "project_group" | "thread" | null;
+  peerId: string | null;
+  chatId: string | null;
+  surfaceType: "thread" | null;
+  surfaceRef: string | null;
+  anchorMessageId: string | null;
+  lastRenderHash: string | null;
+  lastCompletionKey: string | null;
+  updatedAt: string;
+}
+
 export interface CodexCatalogConversationItem {
   role: "user" | "assistant";
   text: string;

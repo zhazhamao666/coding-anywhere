@@ -9,6 +9,7 @@ import type {
   CodexChatBinding,
   CodexPreferenceRecord,
   CodexProjectSelection,
+  CodexThreadDesktopNotificationStateRecord,
   CodexThreadWatchStateRecord,
   CodexWindowBinding,
   CodexThreadRecord,
@@ -347,6 +348,217 @@ export class SessionStore {
     `).all() as CodexThreadWatchStateRow[];
 
     return rows.map(rowToCodexThreadWatchState);
+  }
+
+  public upsertCodexThreadDesktopNotificationState(input: {
+    threadId: string;
+    activeRunKey?: string | null;
+    status?: CodexThreadDesktopNotificationStateRecord["status"];
+    startedAt?: string | null;
+    lastEventAt?: string | null;
+    messageId?: string | null;
+    deliveryMode?: CodexThreadDesktopNotificationStateRecord["deliveryMode"];
+    peerId?: string | null;
+    chatId?: string | null;
+    surfaceType?: CodexThreadDesktopNotificationStateRecord["surfaceType"];
+    surfaceRef?: string | null;
+    anchorMessageId?: string | null;
+    lastRenderHash?: string | null;
+    lastCompletionKey?: string | null;
+  }): void {
+    const updatedAt = new Date().toISOString();
+    const params = {
+      ...input,
+      activeRunKey: input.activeRunKey ?? null,
+      activeRunKeyProvided: Object.prototype.hasOwnProperty.call(input, "activeRunKey") ? 1 : 0,
+      status: input.status ?? null,
+      statusProvided: Object.prototype.hasOwnProperty.call(input, "status") ? 1 : 0,
+      startedAt: input.startedAt ?? null,
+      startedAtProvided: Object.prototype.hasOwnProperty.call(input, "startedAt") ? 1 : 0,
+      lastEventAt: input.lastEventAt ?? null,
+      lastEventAtProvided: Object.prototype.hasOwnProperty.call(input, "lastEventAt") ? 1 : 0,
+      messageId: input.messageId ?? null,
+      messageIdProvided: Object.prototype.hasOwnProperty.call(input, "messageId") ? 1 : 0,
+      deliveryMode: input.deliveryMode ?? null,
+      deliveryModeProvided: Object.prototype.hasOwnProperty.call(input, "deliveryMode") ? 1 : 0,
+      peerId: input.peerId ?? null,
+      peerIdProvided: Object.prototype.hasOwnProperty.call(input, "peerId") ? 1 : 0,
+      chatId: input.chatId ?? null,
+      chatIdProvided: Object.prototype.hasOwnProperty.call(input, "chatId") ? 1 : 0,
+      surfaceType: input.surfaceType ?? null,
+      surfaceTypeProvided: Object.prototype.hasOwnProperty.call(input, "surfaceType") ? 1 : 0,
+      surfaceRef: input.surfaceRef ?? null,
+      surfaceRefProvided: Object.prototype.hasOwnProperty.call(input, "surfaceRef") ? 1 : 0,
+      anchorMessageId: input.anchorMessageId ?? null,
+      anchorMessageIdProvided: Object.prototype.hasOwnProperty.call(input, "anchorMessageId") ? 1 : 0,
+      lastRenderHash: input.lastRenderHash ?? null,
+      lastRenderHashProvided: Object.prototype.hasOwnProperty.call(input, "lastRenderHash") ? 1 : 0,
+      lastCompletionKey: input.lastCompletionKey ?? null,
+      lastCompletionKeyProvided: Object.prototype.hasOwnProperty.call(input, "lastCompletionKey") ? 1 : 0,
+      updatedAt,
+    };
+
+    const updateResult = this.db.prepare(`
+      UPDATE codex_thread_desktop_notification_state
+      SET
+        active_run_key = CASE
+          WHEN @activeRunKeyProvided = 1 THEN @activeRunKey
+          ELSE active_run_key
+        END,
+        status = CASE
+          WHEN @statusProvided = 1 THEN @status
+          ELSE status
+        END,
+        started_at = CASE
+          WHEN @startedAtProvided = 1 THEN @startedAt
+          ELSE started_at
+        END,
+        last_event_at = CASE
+          WHEN @lastEventAtProvided = 1 THEN @lastEventAt
+          ELSE last_event_at
+        END,
+        message_id = CASE
+          WHEN @messageIdProvided = 1 THEN @messageId
+          ELSE message_id
+        END,
+        delivery_mode = CASE
+          WHEN @deliveryModeProvided = 1 THEN @deliveryMode
+          ELSE delivery_mode
+        END,
+        peer_id = CASE
+          WHEN @peerIdProvided = 1 THEN @peerId
+          ELSE peer_id
+        END,
+        chat_id = CASE
+          WHEN @chatIdProvided = 1 THEN @chatId
+          ELSE chat_id
+        END,
+        surface_type = CASE
+          WHEN @surfaceTypeProvided = 1 THEN @surfaceType
+          ELSE surface_type
+        END,
+        surface_ref = CASE
+          WHEN @surfaceRefProvided = 1 THEN @surfaceRef
+          ELSE surface_ref
+        END,
+        anchor_message_id = CASE
+          WHEN @anchorMessageIdProvided = 1 THEN @anchorMessageId
+          ELSE anchor_message_id
+        END,
+        last_render_hash = CASE
+          WHEN @lastRenderHashProvided = 1 THEN @lastRenderHash
+          ELSE last_render_hash
+        END,
+        last_completion_key = CASE
+          WHEN @lastCompletionKeyProvided = 1 THEN @lastCompletionKey
+          ELSE last_completion_key
+        END,
+        updated_at = @updatedAt
+      WHERE thread_id = @threadId
+    `).run(params);
+
+    if (updateResult.changes > 0) {
+      return;
+    }
+
+    if (params.statusProvided === 0) {
+      throw new RangeError("New desktop notification-state rows require status");
+    }
+
+    this.db.prepare(`
+      INSERT INTO codex_thread_desktop_notification_state (
+        thread_id,
+        active_run_key,
+        status,
+        started_at,
+        last_event_at,
+        message_id,
+        delivery_mode,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        anchor_message_id,
+        last_render_hash,
+        last_completion_key,
+        updated_at
+      ) VALUES (
+        @threadId,
+        @activeRunKey,
+        @status,
+        @startedAt,
+        @lastEventAt,
+        @messageId,
+        @deliveryMode,
+        @peerId,
+        @chatId,
+        @surfaceType,
+        @surfaceRef,
+        @anchorMessageId,
+        @lastRenderHash,
+        @lastCompletionKey,
+        @updatedAt
+      )
+    `).run(params);
+  }
+
+  public getCodexThreadDesktopNotificationState(
+    threadId: string,
+  ): CodexThreadDesktopNotificationStateRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT
+        thread_id,
+        active_run_key,
+        status,
+        started_at,
+        last_event_at,
+        message_id,
+        delivery_mode,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        anchor_message_id,
+        last_render_hash,
+        last_completion_key,
+        updated_at
+      FROM codex_thread_desktop_notification_state
+      WHERE thread_id = ?
+    `).get(threadId) as CodexThreadDesktopNotificationStateRow | undefined;
+
+    return row ? rowToCodexThreadDesktopNotificationState(row) : undefined;
+  }
+
+  public listCodexThreadDesktopNotificationStates(): CodexThreadDesktopNotificationStateRecord[] {
+    const rows = this.db.prepare(`
+      SELECT
+        thread_id,
+        active_run_key,
+        status,
+        started_at,
+        last_event_at,
+        message_id,
+        delivery_mode,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        anchor_message_id,
+        last_render_hash,
+        last_completion_key,
+        updated_at
+      FROM codex_thread_desktop_notification_state
+      ORDER BY updated_at DESC, thread_id ASC
+    `).all() as CodexThreadDesktopNotificationStateRow[];
+
+    return rows.map(rowToCodexThreadDesktopNotificationState);
+  }
+
+  public clearCodexThreadDesktopNotificationState(threadId: string): void {
+    this.db.prepare(`
+      DELETE FROM codex_thread_desktop_notification_state
+      WHERE thread_id = ?
+    `).run(threadId);
   }
 
   public upsertCodexThreadPreference(input: {
@@ -2253,6 +2465,24 @@ export class SessionStore {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS codex_thread_desktop_notification_state (
+        thread_id TEXT PRIMARY KEY,
+        active_run_key TEXT,
+        status TEXT NOT NULL,
+        started_at TEXT,
+        last_event_at TEXT,
+        message_id TEXT,
+        delivery_mode TEXT,
+        peer_id TEXT,
+        chat_id TEXT,
+        surface_type TEXT,
+        surface_ref TEXT,
+        anchor_message_id TEXT,
+        last_render_hash TEXT,
+        last_completion_key TEXT,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS codex_thread_preferences (
         thread_id TEXT PRIMARY KEY,
         model TEXT NOT NULL,
@@ -2300,6 +2530,9 @@ export class SessionStore {
 
       CREATE INDEX IF NOT EXISTS idx_codex_thread_watch_state_updated_at
       ON codex_thread_watch_state(updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_codex_thread_desktop_notification_state_updated_at
+      ON codex_thread_desktop_notification_state(updated_at DESC);
 
       CREATE INDEX IF NOT EXISTS idx_codex_surface_preferences_lookup
       ON codex_surface_preferences(channel, peer_id, chat_id, surface_type, surface_ref);
@@ -2639,6 +2872,24 @@ interface CodexThreadWatchStateRow {
   last_read_offset: number;
   last_completion_key: string | null;
   last_notified_completion_key: string | null;
+  updated_at: string;
+}
+
+interface CodexThreadDesktopNotificationStateRow {
+  thread_id: string;
+  active_run_key: string | null;
+  status: CodexThreadDesktopNotificationStateRecord["status"];
+  started_at: string | null;
+  last_event_at: string | null;
+  message_id: string | null;
+  delivery_mode: CodexThreadDesktopNotificationStateRecord["deliveryMode"];
+  peer_id: string | null;
+  chat_id: string | null;
+  surface_type: "thread" | null;
+  surface_ref: string | null;
+  anchor_message_id: string | null;
+  last_render_hash: string | null;
+  last_completion_key: string | null;
   updated_at: string;
 }
 
@@ -3013,6 +3264,28 @@ function rowToCodexThreadWatchState(row: CodexThreadWatchStateRow): CodexThreadW
     lastReadOffset: row.last_read_offset,
     lastCompletionKey: row.last_completion_key,
     lastNotifiedCompletionKey: row.last_notified_completion_key,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToCodexThreadDesktopNotificationState(
+  row: CodexThreadDesktopNotificationStateRow,
+): CodexThreadDesktopNotificationStateRecord {
+  return {
+    threadId: row.thread_id,
+    activeRunKey: row.active_run_key,
+    status: row.status,
+    startedAt: row.started_at,
+    lastEventAt: row.last_event_at,
+    messageId: row.message_id,
+    deliveryMode: row.delivery_mode,
+    peerId: row.peer_id,
+    chatId: row.chat_id,
+    surfaceType: row.surface_type,
+    surfaceRef: row.surface_ref,
+    anchorMessageId: row.anchor_message_id,
+    lastRenderHash: row.last_render_hash,
+    lastCompletionKey: row.last_completion_key,
     updatedAt: row.updated_at,
   };
 }
