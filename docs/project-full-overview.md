@@ -109,7 +109,7 @@
 79. Playwright 版真实飞书 live smoke 现在支持通过 `FEISHU_LIVE_PROJECT_KEY` 先强制切到指定测试项目，再发送 smoke 指令，降低在业务项目上误跑真实验证的风险
 80. 桌面 completion 通知卡的主按钮文案现在统一为“在飞书继续”，`continue_desktop_thread` 也已经覆盖三种接管路径：DM、已绑定飞书话题和项目群主时间线都会把目标 native Codex thread 接到对应飞书 surface，并统一落到“线程已切换”卡；其中项目群主时间线现在不再自动创建飞书话题，而是直接把当前群对话绑定到该 native thread
 81. 飞书已绑定项目群主时间线现在和 DM 保持同一套心智：`切换到此线程` / `在飞书继续` 都会把当前对话窗口直接绑定到一个 native Codex thread，后续普通群消息会继续进入这个线程
-82. 桌面侧原生 Codex thread 已经从“完成后单次通知”升级为完整生命周期通知：runtime 会在新一轮顶层 desktop run 发现 `task_started` 后先发一张 `桌面任务进行中` 卡，并在后续轮询里复用同一 `message_id` patch 最近公开进展与结构化计划清单；卡片会先展示“你最后说了什么”，再展示当前情况，不再额外放一个独立的 `进度 / Ran N commands` 区块
+82. 桌面侧原生 Codex thread 已经从“完成后单次通知”升级为完整生命周期通知：runtime 会在新一轮顶层 desktop run 发现 `task_started` 后先发一张 `桌面任务进行中` 卡，并在后续轮询里复用同一 `message_id` patch 最近公开进展与结构化计划清单；卡片会先展示“你最后说了什么”，再展示当前情况，不再额外放一个独立的 `进度 / Ran N commands` 区块；其中“你最后说了什么”会优先从 rollout 的结构化快照中提取，并显式忽略 `<subagent_notification>`、`<turn_aborted>` 这类 synthetic wrapper，避免把系统包装文本误显示成用户输入
 83. 同一轮 desktop run 完成后，bridge 会优先把这张运行态卡原地更新成 `桌面任务已完成`，在同一张卡里直接展示“你最后说了什么”和 `Codex 最终返回了什么` 的正文内容，不再额外补发第二张“完整回复”卡或结果消息；`在飞书继续` 也只会出现在完成态
 84. 飞书侧用户可见的运行状态摘要仍然遵循“公开进度”模型：脚本执行细节不再以 `最近工具：<raw command>` 形式直接出现，而是保留结构化进度或必要时折叠为 `Ran N commands` 这类计数摘要；桌面生命周期卡本身则不再单独展示命令计数区块
 85. 桌面 lifecycle 轮询在判定通知来源时，现在不仅会压制“刚刚完成的 Feishu run 回声”，也会压制“当前仍在运行中的 Feishu run”；只要同一 native `thread_id` 上还有 live Feishu run，就不会再额外发出 `桌面任务进行中` 或 `桌面任务已完成` 卡，避免把飞书自己发起的任务误报成桌面任务

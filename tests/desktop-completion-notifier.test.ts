@@ -166,6 +166,50 @@ describe("DesktopCompletionNotifier", () => {
     });
   });
 
+  it("falls back to the last real user prompt when snapshot and recent conversation contain synthetic wrappers", async () => {
+    const harness = createHarness(harnesses, {
+      codexCatalogOverrides: {
+        getDesktopDisplaySnapshot: vi.fn(() => ({
+          lastHumanUserText: "<turn_aborted>\nThe user interrupted the previous turn on purpose.\n</turn_aborted>",
+        })),
+        listRecentConversation: vi.fn(() => [
+          {
+            role: "user" as const,
+            text: "请继续整理 Obsidian 入库流水线的实现方案。",
+            timestamp: "2026-04-22T15:26:00.000Z",
+          },
+          {
+            role: "user" as const,
+            text: "<turn_aborted>\nThe user interrupted the previous turn on purpose.\n</turn_aborted>",
+            timestamp: "2026-04-22T15:26:18.000Z",
+          },
+        ]),
+      },
+    });
+    seedWatchState(harness.store, {
+      threadId: "thread-native-1",
+    });
+
+    await harness.notifier.publishRunning({
+      threadId: "thread-native-1",
+      progress: createProgressSnapshot(),
+      target: {
+        mode: "dm",
+        peerId: "ou_demo",
+      },
+    });
+
+    const card = harness.apiClient.sendInteractiveCard.mock.calls[0]?.[1] as {
+      body?: { elements?: Array<{ content?: string }> };
+    };
+    const markdownContent = (card.body?.elements ?? [])
+      .map(element => element.content ?? "")
+      .join("\n");
+
+    expect(markdownContent).toContain("请继续整理 Obsidian 入库流水线的实现方案。");
+    expect(markdownContent).not.toContain("The user interrupted the previous turn on purpose.");
+  });
+
   it("replies only a completion card into an existing Feishu topic via the stored thread anchor", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
@@ -484,6 +528,11 @@ function createHarness(
   harnesses: NotifierHarness[],
   input?: {
     apiClientOverrides?: Partial<ReturnType<typeof createApiClientDouble>>;
+    codexCatalogOverrides?: Partial<{
+      getThread: ReturnType<typeof vi.fn>;
+      listRecentConversation: ReturnType<typeof vi.fn>;
+      getDesktopDisplaySnapshot: ReturnType<typeof vi.fn>;
+    }>;
   },
 ): NotifierHarness {
   const rootDir = mkdtempSync(path.join(tmpdir(), "desktop-completion-notifier-"));
@@ -519,6 +568,7 @@ function createHarness(
     getDesktopDisplaySnapshot: vi.fn(() => ({
       lastHumanUserText: "请把完整结果发回飞书，并给一个清晰的通知卡。",
     })),
+    ...input?.codexCatalogOverrides,
   };
   const notifier = new DesktopCompletionNotifier({
     apiClient: apiClient as any,

@@ -442,6 +442,81 @@ describe("CodexSqliteCatalog", () => {
     });
   });
 
+  it("ignores turn_aborted wrappers that are logged before the next task_started event", () => {
+    const rolloutPath = path.join(rootDir, "alpha-2.jsonl");
+    writeFileSync(
+      rolloutPath,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-22T15:25:50.000Z",
+          type: "session_meta",
+          payload: {
+            id: "thread-alpha-2",
+            timestamp: "2026-04-22T15:25:50.000Z",
+            cwd: "D:\\Repos\\Alpha",
+            cli_version: "0.116.0",
+            source: "cli",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-22T15:26:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "请继续整理 Obsidian 入库流水线的实现方案。",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-22T15:26:18.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "<turn_aborted> The user interrupted the previous turn on purpose. Any running unified exec processes may still be running in the background. If any tools/commands were aborted, they may have partially executed. </turn_aborted>",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-22T15:26:18.100Z",
+          type: "event_msg",
+          payload: {
+            type: "turn_aborted",
+            turn_id: "turn-top-level-1",
+            reason: "interrupted",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-22T15:26:21.000Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-top-level-2",
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    const catalog = new CodexSqliteCatalog({
+      sqlitePath,
+      sessionIndexPath,
+    });
+
+    expect(catalog.getDesktopDisplaySnapshot("thread-alpha-2")).toMatchObject({
+      lastHumanUserText: "请继续整理 Obsidian 入库流水线的实现方案。",
+    });
+  });
+
   it("supplements threads from session rollouts when session_index is ahead of the SQLite catalog", () => {
     const sessionDir = path.join(rootDir, "sessions", "2026", "03", "27");
     mkdirSync(sessionDir, { recursive: true });

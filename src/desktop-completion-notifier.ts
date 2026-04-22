@@ -4,6 +4,7 @@ import type {
   CodexDesktopCompletionEvent,
   CodexDesktopProgressSnapshot,
 } from "./codex-desktop-completion-observer.js";
+import { isSyntheticDesktopReminderText } from "./desktop-reminder-text.js";
 import { buildDesktopCompletionCard } from "./feishu-card/desktop-completion-card-builder.js";
 import { normalizeMarkdownToPlainText } from "./markdown-text.js";
 import type {
@@ -333,8 +334,9 @@ function resolveLastHumanUserText(
   threadTitleFallback?: string,
 ): string | undefined {
   const snapshot = codexCatalog?.getDesktopDisplaySnapshot?.(threadId);
+  const snapshotText = snapshot?.lastHumanUserText ?? "";
   const structuredText = normalizeMarkdownToPlainText(snapshot?.lastHumanUserText ?? "").trim();
-  if (structuredText) {
+  if (structuredText && !isSyntheticDesktopReminderText(snapshotText)) {
     return structuredText;
   }
 
@@ -351,6 +353,10 @@ function resolveLastUserReminder(
   for (let index = conversation.length - 1; index >= 0; index -= 1) {
     const item = conversation[index];
     if (item.role !== "user") {
+      continue;
+    }
+
+    if (isSyntheticDesktopReminderText(item.text)) {
       continue;
     }
 

@@ -4,6 +4,7 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
+import { isSyntheticDesktopReminderText } from "./desktop-reminder-text.js";
 import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
 import type {
   CodexCatalogConversationItem,
@@ -550,7 +551,7 @@ function readDesktopDisplaySnapshot(filePath: string): CodexDesktopDisplaySnapsh
     }
 
     const text = extractConversationText(parsed?.payload?.content);
-    if (!text) {
+    if (!text || isSyntheticDesktopReminderText(text)) {
       continue;
     }
 
