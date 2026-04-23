@@ -1,4 +1,5 @@
 export type CardSurfaceContext = {
+  chatType?: "p2p" | "group";
   chatId?: string;
   surfaceType?: "thread";
   surfaceRef?: string;
@@ -99,6 +100,7 @@ function withSurfaceContext(
 ): Record<string, unknown> {
   return {
     ...value,
+    ...(context.chatType ? { chatType: context.chatType } : {}),
     ...(context.chatId ? { chatId: context.chatId } : {}),
     ...(context.surfaceType ? { surfaceType: context.surfaceType } : {}),
     ...(context.surfaceRef ? { surfaceRef: context.surfaceRef } : {}),

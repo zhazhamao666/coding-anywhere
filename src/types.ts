@@ -185,6 +185,7 @@ export interface BridgeMessageInput {
   channel: string;
   peerId: string;
   text: string;
+  chatType?: "p2p" | "group";
   chatId?: string;
   surfaceType?: "thread";
   surfaceRef?: string;

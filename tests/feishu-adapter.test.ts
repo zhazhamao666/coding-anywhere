@@ -68,14 +68,15 @@ describe("FeishuAdapter", () => {
 
     expect(bridgeService.handleMessage).toHaveBeenCalledTimes(1);
     expect(bridgeService.handleMessage).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         channel: "feishu",
+        chatType: "p2p",
         peerId: "ou_demo",
         text: "你好，codex",
-      },
-      {
+      }),
+      expect.objectContaining({
         onProgress: expect.any(Function),
-      },
+      }),
     );
     expect(controller.push).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -169,14 +170,15 @@ describe("FeishuAdapter", () => {
     });
 
     expect(bridgeService.handleMessage).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         channel: "feishu",
+        chatType: "p2p",
         peerId: "ou_anyone",
         text: "hello",
-      },
-      {
+      }),
+      expect.objectContaining({
         onProgress: expect.any(Function),
-      },
+      }),
     );
     expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_anyone", "未配置 allowlist 也可使用");
   });
@@ -250,15 +252,16 @@ describe("FeishuAdapter", () => {
     });
 
     expect(bridgeService.handleMessage).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         channel: "feishu",
         peerId: "ou_demo",
+        chatType: "group",
         chatId: "oc_chat_bound",
         text: "继续这个群里的线程",
-      },
-      {
+      }),
+      expect.objectContaining({
         onProgress: expect.any(Function),
-      },
+      }),
     );
     expect(apiClient.replyTextMessage).toHaveBeenCalledWith("om_group_plain_1", "收到群聊消息");
   });

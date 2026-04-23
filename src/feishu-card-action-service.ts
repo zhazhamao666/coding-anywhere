@@ -32,6 +32,7 @@ interface CardActionValue {
   choiceId?: string;
   threadId?: string;
   mode?: "dm" | "project_group" | "thread";
+  chatType?: "p2p" | "group";
   chatId?: string;
   messageId?: string;
   surfaceType?: "thread";
@@ -46,6 +47,7 @@ export class FeishuCardActionService {
           channel: string;
           peerId: string;
           text: string;
+          chatType?: "p2p" | "group";
           chatId?: string;
           surfaceType?: "thread";
           surfaceRef?: string;
@@ -57,6 +59,7 @@ export class FeishuCardActionService {
           peerId: string;
           interactionId: string;
           choiceId: string;
+          chatType?: "p2p" | "group";
           chatId?: string;
           surfaceType?: "thread";
           surfaceRef?: string;
@@ -70,6 +73,7 @@ export class FeishuCardActionService {
         updateCodexPreferences?(input: {
           channel: string;
           peerId: string;
+          chatType?: "p2p" | "group";
           chatId?: string;
           surfaceType?: "thread";
           surfaceRef?: string;
@@ -81,6 +85,7 @@ export class FeishuCardActionService {
           channel: string;
           peerId: string;
           action: "toggle_plan_mode" | "open_diagnostics" | "close_diagnostics";
+          chatType?: "p2p" | "group";
           chatId?: string;
           surfaceType?: "thread";
           surfaceRef?: string;
@@ -90,6 +95,7 @@ export class FeishuCardActionService {
           peerId: string;
           threadId: string;
           mode: "dm" | "project_group" | "thread";
+          chatType?: "p2p" | "group";
           chatId?: string;
           surfaceType?: "thread";
           surfaceRef?: string;
@@ -147,6 +153,7 @@ export class FeishuCardActionService {
       const updatedReply = await this.dependencies.bridgeService.updateCodexPreferences({
         channel: "feishu",
         peerId: event.open_id,
+        chatType: actionValue?.chatType,
         chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
@@ -184,6 +191,7 @@ export class FeishuCardActionService {
         channel: "feishu",
         peerId: event.open_id,
         action: bridgeAction === "open_plan_form" ? "toggle_plan_mode" : bridgeAction,
+        chatType: actionValue?.chatType,
         chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
@@ -214,6 +222,7 @@ export class FeishuCardActionService {
         peerId: event.open_id,
         threadId,
         mode,
+        chatType: actionValue?.chatType,
         chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
@@ -281,6 +290,7 @@ export class FeishuCardActionService {
         execute: options => this.dependencies.bridgeService.handleMessage({
           channel: "feishu",
           peerId: event.open_id,
+          chatType: actionValue?.chatType,
           chatId: effectiveChatId,
           surfaceType: actionValue?.surfaceType,
           surfaceRef: actionValue?.surfaceRef,
@@ -314,6 +324,7 @@ export class FeishuCardActionService {
         execute: options => this.dependencies.bridgeService.handlePlanChoice?.({
           channel: "feishu",
           peerId: event.open_id,
+          chatType: actionValue?.chatType,
           chatId: effectiveChatId,
           surfaceType: actionValue?.surfaceType,
           surfaceRef: actionValue?.surfaceRef,
@@ -359,12 +370,14 @@ export class FeishuCardActionService {
       actionValue,
       interactionToken: event.token,
       existingMessageId: patchTargetMessageId,
+      chatType: actionValue?.chatType,
       chatId: effectiveChatId,
       surfaceType: actionValue?.surfaceType,
       surfaceRef: actionValue?.surfaceRef,
       execute: () => this.dependencies.bridgeService.handleMessage({
         channel: "feishu",
         peerId: event.open_id,
+        chatType: actionValue?.chatType,
         chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
@@ -391,6 +404,7 @@ export class FeishuCardActionService {
             value: {
               command: BRIDGE_COMMAND_PREFIX,
               cardId: actionValue.cardId,
+              chatType: actionValue.chatType,
               chatId: actionValue.chatId,
               messageId: actionValue.messageId,
               surfaceType: actionValue.surfaceType,
@@ -506,6 +520,7 @@ export class FeishuCardActionService {
     actionValue?: CardActionValue;
     interactionToken?: string;
     existingMessageId?: string;
+    chatType?: "p2p" | "group";
     chatId?: string;
     surfaceType?: "thread";
     surfaceRef?: string;
@@ -532,6 +547,7 @@ export class FeishuCardActionService {
           command: input.command,
           replies,
           peerId: input.peerId,
+          chatType: input.chatType,
           chatId: input.chatId,
           surfaceType: input.surfaceType,
           surfaceRef: input.surfaceRef,
@@ -551,6 +567,7 @@ export class FeishuCardActionService {
     command: string;
     replies: BridgeReply[];
     peerId: string;
+    chatType?: "p2p" | "group";
     chatId?: string;
     surfaceType?: "thread";
     surfaceRef?: string;
@@ -570,6 +587,7 @@ export class FeishuCardActionService {
     const replies = await this.dependencies.bridgeService.handleMessage({
       channel: "feishu",
       peerId: input.peerId,
+      chatType: input.chatType,
       chatId: input.chatId,
       surfaceType: input.surfaceType,
       surfaceRef: input.surfaceRef,

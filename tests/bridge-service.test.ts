@@ -577,10 +577,11 @@ describe("BridgeService", () => {
     });
     const hubCard = (hubReplies[0] as { card: Record<string, unknown> }).card;
     const hubCardText = JSON.stringify(hubCard);
-    expect(hubCardText).toContain("当前运行");
-    expect(hubCardText).toContain("停止任务");
-    expect(hubCardText).toContain("still working");
-    expect(hubCardText).not.toContain("**明确待办**");
+    expect(hubCardText).toContain("当前会话已就绪");
+    expect(hubCardText).not.toContain("停止任务");
+    expect(hubCardText).not.toContain("当前运行");
+    expect(hubCardText).toContain("更多信息");
+    expect(hubCardText).not.toContain("still working");
 
     const sessionReplies = await service.handleMessage({
       channel: "feishu",
@@ -619,7 +620,7 @@ describe("BridgeService", () => {
     ]);
   });
 
-  it("returns a hub card for the current project chat with button actions instead of command text", async () => {
+  it("returns the stable current-session card for the current project chat", async () => {
     store.createProject({
       projectId: "proj-current",
       name: "Current Project",
@@ -662,17 +663,17 @@ describe("BridgeService", () => {
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("当前会话已就绪");
     expect(cardText).toContain("\"tag\":\"button\"");
-    expect(cardText).toContain("当前项目");
-    expect(cardText).toContain("proj-current");
-    expect(cardText).toContain("follow-up");
-    expect(cardText).toContain("当前项目线程");
-    expect(cardText).toContain("当前项目");
-    expect(cardText).toContain("线程列表");
+    expect(cardText).toContain("Current Project");
+    expect(cardText).toContain("未绑定");
+    expect(cardText).toContain("切换线程");
+    expect(cardText).toContain("更多信息");
+    expect(cardText).not.toContain("当前项目线程");
     expect(cardText).not.toContain("当前项目群快捷命令");
   });
 
-  it("returns a hub card with project summaries in DM", async () => {
+  it("returns the stable current-session card in DM instead of the old project-summary hub", async () => {
     store.createProject({
       projectId: "proj-alpha",
       name: "Alpha",
@@ -708,21 +709,18 @@ describe("BridgeService", () => {
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("项目概览");
-    expect(cardText).toContain("proj-alpha");
-    expect(cardText).toContain("proj-beta");
-    expect(cardText).toContain("chat=oc_chat_alpha");
-    expect(cardText).not.toContain("当前项目");
-    expect(cardText).toContain("项目列表");
-    expect(cardText).toContain("运行状态");
-    expect(cardText).toContain("当前会话");
-    expect(cardText).toContain("新会话");
+    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).toContain("未选择");
+    expect(cardText).toContain("切换线程");
+    expect(cardText).toContain("更多信息");
     expect(cardText).not.toContain("停止任务");
     expect(cardText).toContain("计划模式");
-    expect(cardText).not.toContain("DM 快捷命令");
+    expect(cardText).not.toContain("项目概览");
+    expect(cardText).not.toContain("proj-alpha");
+    expect(cardText).not.toContain("proj-beta");
   });
 
-  it("shows only the thread title in the DM hub when the session id already points at the same native thread", async () => {
+  it("shows only the thread title in the DM current-session card when the session id already points at the same native thread", async () => {
     store.createProject({
       projectId: "proj-native",
       name: "coding-anywhere",
@@ -788,13 +786,13 @@ describe("BridgeService", () => {
     });
     const card = (replies[0] as { card: Record<string, unknown> }).card;
     const cardText = JSON.stringify(card);
-    expect(cardText).toContain("**当前线程**：native follow-up");
+    expect(cardText).toContain("**线程**：native follow-up");
     expect(readCardSummaryMarkdown(card)).not.toContain("Session");
-    expect(cardText).toContain("线程 ID：thread-native-current");
-    expect(cardText).not.toContain("**当前线程**：thread-native-current · native follow-up");
+    expect(cardText).not.toContain("thread-native-current");
+    expect(cardText).not.toContain("**线程**：thread-native-current · native follow-up");
   });
 
-  it("shows only the thread title in the registered thread hub when the session id already points at the same native thread", async () => {
+  it("shows only the thread title in the registered thread current-session card when the session id already points at the same native thread", async () => {
     store.createProject({
       projectId: "proj-current",
       name: "Current Project",
@@ -834,10 +832,37 @@ describe("BridgeService", () => {
     });
     const card = (replies[0] as { card: Record<string, unknown> }).card;
     const cardText = JSON.stringify(card);
-    expect(cardText).toContain("**当前线程**：follow-up");
+    expect(cardText).toContain("**线程**：follow-up");
     expect(readCardSummaryMarkdown(card)).not.toContain("Session");
-    expect(cardText).toContain("线程 ID：thread-current");
-    expect(cardText).not.toContain("**当前线程**：thread-current · follow-up");
+    expect(cardText).not.toContain("thread-current");
+    expect(cardText).not.toContain("**线程**：thread-current · follow-up");
+  });
+
+  it("keeps DM session-card state on the same surface even when DM callbacks carry chatId", async () => {
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+    });
+
+    const toggled = await service.handleSessionCardUiAction({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatType: "p2p",
+      chatId: "oc_dm_card",
+      action: "toggle_plan_mode",
+    });
+
+    expect(toggled).toMatchObject({ kind: "card" });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca",
+    });
+
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("计划模式 [开]");
+    expect(cardText).not.toContain("当前群");
   });
 
   it("creates and binds a native thread for the first DM prompt, wraps prompts and emits lifecycle snapshots", async () => {
@@ -1489,7 +1514,7 @@ describe("BridgeService", () => {
     expect(snapshots.filter(snapshot => snapshot.stage === "text")).toHaveLength(3);
   });
 
-  it("returns a hub card for CA help and unknown subcommands", async () => {
+  it("routes CA help and unknown subcommands to the stable current-session card", async () => {
     const service = new BridgeService({
       store,
       runner: createRunnerDouble(),
@@ -1506,11 +1531,10 @@ describe("BridgeService", () => {
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("CA Hub");
-    expect(cardText).toContain("\"command\":\"/ca\"");
-    expect(cardText).toContain("运行状态");
-    expect(cardText).not.toContain("停止任务");
-    expect(cardText).not.toContain("DM 快捷命令");
+    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).not.toContain("CA Hub");
+    expect(cardText).toContain("切换线程");
+    expect(cardText).toContain("更多信息");
   });
 
   it("creates and rebinds a fresh native thread when /ca new is used inside a feishu thread", async () => {
@@ -1667,6 +1691,44 @@ describe("BridgeService", () => {
     expect(cardText).not.toContain("路径：");
     expect(cardText).toContain("返回导航");
     expect(cardText).toContain("新会话");
+  });
+
+  it("keeps DM catalog project list cards on the DM path even when callbacks carry chatId", async () => {
+    const catalog = {
+      listProjects: vi.fn(() => [{
+        projectKey: "proj-native",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        displayName: "coding-anywhere",
+        threadCount: 3,
+        activeThreadCount: 1,
+        lastUpdatedAt: "2026-04-23T10:00:00.000Z",
+        gitBranch: "main",
+      }]),
+      getProject: vi.fn(),
+      listThreads: vi.fn(() => []),
+      getThread: vi.fn(),
+      listRecentConversation: vi.fn(() => []),
+    };
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: catalog,
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_dm_card",
+      chatType: "p2p",
+      text: "/ca project list",
+    });
+
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("选择项目");
+    expect(cardText).toContain("进入项目");
+    expect(cardText).not.toContain("当前群");
+    expect(cardText).not.toContain("绑定到本群");
+    expect(cardText).not.toContain("已绑定其他群");
   });
 
   it("returns an empty project list card instead of a system message", async () => {

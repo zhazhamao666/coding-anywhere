@@ -839,6 +839,64 @@ describe("FeishuCardActionService", () => {
     });
   });
 
+  it("preserves DM callback context even when Feishu provides open_chat_id", async () => {
+    const deferred = createDeferred<BridgeReply[]>();
+    const bridgeService = {
+      handleMessage: vi.fn(() => deferred.promise),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const result = await service.handleAction({
+      open_id: "ou_demo",
+      open_chat_id: "oc_dm_card",
+      open_message_id: "om_callback_dm",
+      token: "c-token-dm",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca project list",
+          chatId: "oc_dm_card",
+          chatType: "p2p",
+        } as any,
+      },
+    });
+
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_dm_card",
+      chatType: "p2p",
+      text: "/ca project list",
+    }));
+    expect(result).toMatchObject({
+      toast: {
+        type: "info",
+      },
+    });
+
+    deferred.resolve([
+      { kind: "system", text: "[ca] project list: ok" } as BridgeReply,
+    ]);
+
+    await vi.waitFor(() => {
+      expect(apiClient.delayUpdateInteractiveCard).toHaveBeenCalledWith({
+        token: "c-token-dm",
+        card: expect.objectContaining({
+          header: expect.objectContaining({
+            title: expect.objectContaining({
+              content: "命令结果",
+            }),
+          }),
+        }),
+      });
+    });
+  });
+
   it("passes group project bind buttons through the token-finalize command callback path", async () => {
     const deferred = createDeferred<BridgeReply[]>();
     const replyCard = {

@@ -201,6 +201,7 @@ export class BridgeService {
     channel: string;
     peerId: string;
     action: "toggle_plan_mode" | "open_diagnostics" | "close_diagnostics";
+    chatType?: "p2p" | "group";
     chatId?: string;
     surfaceType?: "thread";
     surfaceRef?: string;
@@ -215,11 +216,7 @@ export class BridgeService {
     }
 
     this.dependencies.store.upsertSurfaceInteractionState({
-      channel: input.channel,
-      peerId: input.peerId,
-      chatId: input.chatId ?? null,
-      surfaceType: input.surfaceType ?? null,
-      surfaceRef: input.surfaceRef ?? null,
+      ...this.normalizeSurfaceIdentity(input),
       sessionMode: nextState.sessionMode,
       diagnosticsOpen: nextState.diagnosticsOpen,
     });
@@ -227,6 +224,7 @@ export class BridgeService {
     const [reply] = await this.handleMessage({
       channel: input.channel,
       peerId: input.peerId,
+      chatType: input.chatType,
       chatId: input.chatId,
       surfaceType: input.surfaceType,
       surfaceRef: input.surfaceRef,
@@ -278,6 +276,7 @@ export class BridgeService {
     peerId: string;
     threadId: string;
     mode: "dm" | "project_group" | "thread";
+    chatType?: "p2p" | "group";
     chatId?: string;
     surfaceType?: "thread";
     surfaceRef?: string;
@@ -319,6 +318,7 @@ export class BridgeService {
         {
           channel: input.channel,
           peerId: input.peerId,
+          chatType: input.chatType,
           text: `${BRIDGE_COMMAND_PREFIX} thread switch ${selection.thread.threadId}`,
         },
         selection.project,
@@ -332,6 +332,7 @@ export class BridgeService {
     channel: string;
     peerId: string;
     threadId: string;
+    chatType?: "p2p" | "group";
     chatId?: string;
     surfaceType?: "thread";
     surfaceRef?: string;
@@ -377,6 +378,7 @@ export class BridgeService {
         {
           channel: input.channel,
           peerId: input.peerId,
+          chatType: input.chatType,
           chatId: input.chatId,
           surfaceType: "thread",
           surfaceRef: input.surfaceRef,
@@ -393,6 +395,7 @@ export class BridgeService {
     channel: string;
     peerId: string;
     threadId: string;
+    chatType?: "p2p" | "group";
     chatId?: string;
   }): Promise<DesktopThreadContinuationResult> {
     const selection = this.lookupCatalogThreadSelection(input.threadId);
@@ -448,6 +451,7 @@ export class BridgeService {
         {
           channel: input.channel,
           peerId: input.peerId,
+          chatType: input.chatType,
           chatId: projectChat.chatId,
           text: `${BRIDGE_COMMAND_PREFIX} thread switch ${selection.thread.threadId}`,
         },
@@ -473,11 +477,7 @@ export class BridgeService {
       : routed.prompt;
     if (surfaceInteractionState.sessionMode === "plan_next_message") {
       this.dependencies.store.upsertSurfaceInteractionState({
-        channel: input.channel,
-        peerId: input.peerId,
-        chatId: input.chatId ?? null,
-        surfaceType: input.surfaceType ?? null,
-        surfaceRef: input.surfaceRef ?? null,
+        ...this.normalizeSurfaceIdentity(input),
         sessionMode: "normal",
         diagnosticsOpen: surfaceInteractionState.diagnosticsOpen,
       });
@@ -914,6 +914,7 @@ export class BridgeService {
   public async updateCodexPreferences(input: {
     channel: string;
     peerId: string;
+    chatType?: "p2p" | "group";
     chatId?: string;
     surfaceType?: "thread";
     surfaceRef?: string;
@@ -924,6 +925,7 @@ export class BridgeService {
     const sessionInput: BridgeMessageInput = {
       channel: input.channel,
       peerId: input.peerId,
+      chatType: input.chatType,
       chatId: input.chatId,
       surfaceType: input.surfaceType,
       surfaceRef: input.surfaceRef,
@@ -964,6 +966,7 @@ export class BridgeService {
     peerId: string;
     interactionId: string;
     choiceId: string;
+    chatType?: "p2p" | "group";
     chatId?: string;
     surfaceType?: "thread";
     surfaceRef?: string;
@@ -992,7 +995,7 @@ export class BridgeService {
       }];
     }
 
-    if (!input.chatId && !input.surfaceType) {
+    if (this.isDmContext(input)) {
       const binding = this.dependencies.store.getCodexWindowBinding(input.channel, input.peerId);
       if (!binding || binding.codexThreadId !== interaction.threadId) {
         this.dependencies.store.bindCodexWindow({
@@ -1012,6 +1015,7 @@ export class BridgeService {
       {
         channel: input.channel,
         peerId: input.peerId,
+        chatType: input.chatType,
         chatId: input.chatId,
         surfaceType: input.surfaceType,
         surfaceRef: input.surfaceRef,
@@ -1078,7 +1082,7 @@ export class BridgeService {
           return [this.buildResolvedSessionCardReply(input, this.resolveContext(input))];
         }
 
-        if (input.chatId) {
+        if (this.isGroupMainlineContext(input) && input.chatId) {
           const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
           if (!projectChat) {
             throw new Error("PROJECT_CHAT_CONTEXT_REQUIRED");
@@ -1140,21 +1144,7 @@ export class BridgeService {
         }];
       }
       case "session": {
-        const codexSelection = this.lookupDmCodexSelection(input);
-        if (codexSelection) {
-          const recentConversation = this.dependencies.codexCatalog?.listRecentConversation(codexSelection.thread.threadId) ?? [];
-          return [
-            this.buildCurrentCodexSessionCardReply(
-              input,
-              codexSelection.project,
-              codexSelection.thread,
-              selectSwitchCardConversation(recentConversation),
-            ),
-          ];
-        }
-
-        const resolved = this.resolveContext(input);
-        return [this.buildResolvedSessionCardReply(input, resolved)];
+        return this.handleHubCommand(input);
       }
       case "logs": {
         const resolved = this.resolveContext(input);
@@ -1170,299 +1160,21 @@ export class BridgeService {
   }
 
   private handleHubCommand(input: BridgeMessageInput): BridgeReply[] {
-    const root = this.dependencies.store.getRoot();
-    if (!root) {
-      throw new Error("ROOT_NOT_CONFIGURED");
+    const codexSelection = this.lookupDmCodexSelection(input);
+    if (codexSelection) {
+      const recentConversation = this.dependencies.codexCatalog?.listRecentConversation(codexSelection.thread.threadId) ?? [];
+      return [
+        this.buildCurrentCodexSessionCardReply(
+          input,
+          codexSelection.project,
+          codexSelection.thread,
+          selectSwitchCardConversation(recentConversation),
+        ),
+      ];
     }
 
-    const summaryLines = [`**Root**：${root.id}`, `**Root 路径**：${root.cwd}`];
-    const resolved = this.tryResolveContext(input);
-    const effectivePreferences = resolved
-      ? this.resolveEffectiveCodexPreferences(input, resolved)
-      : undefined;
-    if (effectivePreferences) {
-      summaryLines.push(...this.buildCodexPreferenceSummaryLines(effectivePreferences));
-    }
-    const sections: Array<{ title: string; items: string[]; monospace?: boolean }> = [];
-    const actionContext = this.buildCardActionContext(input);
-    const actions: Array<{
-      label: string;
-      value: Record<string, unknown>;
-      type?: "default" | "primary" | "danger";
-    }> = [{
-      label: "导航",
-      type: "primary",
-      value: this.buildCardActionValue(actionContext, BRIDGE_COMMAND_PREFIX),
-    }];
-
-    if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
-      const thread = this.dependencies.store.getCodexThreadBySurface(input.chatId, input.surfaceRef);
-      if (!thread) {
-        throw new Error("THREAD_NOT_REGISTERED");
-      }
-
-      const project = this.dependencies.store.getProject(thread.projectId);
-      if (!project) {
-        throw new Error("PROJECT_NOT_REGISTERED");
-      }
-
-      const currentRun = this.findCurrentRunByThreadId(thread.threadId);
-
-      summaryLines.push(`**当前项目**：${project.name}`);
-      summaryLines.push(`**当前线程**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`);
-      summaryLines.push(`线程 ID：${thread.threadId}`);
-      summaryLines.push(`**线程状态**：${thread.status ?? "provisioned"}`);
-      if (currentRun) {
-        sections.push({
-          title: "当前运行",
-          items: this.buildCurrentRunItems(currentRun),
-        });
-      }
-      const siblingThreads = this.dependencies.store.listProjectThreads(project.projectId).slice(0, 5);
-      if (siblingThreads.length > 0) {
-        sections.push({
-          title: "当前项目线程",
-          items: siblingThreads.map(
-            item => `${item.threadId} · ${item.title} · status=${item.status}`,
-          ),
-        });
-      }
-        actions.push(
-          {
-            label: "当前项目",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
-          },
-          {
-            label: "线程列表",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-          },
-          {
-            label: "计划模式",
-            value: this.buildPlanActionValue(actionContext),
-          },
-          {
-            label: "当前会话",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
-          },
-          {
-            label: "运行状态",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
-          },
-          {
-            label: "新会话",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
-          },
-        );
-      this.maybePushStopAction(actions, actionContext, currentRun);
-    } else if (input.chatId) {
-      const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
-
-      if (projectChat) {
-        const project = this.dependencies.store.getProject(projectChat.projectId);
-        if (!project) {
-          throw new Error("PROJECT_NOT_REGISTERED");
-        }
-        const groupSelection = this.lookupGroupChatCodexSelection(input.channel, projectChat);
-
-        summaryLines.push(`**当前项目**：${project.projectId}`);
-        summaryLines.push(`**项目名**：${project.name}`);
-        summaryLines.push(`**项目路径**：${project.cwd}`);
-        summaryLines.push(`**群聊**：${projectChat.chatId}`);
-        if (groupSelection) {
-          const currentRun = this.findCurrentRunByThreadId(groupSelection.thread.threadId, `codex-thread:${groupSelection.thread.threadId}`);
-          summaryLines.push(
-            `**当前线程**：${formatCurrentThreadLabel(groupSelection.thread.title, groupSelection.thread.threadId)}`,
-          );
-          summaryLines.push(`线程 ID：${groupSelection.thread.threadId}`);
-          if (currentRun) {
-            sections.push({
-              title: "当前运行",
-              items: this.buildCurrentRunItems(currentRun),
-            });
-          }
-          actions.push(
-            {
-              label: "当前项目",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
-            },
-            {
-              label: "线程列表",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-            },
-            {
-              label: "当前会话",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
-            },
-            {
-              label: "运行状态",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
-            },
-            {
-              label: "新会话",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
-            },
-          );
-          this.maybePushStopAction(actions, actionContext, currentRun);
-        } else {
-          const projectThreads = this.dependencies.store.listProjectThreads(project.projectId).slice(0, 5);
-          if (projectThreads.length > 0) {
-            sections.push({
-              title: "当前项目线程",
-              items: projectThreads.map(
-                item => `${item.threadId} · ${item.title} · status=${item.status}`,
-              ),
-            });
-          }
-          actions.push(
-            {
-              label: "当前项目",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
-            },
-            {
-              label: "线程列表",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-            },
-            {
-              label: "项目列表",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
-            },
-            {
-              label: "新会话",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
-            },
-          );
-        }
-      } else {
-        summaryLines.push("**当前项目**：未绑定");
-        sections.push({
-          title: "先完成项目绑定",
-          items: ["当前群还没绑定项目，可先查看项目列表或直接发送绑定命令。"],
-        });
-        actions.push({
-          label: "项目列表",
-          value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
-        });
-      }
-    } else {
-      const codexSelection = this.lookupDmCodexSelection(input);
-
-      if (codexSelection) {
-        const currentRun = this.findCurrentRunByThreadId(codexSelection.thread.threadId, `codex-thread:${codexSelection.thread.threadId}`);
-        summaryLines.push(`**当前项目**：${codexSelection.project.displayName}`);
-        summaryLines.push(`**项目路径**：${codexSelection.project.cwd}`);
-        summaryLines.push(
-          `**当前线程**：${formatCurrentThreadLabel(
-            codexSelection.thread.title,
-            codexSelection.thread.threadId,
-          )}`,
-        );
-        summaryLines.push(`线程 ID：${codexSelection.thread.threadId}`);
-        if (currentRun) {
-          sections.push({
-            title: "当前运行",
-            items: this.buildCurrentRunItems(currentRun),
-          });
-        }
-        actions.push(
-          {
-            label: "项目列表",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
-          },
-          {
-            label: "当前项目",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
-          },
-          {
-            label: "线程列表",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-          },
-          {
-            label: "计划模式",
-            value: this.buildPlanActionValue(actionContext),
-          },
-          {
-            label: "当前会话",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
-          },
-          {
-            label: "运行状态",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
-          },
-          {
-            label: "新会话",
-            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
-          },
-        );
-        this.maybePushStopAction(actions, actionContext, currentRun);
-      } else {
-        const resolved = this.tryResolveContext(input);
-        const currentRun = this.findCurrentRunForResolved(resolved);
-        const selectedProject = this.lookupDmSelectedProject(input);
-
-        summaryLines.push(`**当前上下文**：${selectedProject ? "已选择项目，未绑定线程" : "未选择项目和线程"}`);
-        if (selectedProject) {
-          summaryLines.push(`**已选项目**：${selectedProject.displayName}`);
-          summaryLines.push(`**项目路径**：${selectedProject.cwd}`);
-        }
-        if (currentRun) {
-          sections.push({
-            title: "当前运行",
-            items: this.buildCurrentRunItems(currentRun),
-          });
-        }
-        const catalogProjects = this.dependencies.codexCatalog?.listProjects().slice(0, 8) ?? [];
-        if (catalogProjects.length > 0) {
-          sections.push({
-            title: "Codex 项目概览",
-            items: catalogProjects.map(
-              project => `${project.displayName} · threads=${project.threadCount} · path=${project.cwd}`,
-            ),
-          });
-        } else {
-          const bridgeProjects = this.dependencies.store.listProjects().slice(0, 8);
-          if (bridgeProjects.length > 0) {
-            sections.push({
-              title: "项目概览",
-              items: bridgeProjects.map(
-                project => `${project.projectId} · chat=${project.chatId ?? "unbound"} · threads=${project.threadCount}`,
-              ),
-            });
-          }
-        }
-          actions.push(
-            {
-              label: "运行状态",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
-            },
-            {
-              label: "当前会话",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} session`),
-            },
-            {
-              label: "新会话",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
-            },
-            {
-              label: "计划模式",
-              value: this.buildPlanActionValue(actionContext),
-            },
-            {
-              label: "项目列表",
-              value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
-            },
-        );
-        this.maybePushStopAction(actions, actionContext, currentRun);
-      }
-    }
-
-    return [{
-      kind: "card",
-      card: buildBridgeHubCard({
-        summaryLines,
-        sections,
-        actions,
-      }),
-    }];
+    const resolved = this.resolveContext(input);
+    return [this.buildResolvedSessionCardReply(input, resolved)];
   }
 
   private async handleProjectCommand(
@@ -1478,7 +1190,7 @@ export class BridgeService {
         const projects = this.dependencies.codexCatalog.listProjects();
         return [this.buildCodexProjectListCardReply(input, projects)];
       }
-      if (input.chatId && this.dependencies.codexCatalog) {
+      if (this.isGroupMainlineContext(input) && input.chatId && this.dependencies.codexCatalog) {
         const projects = this.dependencies.codexCatalog.listProjects();
         return [this.buildGroupCodexProjectListCardReply(input, projects)];
       }
@@ -1540,7 +1252,7 @@ export class BridgeService {
         return [this.buildSelectedCodexProjectCardReply(input, selectedProject)];
       }
 
-      if (!input.chatId) {
+      if (!this.isGroupMainlineContext(input) || !input.chatId) {
         return [{ kind: "system", text: "[ca] current project: none" }];
       }
 
@@ -1564,6 +1276,9 @@ export class BridgeService {
 
     const isBindCurrent = action === "bind-current";
     const isBind = action === "bind";
+    if (isBindCurrent && !this.isGroupMainlineContext(input)) {
+      throw new Error("PROJECT_CHAT_CONTEXT_REQUIRED");
+    }
     if (isBindCurrent && rawProjectId && !rawChatIdOrCwd && this.dependencies.codexCatalog) {
       return [this.bindCurrentGroupToCatalogProject(input, rawProjectId)];
     }
@@ -1693,7 +1408,7 @@ export class BridgeService {
         ];
       }
 
-      if (input.chatId) {
+      if (this.isGroupMainlineContext(input) && input.chatId) {
         const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
         if (!projectChat) {
           throw new Error("PROJECT_CHAT_CONTEXT_REQUIRED");
@@ -1745,7 +1460,7 @@ export class BridgeService {
       }
 
       const effectiveProjectId = action === "list-current"
-        ? input.chatId
+        ? this.isGroupMainlineContext(input) && input.chatId
           ? this.dependencies.store.getProjectChatByChatId(input.chatId)?.projectId
           : undefined
         : projectId;
@@ -1766,7 +1481,7 @@ export class BridgeService {
     }
 
     const projectChat = isCreateCurrent
-      ? input.chatId
+      ? this.isGroupMainlineContext(input) && input.chatId
         ? this.dependencies.store.getProjectChatByChatId(input.chatId)
         : undefined
       : this.dependencies.store.getProjectChat(projectId);
@@ -1853,7 +1568,7 @@ export class BridgeService {
       };
     }
 
-    if (input.chatId) {
+    if (this.isGroupMainlineContext(input) && input.chatId) {
       const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
       if (projectChat) {
         const project = this.dependencies.store.getProject(projectChat.projectId);
@@ -3091,11 +2806,7 @@ export class BridgeService {
         kind: "thread",
         threadId: resolved.threadId,
         surface: {
-          channel: input.channel,
-          peerId: input.peerId,
-          chatId: input.chatId ?? null,
-          surfaceType: input.surfaceType ?? null,
-          surfaceRef: input.surfaceRef ?? null,
+          ...this.normalizeSurfaceIdentity(input),
         },
       };
     }
@@ -3103,11 +2814,7 @@ export class BridgeService {
     return {
       kind: "surface",
       surface: {
-        channel: input.channel,
-        peerId: input.peerId,
-        chatId: input.chatId ?? null,
-        surfaceType: input.surfaceType ?? null,
-        surfaceRef: input.surfaceRef ?? null,
+        ...this.normalizeSurfaceIdentity(input),
       },
     };
   }
@@ -3130,11 +2837,7 @@ export class BridgeService {
     }
 
     const surfacePreference = this.dependencies.store.getCodexSurfacePreference({
-      channel: input.channel,
-      peerId: input.peerId,
-      chatId: input.chatId ?? null,
-      surfaceType: input.surfaceType ?? null,
-      surfaceRef: input.surfaceRef ?? null,
+      ...this.normalizeSurfaceIdentity(input),
     });
     if (surfacePreference) {
       return {
@@ -3305,22 +3008,14 @@ export class BridgeService {
   private getSurfaceInteractionState(input: {
     channel: string;
     peerId: string;
+    chatType?: "p2p" | "group";
     chatId?: string;
     surfaceType?: "thread";
     surfaceRef?: string;
   }): SurfaceInteractionStateRecord {
-    return this.dependencies.store.getSurfaceInteractionState({
-      channel: input.channel,
-      peerId: input.peerId,
-      chatId: input.chatId ?? null,
-      surfaceType: input.surfaceType ?? null,
-      surfaceRef: input.surfaceRef ?? null,
-    }) ?? {
-      channel: input.channel,
-      peerId: input.peerId,
-      chatId: input.chatId ?? null,
-      surfaceType: input.surfaceType ?? null,
-      surfaceRef: input.surfaceRef ?? null,
+    const normalizedSurface = this.normalizeSurfaceIdentity(input);
+    return this.dependencies.store.getSurfaceInteractionState(normalizedSurface) ?? {
+      ...normalizedSurface,
       sessionMode: "normal",
       diagnosticsOpen: false,
       updatedAt: new Date(0).toISOString(),
@@ -3506,7 +3201,7 @@ export class BridgeService {
       return "feishu_thread";
     }
 
-    if (input.chatId) {
+    if (this.isGroupMainlineContext(input)) {
       return "feishu_chat";
     }
 
@@ -3655,7 +3350,7 @@ export class BridgeService {
         threadLabel = formatCurrentThreadLabel(thread.title, thread.threadId);
         threadId = thread.threadId;
       }
-    } else if (input.chatId) {
+    } else if (this.isGroupMainlineContext(input) && input.chatId) {
       const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
       if (projectChat) {
         const project = this.dependencies.store.getProject(projectChat.projectId);
@@ -3663,7 +3358,9 @@ export class BridgeService {
       }
     }
 
-    const deliveryChatId = currentRun?.deliveryChatId ?? resolved?.deliveryChatId ?? input.chatId ?? null;
+    const deliveryChatId = currentRun?.deliveryChatId
+      ?? resolved?.deliveryChatId
+      ?? (this.isGroupMainlineContext(input) ? input.chatId ?? null : null);
     const deliverySurfaceRef = currentRun?.deliverySurfaceRef ?? resolved?.deliverySurfaceRef ?? input.surfaceRef ?? null;
     const deliveryLabel = deliverySurfaceRef
       ? "当前飞书线程"
@@ -3682,19 +3379,69 @@ export class BridgeService {
   }
 
   private buildCardActionContext(input: BridgeMessageInput): {
+    chatType?: "p2p" | "group";
     chatId?: string;
     surfaceType?: "thread";
     surfaceRef?: string;
   } {
     return {
+      chatType: input.chatType,
       chatId: input.chatId,
       surfaceType: input.surfaceType,
       surfaceRef: input.surfaceRef,
     };
   }
 
-  private isDmContext(input: BridgeMessageInput): boolean {
-    return !input.chatId && input.surfaceType !== "thread";
+  private normalizeSurfaceIdentity(input: {
+    channel: string;
+    peerId: string;
+    chatType?: "p2p" | "group";
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
+  }): {
+    channel: string;
+    peerId: string;
+    chatId: string | null;
+    surfaceType: "thread" | null;
+    surfaceRef: string | null;
+  } {
+    const isDm = this.isDmContext(input);
+    return {
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: isDm ? null : input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+    };
+  }
+
+  private isDmContext(input: {
+    chatType?: "p2p" | "group";
+    chatId?: string;
+    surfaceType?: "thread";
+  }): boolean {
+    if (input.surfaceType === "thread") {
+      return false;
+    }
+
+    if (input.chatType === "p2p") {
+      return true;
+    }
+
+    if (input.chatType === "group") {
+      return false;
+    }
+
+    return !input.chatId;
+  }
+
+  private isGroupMainlineContext(input: {
+    chatType?: "p2p" | "group";
+    chatId?: string;
+    surfaceType?: "thread";
+  }): boolean {
+    return input.surfaceType !== "thread" && !this.isDmContext(input) && Boolean(input.chatId);
   }
 
   private lookupDmCodexSelection(input: BridgeMessageInput): {
@@ -3915,7 +3662,7 @@ export class BridgeService {
         title: resolved.context.threadTitle ?? created.threadId,
         status: "warm",
       });
-    } else if (input.chatId) {
+    } else if (this.isGroupMainlineContext(input) && input.chatId) {
       this.dependencies.store.bindCodexChat({
         channel: input.channel,
         chatId: input.chatId,

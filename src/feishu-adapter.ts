@@ -19,6 +19,7 @@ export interface BridgeServiceLike {
       channel: string;
       peerId: string;
       text: string;
+      chatType?: "p2p" | "group";
       chatId?: string;
       surfaceType?: "thread";
       surfaceRef?: string;
@@ -188,6 +189,9 @@ export class FeishuAdapter {
       return;
     }
 
+    const normalizedChatType = message.chat_type === "p2p" || message.chat_type === "group"
+      ? message.chat_type
+      : undefined;
     const isDm = message.chat_type === "p2p";
     const isGroupThread = message.chat_type === "group" && !!message.thread_id && !!message.chat_id;
     const isRegisteredGroupChat =
@@ -232,6 +236,7 @@ export class FeishuAdapter {
           ? {
               channel: "feishu",
               peerId,
+              chatType: normalizedChatType,
               chatId: message.chat_id,
               surfaceType: "thread",
               surfaceRef: message.thread_id,
@@ -241,12 +246,14 @@ export class FeishuAdapter {
             ? {
                 channel: "feishu",
                 peerId,
+                chatType: normalizedChatType,
                 chatId: message.chat_id,
                 text: parsedContent.text,
               }
           : {
               channel: "feishu",
               peerId,
+              chatType: normalizedChatType,
               text: parsedContent.text,
             },
         {
