@@ -353,6 +353,45 @@ describe("BridgeService", () => {
     expect(sessionText).not.toContain("返回当前会话");
   });
 
+  it("removes legacy open_plan_form from hub cards now that plan mode is a one-shot session toggle", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-current",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-current",
+      title: "follow-up",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+    });
+
+    const hubReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "/ca",
+    });
+    expect(hubReplies[0]).toMatchObject({ kind: "card" });
+    const hubText = JSON.stringify((hubReplies[0] as { card: Record<string, unknown> }).card);
+    expect(hubText).not.toContain("\"bridgeAction\":\"open_plan_form\"");
+    expect(hubText).not.toContain("\"bridgeAction\":\"submit_plan_form\"");
+  });
+
   it("hides git app directives in the DM current session card and keeps only the compact git summary", async () => {
     store.createProject({
       projectId: "proj-current",
