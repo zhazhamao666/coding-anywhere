@@ -44,6 +44,7 @@ interface FeishuSdkClientLike {
       };
     };
   };
+  request?: (params: Record<string, unknown>) => Promise<SdkResponse>;
   cardkit: {
     v1: {
       card: {
@@ -401,6 +402,34 @@ export class FeishuApiClient {
         card,
       },
       [`message:${messageId}`],
+      true,
+    );
+  }
+
+  public async delayUpdateInteractiveCard(input: {
+    token: string;
+    card: Record<string, unknown>;
+  }): Promise<void> {
+    if (!this.sdkClient.request) {
+      throw new Error("FEISHU_DELAY_UPDATE_UNAVAILABLE");
+    }
+
+    const response = await this.sdkClient.request({
+      method: "POST",
+      url: `${normalizeSdkDomain(this.config.apiBaseUrl)}/open-apis/interactive/v1/card/update`,
+      data: {
+        token: input.token,
+        card: input.card,
+      },
+    });
+    assertSdkSuccess(response, "interactive.card.update");
+    this.logOutbound(
+      {
+        messageType: "interactive",
+        mode: "delay_patch",
+        card: input.card,
+      },
+      [`interaction-token:${input.token}`],
       true,
     );
   }

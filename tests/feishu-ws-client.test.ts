@@ -554,6 +554,158 @@ describe("FeishuWsClient", () => {
     expect(close).toHaveBeenCalledWith({ force: true });
   });
 
+  it("preserves open_chat_id and multi-select options when normalizing card callbacks", async () => {
+    const register = vi.fn().mockReturnThis();
+    const invoke = vi.fn(async () => undefined);
+    const start = vi.fn();
+    const close = vi.fn();
+    const onCardAction = vi.fn(async () => ({ ok: true }));
+
+    class EventDispatcherStub {
+      public register = register;
+      public invoke = invoke;
+    }
+
+    class WSClientStub {
+      public start = start;
+      public close = close;
+    }
+
+    const client = new FeishuWsClient(
+      {
+        appId: "cli_demo",
+        appSecret: "secret_demo",
+        onEnvelope: vi.fn(async () => undefined),
+        onCardAction,
+      },
+      {
+        EventDispatcher: EventDispatcherStub,
+        WSClient: WSClientStub,
+        LoggerLevel: {
+          info: 3,
+        },
+      },
+    );
+
+    await client.start();
+
+    const actionDispatcher = start.mock.calls[0]?.[0]?.eventDispatcher;
+    await actionDispatcher.invoke({
+      schema: "2.0",
+      header: {
+        event_type: "card.action.trigger",
+      },
+      event: {
+        context: {
+          open_message_id: "om_card_2",
+          open_chat_id: "oc_group_2",
+        },
+        operator: {
+          open_id: "ou_demo",
+        },
+        action: {
+          tag: "select_static",
+          options: ["gpt-5.4", "gpt-5.4-mini"],
+          value: {
+            bridgeAction: "set_codex_model",
+          },
+        },
+      },
+    });
+
+    expect(onCardAction).toHaveBeenCalledWith({
+      open_id: "ou_demo",
+      open_chat_id: "oc_group_2",
+      open_message_id: "om_card_2",
+      action: {
+        tag: "select_static",
+        options: ["gpt-5.4", "gpt-5.4-mini"],
+        value: {
+          bridgeAction: "set_codex_model",
+        },
+      },
+    });
+
+    await client.stop();
+    expect(close).toHaveBeenCalledWith({ force: true });
+  });
+
+  it("preserves checked state and input_value when normalizing card callbacks", async () => {
+    const register = vi.fn().mockReturnThis();
+    const invoke = vi.fn(async () => undefined);
+    const start = vi.fn();
+    const close = vi.fn();
+    const onCardAction = vi.fn(async () => ({ ok: true }));
+
+    class EventDispatcherStub {
+      public register = register;
+      public invoke = invoke;
+    }
+
+    class WSClientStub {
+      public start = start;
+      public close = close;
+    }
+
+    const client = new FeishuWsClient(
+      {
+        appId: "cli_demo",
+        appSecret: "secret_demo",
+        onEnvelope: vi.fn(async () => undefined),
+        onCardAction,
+      },
+      {
+        EventDispatcher: EventDispatcherStub,
+        WSClient: WSClientStub,
+        LoggerLevel: {
+          info: 3,
+        },
+      },
+    );
+
+    await client.start();
+
+    const actionDispatcher = start.mock.calls[0]?.[0]?.eventDispatcher;
+    await actionDispatcher.invoke({
+      schema: "2.0",
+      header: {
+        event_type: "card.action.trigger",
+      },
+      event: {
+        context: {
+          open_message_id: "om_card_3",
+        },
+        operator: {
+          open_id: "ou_demo",
+        },
+        action: {
+          tag: "checkbox",
+          checked: true,
+          input_value: "/plan 先梳理后实现",
+          value: {
+            bridgeAction: "submit_plan_form",
+          },
+        },
+      },
+    });
+
+    expect(onCardAction).toHaveBeenCalledWith({
+      open_id: "ou_demo",
+      open_message_id: "om_card_3",
+      action: {
+        tag: "checkbox",
+        checked: true,
+        input_value: "/plan 先梳理后实现",
+        value: {
+          bridgeAction: "submit_plan_form",
+        },
+      },
+    });
+
+    await client.stop();
+    expect(close).toHaveBeenCalledWith({ force: true });
+  });
+
   it("logs websocket transport connect and close diagnostics", async () => {
     const register = vi.fn().mockReturnThis();
     const invoke = vi.fn(async () => undefined);

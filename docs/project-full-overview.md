@@ -72,7 +72,7 @@
 42. DM 与已注册飞书线程的导航卡现在提供一次性“计划模式”按钮，点击后会打开 JSON 2.0 表单卡，并把输入包装成 `/plan ...` 送入当前 native Codex thread
 43. 计划中的 `todo_list` 会被结构化渲染到飞书状态卡，而不再只作为一段 waiting 文本掠过
 44. bridge 现在会把计划中的单选问题持久化为待回答交互，并在飞书卡片上渲染可点击选项；用户点选后会继续续跑同一个 native Codex thread
-45. 飞书卡片中的所有 `/ca` 命令按钮现在都会先在 `card.action.trigger` 中即时返回确认卡，再在后台完成实际操作并通过 `updateInteractiveCard` 回填最终结果；只有纯表单切换类动作仍保留即时返回目标卡片的模型
+45. 飞书卡片回调现在显式分成三种模式：导航/设置类动作直接返回 `raw card` 即时替换；`/ca new`、线程切换等有界异步动作先返回 toast，再使用回调 `token` 调用延时更新接口回填终态卡；计划表单提交与计划选项点击则先返回 toast，再在当前 surface 下新发一条进度卡消息续跑，不再 patch 被点击的卡
 46. runtime 输出到控制台的日志现在会统一在每一行开头追加本地时间戳，格式精确到毫秒，便于直接比对消息和回调时序
 47. 真正进入 bridge 处理链路的飞书入站消息，以及发往飞书的出站消息，现在都会打印一条简略日志；同一条消息或卡片的连续推送更新会做去重收敛，避免控制台刷屏
 48. 飞书 DM 和已注册群线程现在都可以先发送图片；bridge 会把图片下载为本地受管资产，并按当前飞书 surface 暂存，而不是立刻触发 Codex
@@ -360,8 +360,8 @@ bridge 图片指令解析与路径校验层。
 - 不在即时导航回调里同步调用 `updateInteractiveCard` / `updateCardKitCard`，避免与官方立即更新模型冲突
 - 当命令返回的是系统文本时，会构造带有明确标题的结果卡，而不是统一套用 `CA Hub` 头部
 - 对计划模式按钮返回 JSON 2.0 表单卡，并读取 `form_value` 中的多行输入
-- 对 bridge 持久化的计划选择返回即时确认卡，并在后台继续同一 native thread
-- 对所有 `/ca` 命令按钮统一先返回即时确认卡，再在后台完成命令并用 `updateInteractiveCard` 回填终态卡，避免卡片回调超时，同时保留计划表单打开动作的即时切卡体验
+- 对 bridge 持久化的计划选择返回 toast，并在后台为当前 surface 新发进度卡消息继续同一 native thread
+- 对有界异步 `/ca` 命令优先返回 toast，再使用 callback `token` 调用延时更新接口回填终态卡；只有拿不到 `token` 时才回退到 `open_message_id` patch
 - 当后台异步 run 返回图片结果时，优先发送原生飞书图片消息；无法发图时退回明确的文本说明，不静默吞掉结果
 
 ### 5.5 `src/run-worker-manager.ts`
@@ -641,9 +641,9 @@ Feishu DM / Group Thread image
 - DM 和已注册飞书线程的导航卡额外带有一次性“计划模式”按钮；当前项目群主时间线仍不会直接展示这个入口
 - 计划模式按钮会先返回一个 JSON 2.0 表单卡，提交后由 bridge 在后台发起 `/plan ...` 续跑
 - 如果计划中抛出单选问题，状态卡会渲染结构化 todo list 与可点击选项按钮；按钮点击后继续同一个 native `thread_id`
-- 长连接卡片回调会在本地先归一化成统一动作结构，再交给 `BridgeService` 生成新的卡片结果
+- 长连接卡片回调会在本地先归一化成统一动作结构，再交给 `BridgeService` 生成新的卡片结果；归一化结果会保留 `open_chat_id`、`action.options`、`action.checked` 与 `action.input_value`
 - 按钮回调对导航场景直接返回新版 `card.action.trigger` 的 `raw card` 响应体
-- 即时导航不再额外调用消息 patch 或 CardKit 更新接口
+- 即时导航不再额外调用消息 patch 或 CardKit 更新接口；有界异步动作则改用 callback `token` 的延时更新路径，长任务动作改为新发进度卡消息
 - 飞书卡片 JSON 2.0 导航卡不再使用旧版 `{\"tag\":\"action\"}` 容器；按钮区域改为 `column_set` 中嵌套 `button`
 
 ## 7. 线程级会话与 run 级 worker
@@ -1029,7 +1029,7 @@ channel + peer_id -> codex_thread_id
 
 1. 在 DM 中点击导航卡里的“计划模式”
 2. 在表单里输入类似“帮我先梳理这个仓库的改造方案，不要直接改代码”
-3. 提交后观察同一张卡被即时更新，并进入计划中的 waiting / todo 展示
+3. 提交后先确认飞书客户端收到 toast，再观察当前 surface 下新出现一张进度卡消息，并进入计划中的 waiting / todo 展示
 4. 如果卡片出现计划单选题，直接点击某个选项，确认 run 会继续续跑同一个 native `thread_id`
 5. 在已注册飞书线程里重复以上流程，确认 thread surface 也能复用相同链路
 

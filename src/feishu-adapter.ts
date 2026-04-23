@@ -53,6 +53,10 @@ export interface FeishuApiClientLike {
     card: Record<string, unknown>,
   ): Promise<{ messageId: string; threadId: string }>;
   replyInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<string>;
+  delayUpdateInteractiveCard?(input: {
+    token: string;
+    card: Record<string, unknown>;
+  }): Promise<void>;
   updateInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<void>;
   createCardEntity(card: Record<string, unknown>): Promise<string>;
   sendCardKitMessage(peerId: string, cardId: string): Promise<string>;

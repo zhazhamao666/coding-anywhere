@@ -88,6 +88,48 @@ describe("FeishuApiClient", () => {
     );
   });
 
+  it("delay-updates interactive cards with the callback token path", async () => {
+    const sdk = createSdkDouble();
+    const client = new FeishuApiClient(
+      {
+        appId: "cli_xxx",
+        appSecret: "secret",
+        apiBaseUrl: "https://open.feishu.cn/open-apis",
+      },
+      sdk as any,
+    );
+
+    await client.delayUpdateInteractiveCard({
+      token: "c-token-1",
+      card: {
+        schema: "2.0",
+        header: {
+          title: {
+            tag: "plain_text",
+            content: "Delayed Update",
+          },
+        },
+      },
+    });
+
+    expect(sdk.request).toHaveBeenCalledWith({
+      method: "POST",
+      url: "https://open.feishu.cn/open-apis/interactive/v1/card/update",
+      data: {
+        token: "c-token-1",
+        card: {
+          schema: "2.0",
+          header: {
+            title: {
+              tag: "plain_text",
+              content: "Delayed Update",
+            },
+          },
+        },
+      },
+    });
+  });
+
   it("sends interactive cards with the IM create API", async () => {
     const sdk = createSdkDouble();
     const client = new FeishuApiClient(
@@ -401,6 +443,10 @@ function createSdkDouble(): any {
         },
       },
     },
+    request: vi.fn(async () => ({
+      code: 0,
+      msg: "ok",
+    })),
     cardkit: {
       v1: {
         card: {

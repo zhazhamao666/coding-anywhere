@@ -89,6 +89,7 @@ export class FeishuCardActionService {
       createStreamingCardController?: (input: {
         peerId: string;
         apiClient: FeishuApiClientLike;
+        anchorMessageId?: string;
         existingMessageId?: string;
       }) => StreamingCardControllerLike;
       logger?: {
@@ -102,6 +103,7 @@ export class FeishuCardActionService {
   public async handleAction(event: {
     open_id: string;
     tenant_key?: string;
+    open_chat_id?: string;
     open_message_id?: string;
     token?: string;
     action?: {
@@ -118,6 +120,7 @@ export class FeishuCardActionService {
     const bridgeAction = actionValue?.bridgeAction;
     const patchTargetCardId = actionValue?.cardId;
     const patchTargetMessageId = actionValue?.messageId ?? event.open_message_id;
+    const effectiveChatId = actionValue?.chatId ?? event.open_chat_id;
 
     if (
       bridgeAction === "set_codex_model" ||
@@ -134,7 +137,7 @@ export class FeishuCardActionService {
       const updatedReply = await this.dependencies.bridgeService.updateCodexPreferences({
         channel: "feishu",
         peerId: event.open_id,
-        chatId: actionValue?.chatId,
+        chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
         ...(bridgeAction === "set_codex_model"
@@ -158,7 +161,7 @@ export class FeishuCardActionService {
     if (bridgeAction === "open_plan_form") {
       const card = buildPlanModeFormCard({
         context: {
-          chatId: actionValue?.chatId,
+          chatId: effectiveChatId,
           surfaceType: actionValue?.surfaceType,
           surfaceRef: actionValue?.surfaceRef,
         },
@@ -180,7 +183,7 @@ export class FeishuCardActionService {
         peerId: event.open_id,
         threadId,
         mode,
-        chatId: actionValue?.chatId,
+        chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
       });
@@ -243,20 +246,18 @@ export class FeishuCardActionService {
 
       this.launchInteractiveRun({
         peerId: event.open_id,
-        existingMessageId: patchTargetMessageId,
+        anchorMessageId: patchTargetMessageId,
         execute: options => this.dependencies.bridgeService.handleMessage({
           channel: "feishu",
           peerId: event.open_id,
-          chatId: actionValue?.chatId,
+          chatId: effectiveChatId,
           surfaceType: actionValue?.surfaceType,
           surfaceRef: actionValue?.surfaceRef,
           text: `/plan ${planPrompt}`,
         }, options),
       });
 
-      return this.buildRawCardResponse(this.buildInfoCard("计划请求已提交", [
-        "正在启动计划模式，请稍候。",
-      ], actionValue));
+      return this.buildToastResponse("计划请求已提交，正在启动计划模式。");
     }
 
     if (bridgeAction === "answer_plan_choice") {
@@ -278,11 +279,11 @@ export class FeishuCardActionService {
 
       this.launchInteractiveRun({
         peerId: event.open_id,
-        existingMessageId: patchTargetMessageId,
+        anchorMessageId: patchTargetMessageId,
         execute: options => this.dependencies.bridgeService.handlePlanChoice?.({
           channel: "feishu",
           peerId: event.open_id,
-          chatId: actionValue?.chatId,
+          chatId: effectiveChatId,
           surfaceType: actionValue?.surfaceType,
           surfaceRef: actionValue?.surfaceRef,
           interactionId,
@@ -290,9 +291,7 @@ export class FeishuCardActionService {
         }, options) ?? Promise.resolve([]),
       });
 
-      return this.buildRawCardResponse(this.buildInfoCard("计划选项已提交", [
-        "已根据你的选择继续当前计划线程。",
-      ], actionValue));
+      return this.buildToastResponse("计划选项已提交，正在继续当前计划线程。");
     }
 
     if (!command || !routedCommand || routedCommand.kind !== "command") {
@@ -327,21 +326,19 @@ export class FeishuCardActionService {
       peerId: event.open_id,
       command,
       actionValue,
+      interactionToken: event.token,
       existingMessageId: patchTargetMessageId,
       execute: () => this.dependencies.bridgeService.handleMessage({
         channel: "feishu",
         peerId: event.open_id,
-        chatId: actionValue?.chatId,
+        chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
         text: command,
       }),
     });
 
-    return this.buildRawCardResponse(this.buildInfoCard("命令已提交", [
-      `已提交：${command}`,
-      "正在后台执行，请稍候。",
-    ], actionValue));
+    return this.buildToastResponse(`命令已提交：${command}`);
   }
 
   private buildInfoCard(
@@ -381,6 +378,15 @@ export class FeishuCardActionService {
       card: {
         type: "raw",
         data: card,
+      },
+    };
+  }
+
+  private buildToastResponse(content: string, type: "info" | "success" | "error" | "warning" = "info"): Record<string, unknown> {
+    return {
+      toast: {
+        type,
+        content,
       },
     };
   }
@@ -464,6 +470,7 @@ export class FeishuCardActionService {
     peerId: string;
     command: string;
     actionValue?: CardActionValue;
+    interactionToken?: string;
     existingMessageId?: string;
     execute: () => Promise<BridgeReply[]>;
   }): void {
@@ -484,10 +491,10 @@ export class FeishuCardActionService {
           patchTargetCardId: input.actionValue?.cardId,
           patchTargetMessageId: input.existingMessageId,
         });
-        await this.updateCommandCard(input.command, input.existingMessageId, card);
+        await this.updateCommandCard(input.command, input.existingMessageId, input.interactionToken, card);
       } catch (error) {
         const errorCard = this.buildInfoCard("命令执行失败", [normalizeActionError(error)], input.actionValue);
-        await this.updateCommandCard(input.command, input.existingMessageId, errorCard);
+        await this.updateCommandCard(input.command, input.existingMessageId, input.interactionToken, errorCard);
       }
     })();
   }
@@ -495,9 +502,27 @@ export class FeishuCardActionService {
   private async updateCommandCard(
     command: string,
     messageId: string | undefined,
+    interactionToken: string | undefined,
     card: Record<string, unknown>,
   ): Promise<void> {
-    if (!messageId || !this.dependencies.apiClient) {
+    const apiClient = this.dependencies.apiClient;
+    if (interactionToken && apiClient?.delayUpdateInteractiveCard) {
+      await apiClient.delayUpdateInteractiveCard({
+        token: interactionToken,
+        card,
+      });
+      this.dependencies.logger?.info?.(
+        {
+          command,
+          interactionToken,
+          cardPreview: summarizeCard(card),
+        },
+        "feishu async command delay-updated card",
+      );
+      return;
+    }
+
+    if (!messageId || !apiClient) {
       this.dependencies.logger?.warn?.(
         {
           command,
@@ -509,7 +534,7 @@ export class FeishuCardActionService {
       return;
     }
 
-    await this.dependencies.apiClient.updateInteractiveCard(messageId, card);
+    await apiClient.updateInteractiveCard(messageId, card);
     this.dependencies.logger?.info?.(
       {
         command,
@@ -599,6 +624,7 @@ export class FeishuCardActionService {
 
   private launchInteractiveRun(input: {
     peerId: string;
+    anchorMessageId?: string;
     existingMessageId?: string;
     execute: (options: {
       onProgress?: (snapshot: any) => Promise<void> | void;
@@ -609,6 +635,7 @@ export class FeishuCardActionService {
       ? this.createStreamingCardController({
           peerId: input.peerId,
           apiClient,
+          anchorMessageId: input.anchorMessageId,
           existingMessageId: input.existingMessageId,
         })
       : undefined;
@@ -623,6 +650,7 @@ export class FeishuCardActionService {
   private createStreamingCardController(input: {
     peerId: string;
     apiClient: FeishuApiClientLike;
+    anchorMessageId?: string;
     existingMessageId?: string;
   }): StreamingCardControllerLike {
     if (this.dependencies.createStreamingCardController) {

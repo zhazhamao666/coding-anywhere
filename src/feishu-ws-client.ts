@@ -10,12 +10,16 @@ type CardActionHandler = (event: NormalizedCardActionEvent) => Promise<unknown>;
 interface NormalizedCardActionEvent {
   open_id: string;
   tenant_key?: string;
+  open_chat_id?: string;
   open_message_id?: string;
   token?: string;
   action: {
     tag?: string;
     name?: string;
     option?: string;
+    options?: string[];
+    checked?: boolean;
+    input_value?: string;
     value?: Record<string, unknown>;
     form_value?: Record<string, unknown>;
   };
@@ -254,6 +258,9 @@ function normalizeCardActionPayload(
     tenant_key:
       readString(candidate.tenant_key) ??
       readString(readNested(candidate, ["context", "tenant_key"])),
+    open_chat_id:
+      readString(candidate.open_chat_id) ??
+      readString(readNested(candidate, ["context", "open_chat_id"])),
     open_message_id:
       readString(candidate.open_message_id) ??
       readString(readNested(candidate, ["context", "open_message_id"])),
@@ -345,6 +352,20 @@ function normalizeAction(value: unknown): NormalizedCardActionEvent["action"] | 
     normalized.option = option;
   }
 
+  const options = readStringArray(candidate.options);
+  if (options) {
+    normalized.options = options;
+  }
+
+  if (typeof candidate.checked === "boolean") {
+    normalized.checked = candidate.checked;
+  }
+
+  const inputValue = readString(candidate.input_value);
+  if (inputValue) {
+    normalized.input_value = inputValue;
+  }
+
   const actionValue = candidate.value;
   if (actionValue && typeof actionValue === "object") {
     normalized.value = actionValue as Record<string, unknown>;
@@ -380,6 +401,15 @@ function readNested(value: Record<string, unknown>, path: string[]): unknown {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function describePayloadShape(data: unknown): string {
