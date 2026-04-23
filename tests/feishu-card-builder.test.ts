@@ -370,6 +370,30 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("\"bridgeAction\":\"open_diagnostics\"");
   });
 
+  it("does not render action buttons with empty callback values", () => {
+    const card = buildNavigationCard({
+      title: "导航",
+      summaryLines: ["**Root**：main"],
+      sections: [],
+      actions: [
+        {
+          label: "坏按钮",
+        },
+        {
+          label: "正常按钮",
+          value: {
+            command: "/ca",
+          },
+        },
+      ],
+    } as any);
+
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain("正常按钮");
+    expect(serialized).not.toContain("坏按钮");
+    expect(serialized).not.toContain("\"value\":{}");
+  });
+
   it("builds diagnostics card as read-only and keeps 返回当前会话", () => {
     const card = buildNavigationCard({
       title: "诊断信息",

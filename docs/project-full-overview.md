@@ -607,7 +607,7 @@ Feishu DM / Group Thread image
 - DM 中 `/ca project list`
   - 读取 Codex `state_*.sqlite`
   - 展示 Codex 派生项目列表
-  - 每个项目行都可直接“查看线程”或“切换项目”
+  - 每个项目行只展示一个主动作按钮（优先 primary，否则取第一个），当前默认展示“切换项目”；如需查看线程，可先切换项目后再进入线程列表
 - 群聊 / 已注册线程中的 `/ca project list`
   - 如果已配置 Codex catalog，也展示 Codex 派生项目列表
   - 群主时间线中会标出每个项目的群绑定状态，并允许点击未绑定项目直接绑定当前群
@@ -652,7 +652,7 @@ Feishu DM / Group Thread image
 - `/ca session`、`/ca status` 以及具体对话卡都会附带三个 JSON 2.0 `select_static` 下拉选择器，可直接在飞书里切换当前线程 / 当前 surface 的 `model`、`reasoning effort` 与 `speed`
 - 对已经绑定 native thread 的上下文，设置会持久化到 `thread_id`；对尚未绑定 native thread 的上下文，设置会持久化到当前飞书 surface，并在后续 `new_codex_thread` 创建时继承
 - `/ca thread create*` 成功后会返回线程摘要卡片
-- DM 中的项目列表卡和线程列表卡现在带行级按钮：项目列表可“查看线程”“切换项目”，线程列表可“切换到此线程”；线程列表底部也提供直接“新会话”入口
+- DM 中的项目列表卡和线程列表卡现在带行级按钮：项目列表每行只保留一个主动作（优先 primary），当前默认展示“切换项目”；线程列表每行仍为“切换到此线程”；线程列表底部也提供直接“新会话”入口
 - 群主时间线中的项目列表卡也带行级按钮：未绑定项目可“绑定到本群”，已绑定当前群可进入“当前项目”，已绑定其他群只展示状态，避免误转绑
 - DM 中点选线程后，CA 只记录当前窗口绑定到哪个 `codex_thread_id`
 - 已注册飞书线程中点选线程后，CA 会把当前 surface 重绑到选中的 native `thread_id`

@@ -15,6 +15,24 @@ import {
 
 type StableActionId = "new_session" | "switch_thread" | "more_info";
 
+type BridgeHubAction =
+  | {
+      id: "more_info";
+      label: string;
+      value?: Record<string, unknown>;
+      type?: "default" | "primary" | "danger";
+    }
+  | {
+      id?: StableActionId | (string & {});
+      label: string;
+      value: Record<string, unknown>;
+      type?: "default" | "primary" | "danger";
+    };
+
+function isNonEmptyActionValue(value: Record<string, unknown> | null | undefined): value is Record<string, unknown> {
+  return Boolean(value && Object.keys(value).length > 0);
+}
+
 function pickPrimaryButton<T extends { type?: "default" | "primary" | "danger" }>(
   buttons: T[],
 ): T | undefined {
@@ -71,12 +89,7 @@ export function buildBridgeHubCard(input: {
       type?: "default" | "primary" | "danger";
     }>;
   }>;
-  actions?: Array<{
-    id?: StableActionId | (string & {});
-    label: string;
-    value?: Record<string, unknown>;
-    type?: "default" | "primary" | "danger";
-  }>;
+  actions?: BridgeHubAction[];
 }): Record<string, unknown> {
   const summaryGroup: Array<Record<string, unknown>> = [{
     tag: "markdown",
@@ -152,11 +165,13 @@ export function buildBridgeHubCard(input: {
     ? input.extraElements
     : null;
 
-  const actionsGroup = input.actions && input.actions.length > 0
-    ? [buildActionsRow({
-        actions: normalizeActionsForMode(input.stableMode, context, input.actions),
-      })]
+  const normalizedActions = input.actions && input.actions.length > 0
+    ? normalizeActionsForMode(input.stableMode, context, input.actions)
+    : [];
+  const actionsRow = normalizedActions.length > 0
+    ? buildActionsRow({ actions: normalizedActions })
     : null;
+  const actionsGroup = actionsRow ? [actionsRow] : null;
 
   const elements = buildFeishuCardElementsFromSections([
     summaryGroup,
@@ -275,16 +290,16 @@ function buildRowsGroup(
 function normalizeActionsForMode(
   stableMode: StableCardMode | undefined,
   context: CardSurfaceContext | undefined,
-  actions: NonNullable<Parameters<typeof buildBridgeHubCard>[0]["actions"]>,
-): NonNullable<Parameters<typeof buildBridgeHubCard>[0]["actions"]> {
+  actions: BridgeHubAction[],
+): BridgeHubAction[] {
   if (stableMode !== "completed") {
     return actions;
   }
 
-  const ordered = orderStableActions(actions as any) as NonNullable<Parameters<typeof buildBridgeHubCard>[0]["actions"]>;
+  const ordered = orderStableActions(actions as any) as BridgeHubAction[];
 
   return ordered.map(action => {
-    if (action.id !== "more_info" || action.value) {
+    if (action.id !== "more_info" || isNonEmptyActionValue(action.value)) {
       return action;
     }
 
@@ -300,13 +315,18 @@ function normalizeActionsForMode(
 }
 
 function buildActionsRow(input: {
-  actions: NonNullable<Parameters<typeof buildBridgeHubCard>[0]["actions"]>;
-}): Record<string, unknown> {
+  actions: BridgeHubAction[];
+}): Record<string, unknown> | null {
+  const renderable = input.actions.filter(action => isNonEmptyActionValue(action.value));
+  if (renderable.length === 0) {
+    return null;
+  }
+
   return {
     tag: "column_set",
     flex_mode: "flow",
     background_style: "default",
-    columns: input.actions.map(action => ({
+    columns: renderable.map(action => ({
       tag: "column",
       width: "auto",
       weight: 1,
@@ -318,7 +338,7 @@ function buildActionsRow(input: {
           content: action.label,
         },
         type: action.type ?? "default",
-        value: action.value ?? {},
+        value: action.value,
       }],
     })),
   };
