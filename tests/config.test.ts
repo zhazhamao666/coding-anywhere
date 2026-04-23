@@ -66,6 +66,47 @@ idleTtlHours = 24
     expect((config as any).codex.command).toBe("codex");
   });
 
+  it("defaults feishu allowlist to an empty array when omitted", () => {
+    const configPath = path.join(rootDir, "config.toml");
+
+    writeFileSync(
+      configPath,
+      `
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[storage]
+sqlitePath = "data/bridge.db"
+logDir = "logs"
+
+[codex]
+command = "codex"
+
+[feishu]
+appId = "cli_xxx"
+appSecret = "secret"
+websocketUrl = "wss://example.invalid/ws"
+apiBaseUrl = "https://open.feishu.cn/open-apis"
+
+[root]
+id = "main"
+name = "Main Root"
+cwd = "D:/repos"
+repoRoot = "D:/repos"
+branchPolicy = "reuse"
+permissionMode = "workspace-write"
+envAllowlist = ["PATH"]
+idleTtlHours = 24
+`,
+      "utf8",
+    );
+
+    const config = loadConfig(configPath);
+
+    expect(config.feishu.allowlist).toEqual([]);
+  });
+
   it("accepts the legacy acpx config section as a compatibility alias for codex", () => {
     const configPath = path.join(rootDir, "config.toml");
 

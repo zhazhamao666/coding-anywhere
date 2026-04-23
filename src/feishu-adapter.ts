@@ -154,7 +154,8 @@ export class FeishuAdapter {
     const message = envelope.event?.message;
     const anchorMessageId = message?.chat_type === "group" ? message.message_id : undefined;
 
-    if (!peerId || !this.dependencies.allowlist.includes(peerId)) {
+    const enforceAllowlist = this.dependencies.allowlist.length > 0;
+    if (!peerId || (enforceAllowlist && !this.dependencies.allowlist.includes(peerId))) {
       return;
     }
 

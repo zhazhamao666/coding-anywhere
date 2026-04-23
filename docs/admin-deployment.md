@@ -113,7 +113,7 @@ npm run init:config
 
 - `feishu.appId`
 - `feishu.appSecret`
-- `feishu.allowlist`
+- `feishu.allowlist`（按需）
 - `feishu.encryptKey`
 - `feishu.reconnectCount`
 - `feishu.reconnectIntervalSeconds`
@@ -132,6 +132,12 @@ npm run init:config
 这样本地 Coding Anywhere 只需要主动连飞书，不需要额外暴露公网回调地址。
 
 如飞书后台开启了加密推送，`encryptKey` 必须与本地配置一致。
+
+关于 `feishu.allowlist`：
+
+- 留空数组时，表示不做飞书用户白名单校验
+- 只有显式填入非空 `open_id` 列表后，bridge 才会按用户放行
+- 一旦启用 allowlist，只放可信用户
 
 ### 第四步：执行预检
 
@@ -223,7 +229,7 @@ http://127.0.0.1:3000/ops/ui
 
 建议：
 
-- `allowlist` 只放受信任用户
+- `allowlist` 可留空；若启用，只放受信任用户
 - 飞书后台的事件与回调订阅方式使用“长连接”
 - 如果飞书后台开启加密推送，就同步填写 `encryptKey`
 - `reconnectCount = -1` 表示无限重试，建议保留默认值
@@ -434,7 +440,7 @@ test
 
 当前版本至少遵守这几条：
 
-- 只把可信用户加入 `allowlist`
+- 如启用 `allowlist`，只把可信用户加入其中
 - 不把真实 `appSecret` 提交到 git
 - 不随便把 `permissionMode` 改成 `danger-full-access`
 - root 路径要明确，不要把整个盘符都作为 `repoRoot`

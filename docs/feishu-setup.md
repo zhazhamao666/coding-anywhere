@@ -52,6 +52,72 @@
 - 这是飞书开放平台调用凭据，不要提交到 git
 - `config.example.toml` 里的 `cli_xxx` 和 `replace-me` 只是占位值
 
+## 2.1 按需获取 `allowlist` / `open_id`
+
+`feishu.allowlist` 不是飞书后台现成的一项“白名单配置”，而是 `Coding Anywhere` 本地配置里的“允许哪些飞书用户使用这套 bridge”的 `open_id` 列表。
+
+如果你暂时不想做用户限制，可以直接保留：
+
+```toml
+allowlist = []
+```
+
+只有当你主动往 `allowlist` 里填入 `open_id` 时，bridge 才会开始按用户白名单校验。
+
+如果你要配置 `allowlist`，最常见的 `open_id` 获取方式有 3 种：
+
+1. 通过飞书官方 API 调试台获取
+2. 通过飞书 OpenAPI 按手机号或邮箱查询
+3. 直接从机器人收到的真实消息事件 payload 中读取
+
+### 方式一：通过 API 调试台快速复制
+
+官方文档：
+
+- [如何获取指定用户的 Open ID](https://open.feishu.cn/document/uAjLw4CM/ugTN1YjL4UTN24CO1UjN/trouble-shooting/how-to-obtain-openid)
+- [API 调试台](https://open.feishu.cn/api-explorer)
+
+按官方文档的当前路径，进入 API 调试台后：
+
+1. 找到“发送消息”接口
+2. 把查询参数 `user_id_type` 设为 `open_id`
+3. 点击“快速复制 open_id”
+4. 搜索或选择目标成员
+5. 复制得到形如 `ou_xxx` 的值
+
+### 方式二：通过 OpenAPI 查询
+
+官方文档：
+
+- [通过手机号或邮箱获取用户 ID](https://open.feishu.cn/document/server-docs/contact-v3/user/batch_get_id)
+
+做法：
+
+1. 给应用申请 `contact:user.id:readonly` 权限
+2. 调用接口时把 `user_id_type` 设为 `open_id`
+3. 请求里传用户邮箱或手机号
+4. 从响应里的 `user_id` 读取 `ou_xxx`
+
+### 方式三：直接从入站消息事件读取
+
+官方文档：
+
+- [接收消息](https://open.feishu.cn/document/server-docs/im-v1/message/events/receive)
+
+这个事件的官方结构里，本来就会带：
+
+```json
+event.sender.sender_id.open_id
+```
+
+所以如果你的机器人已经能收到该用户的消息，抓一次真实入站 payload，也可以直接拿到当前应用下的 `open_id`。
+
+注意：
+
+- `open_id` 是“应用内用户 ID”，同一个人在不同飞书应用里的 `open_id` 不同
+- 不要把另一个飞书应用里的 `ou_xxx` 直接拿来填当前应用的 `allowlist`
+- 用户 ID 概念差异可参考飞书官方的 [用户身份概述](https://open.feishu.cn/document/home/user-identity-introduction/introduction)
+
 ## 3. 发布应用版本
 
 只要你修改过能力、权限、事件或回调配置，都要确认：
@@ -144,7 +210,7 @@ appId = "cli_xxx"
 appSecret = "replace-me"
 websocketUrl = "wss://open.feishu.cn/open-apis/bot/v2/hub"
 apiBaseUrl = "https://open.feishu.cn/open-apis"
-allowlist = ["ou_xxx"]
+allowlist = []
 requireGroupMention = false
 encryptKey = ""
 reconnectCount = -1
@@ -158,7 +224,7 @@ reconnectNonceSeconds = 30
 | --- | --- | --- | --- |
 | `App ID` | `feishu.appId` | 是 | 飞书开放平台应用凭据 |
 | `App Secret` | `feishu.appSecret` | 是 | 飞书开放平台应用凭据 |
-| 当前实际使用人的 `open_id` | `feishu.allowlist` | 是 | `ou_xxx` 只是占位值，必须替换 |
+| 当前实际使用人的 `open_id`（按需） | `feishu.allowlist` | 否 | 空数组表示不做用户白名单校验；只有配置了非空 `open_id` 列表后，bridge 才会按用户放行 |
 | 加密密钥 | `feishu.encryptKey` | 按需 | 只有飞书后台启用了加密推送才填 |
 | 群消息是否必须 `@` 机器人 | `feishu.requireGroupMention` | 按需 | 这是项目侧开关，不是飞书后台字段 |
 | 重连次数 | `feishu.reconnectCount` | 否 | `-1` 表示无限重试，建议保留默认值 |
@@ -185,7 +251,10 @@ npm run doctor
 
 - `feishu.appId`
 - `feishu.appSecret`
-- `feishu.allowlist`
+
+如果你主动配置了 `feishu.allowlist`，还要额外确认：
+
+- `allowlist` 里没有残留 `ou_xxx` 这类占位值
 
 然后再启动服务，并做最小联调：
 
@@ -200,7 +269,8 @@ npm run doctor
 
 ## 11. 最容易踩的坑
 
-- `allowlist` 里还留着 `ou_xxx` 占位值
+- 手动配置了 `allowlist`，但里面还留着 `ou_xxx` 占位值
+- 把别的飞书应用里的 `open_id` 误填到当前应用的 `allowlist`
 - 飞书后台改完能力、权限、事件或回调后，没有重新发布版本
 - 事件配置或回调配置被误设成了 HTTP，而不是长连接
 - 飞书后台打开了加密推送，但 `config.toml` 里的 `feishu.encryptKey` 仍然为空

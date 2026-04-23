@@ -79,7 +79,8 @@ export function inspectEnvironment(input?: {
     id: "feishu.allowlist",
     ok: !config.feishu.allowlist.includes("ou_xxx"),
     severity: "blocking",
-    message: "Replace the placeholder open_id in feishu.allowlist.",
+    message:
+      "Replace the placeholder open_id in feishu.allowlist, or leave the allowlist empty to disable user gating.",
   });
 
   checks.push({

@@ -80,6 +80,34 @@ describe("inspectEnvironment", () => {
     );
   });
 
+  it("does not require feishu allowlist when it is omitted", () => {
+    writeFileSync(
+      configPath,
+      createConfigToml({
+        appId: "cli_real",
+        appSecret: "secret-real",
+        rootCwd: rootDir,
+      }),
+      "utf8",
+    );
+
+    const report = inspectEnvironment({
+      cwd: rootDir,
+      configPath,
+      resolveCommand: command => (command === "codex" ? "C:/bin/codex.cmd" : undefined),
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.checks).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "feishu.allowlist",
+          ok: false,
+        }),
+      ]),
+    );
+  });
+
   it("warns that real codex smoke needs auth and explicit opt-in guidance", () => {
     const codexHome = path.join(rootDir, ".codex");
     writeFileSync(
@@ -113,7 +141,7 @@ describe("inspectEnvironment", () => {
 function createConfigToml(input: {
   appId: string;
   appSecret: string;
-  allowlist: string[];
+  allowlist?: string[];
   rootCwd: string;
   runnerSection?: "codex" | "acpx";
 }) {
@@ -137,7 +165,7 @@ appId = "${input.appId}"
 appSecret = "${input.appSecret}"
 websocketUrl = "wss://open.feishu.cn/open-apis/bot/v2/hub"
 apiBaseUrl = "https://open.feishu.cn/open-apis"
-allowlist = [${input.allowlist.map(value => `"${value}"`).join(", ")}]
+${input.allowlist ? `allowlist = [${input.allowlist.map(value => `"${value}"`).join(", ")}]` : ""}
 
 [root]
 id = "main"

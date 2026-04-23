@@ -20,7 +20,9 @@ appId = "cli_xxx"
 appSecret = "replace-me"
 websocketUrl = "wss://open.feishu.cn/open-apis/bot/v2/hub"
 apiBaseUrl = "https://open.feishu.cn/open-apis"
-allowlist = ["ou_xxx"]
+allowlist = []
+# Add trusted user open_id values here to enable user gating, for example:
+# allowlist = ["ou_xxx", "ou_yyy"]
 # Optional when allowlist has exactly one owner; set this to force desktop-completion DM fallback.
 desktopOwnerOpenId = ""
 requireGroupMention = false

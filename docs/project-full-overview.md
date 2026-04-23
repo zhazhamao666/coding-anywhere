@@ -120,6 +120,7 @@
 90. 飞书稳定态会话卡上的 `计划模式 [开/关]` 现在已经改成 surface 级单次开关：点击后会原卡即时切换状态，不再先弹独立计划表单；下一条普通文本消息会自动按 `/plan ...` 包装送入当前会话，并在消费一次后自动回到 `关`
 91. 飞书稳定态会话卡上的 `更多信息` 现在已经改成原卡 `inline_replace` 的只读诊断卡：会集中展示当前上下文、最近运行和下次任务设置摘要，并通过 `返回当前会话` 原地切回主卡，而不是额外污染消息时间线
 92. 旧的 `open_plan_form` / `submit_plan_form` 计划表单链路已经退出飞书主会话卡流程；历史卡片回调仍可兼容处理，但新的稳定态会话 UI 不再把“计划模式”实现成一张独立表单卡
+93. `feishu.allowlist` 现在已经改成可选配置：缺省或空数组时不做用户白名单校验；只有显式配置了非空 `open_id` 列表后，飞书消息入口才会按用户放行，`doctor` 也只会在列表里仍残留 `ou_xxx` 这类占位值时给出阻塞提示
 
 ### 2.3 当前仍未打通的部分
 
@@ -296,7 +297,7 @@ Windows 停止入口模块。
 
 职责：
 
-- 用户 allowlist 校验
+- 可选的用户 allowlist 校验（空 allowlist 时关闭）
 - 文本消息过滤
 - 图片消息下载与 surface 级暂存
 - DM、已绑定项目群主时间线与群线程 surface 识别
@@ -877,12 +878,16 @@ channel + peer_id -> codex_thread_id
   - `/ca session`、`/ca status` 和具体对话卡推理下拉框的候选项；若未配置，会结合本机 `~/.codex/config.toml` 与内置 `low ~ xhigh` 做兜底，并按 Codex App 文案展示
 - `codex.speedOptions`
   - `/ca session`、`/ca status` 和具体对话卡速度下拉框的候选项；当前支持 `standard`、`fast`
+- `feishu.allowlist`
+  - 飞书用户白名单；当前按 `open_id` 生效
+  - 缺省或空数组表示不做用户白名单校验
+  - 配置了非空列表后，只有命中的用户消息才会进入 bridge
 - `feishu.requireGroupMention`
   - 群线程兜底模式
   - 为 `true` 时，只有带 mention 的线程消息才会进入 Codex
 - `feishu.desktopOwnerOpenId`
   - 桌面 completion 通知在无法路由到已有话题或项目群时，用于显式指定 DM fallback 的目标 open_id
-  - 当 `feishu.allowlist` 只有 1 个 open_id 时可省略；若 allowlist 有多个候选，则 DM fallback 必须依赖该字段才能安全选人
+  - 当 `feishu.allowlist` 只有 1 个 open_id 时可省略；若 allowlist 为空或有多个候选，则 DM fallback 需要依赖该字段才能安全选人
 - `feishu.encryptKey`
   - 飞书长连接消息或回调启用加密推送时使用的解密密钥
 - `feishu.reconnectCount`
@@ -1003,6 +1008,7 @@ channel + peer_id -> codex_thread_id
 ### 15.1 基础回归
 
 1. `npm run doctor`
+   - 若未配置 `feishu.allowlist`，这里不再把它视为阻塞项；如果手动配置了 allowlist，则确认其中没有 `ou_xxx` 这类占位值
 2. Windows 本地双击 `start-coding-anywhere.cmd`，确认会先执行 `npm run build`，成功后进入前台服务日志；如需手工验证，也可直接执行 `npm run start`
 3. 飞书 DM 发 `/ca`
 4. 如果要验证“切换项目后不再误跑旧线程”，先在一个已绑定旧线程的 DM 中执行 `/ca project switch <projectKey>`，确认返回卡会明确提示“已退出之前绑定的线程”
@@ -1104,6 +1110,7 @@ channel + peer_id -> codex_thread_id
 14. `tests/codex-desktop-completion-observer.test.ts` 与 `tests/codex-desktop-lifecycle-observer.test.ts` 会分别锁定 completion 兼容层和完整 lifecycle observer：既覆盖 offset 读取、`task_complete` 检测、最终 assistant 正文提取和稳定 `completionKey`，也覆盖 `task_started` / `agent_message` / `update_plan` / `shell_command` 组合下的公开进度快照、稳定 `runKey` 和跨轮询累计命令计数
 15. `tests/desktop-completion-routing.test.ts` 会用本地 SQLite store + 小型 catalog double 校验桌面 completion 的本地投递目标解析：同一 native thread 有多个话题绑定时会选择首选绑定；项目群 fallback 会先看精确 `projectKey`，再看唯一 cwd 命中；cwd 命中多个项目时不会猜测，而是退回 DM 或明确报出 DM owner 歧义错误
 16. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面生命周期卡在运行中 / 已完成两态下的字段顺序、按钮、计划清单和 payload 预算行为：运行态必须先显示“你最后说了什么”再显示当前情况，完成态则必须先显示提醒区、再显示直接内嵌的最终正文，而且不能再冒出独立的 `进度 / Ran N commands` 区块
+17. `tests/config.test.ts`、`tests/doctor.test.ts` 与 `tests/feishu-adapter.test.ts` 现在会额外锁定飞书 allowlist 的新语义：缺省 allowlist 会回退为空数组、`doctor` 不再把“未配置 allowlist”视为阻塞，而空 allowlist 下的消息也能正常进入 bridge
 17. `tests/desktop-completion-notifier.test.ts` 会校验桌面 lifecycle 投递器在 DM / 已绑定话题 / 项目群三种目标下的运行态卡创建、完成态原卡 patch、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及完成态正文直接内嵌在同一张卡里而不是额外补发第二条结果消息
 18. `tests/desktop-completion-dm-handoff.test.ts` 会用真实 `BridgeService` + `FeishuCardActionService` harness 校验 DM 通知卡主按钮 `continue_desktop_thread`：点击后会把 DM 绑定到目标 native thread、回调直接返回标准“当前会话”卡，且下一条普通 DM 文本会续跑同一线程
 19. `tests/runtime-desktop-completion-notifier.test.ts` 会校验 runtime 启动后真的开始轮询本地 rollout：首次 bootstrap watch state 时不会回放历史 run / completion，新的顶层 desktop run 会先创建一张运行态卡、在公开进展变化时 patch，并在真正 `task_complete` 后原地收口为完成态；如果旧 completion 之后又继续出现同一轮顶层公开进展，就必须优先维持进行中态；unchanged `completionKey` 不会重复推送，`sourceInfo.kind = subagent` 的子线程不会触发生命周期通知，近期飞书终态 run 对应的 desktop 回声也不会再额外发卡

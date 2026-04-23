@@ -138,6 +138,49 @@ describe("FeishuAdapter", () => {
     expect(controller.finalizeError).not.toHaveBeenCalled();
   });
 
+  it("accepts DM messages from any user when allowlist is empty", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [{ kind: "assistant", text: "未配置 allowlist 也可使用" } satisfies BridgeReply]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: [],
+      bridgeService,
+      apiClient,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-allowlist-open",
+      },
+      event: {
+        message: {
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "hello" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_anyone",
+          },
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(
+      {
+        channel: "feishu",
+        peerId: "ou_anyone",
+        text: "hello",
+      },
+      {
+        onProgress: expect.any(Function),
+      },
+    );
+    expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_anyone", "未配置 allowlist 也可使用");
+  });
+
   it("deduplicates retries by message_id when event_id is missing", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => [{ kind: "assistant", text: "响应正常。" } satisfies BridgeReply]),
