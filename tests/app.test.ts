@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../src/app.js";
+import type { ListRunsFilters, ObservabilityRun } from "../src/types.js";
 
 describe("buildApp", () => {
   it("serves health and readiness endpoints", async () => {
@@ -16,7 +17,7 @@ describe("buildApp", () => {
   });
 
   it("serves backend observability JSON endpoints and local ops UI", async () => {
-    const listRunsMock = vi.fn(async filters => {
+    const listRunsMock = vi.fn(async (filters: ListRunsFilters): Promise<ObservabilityRun[]> => {
       if (filters.status === "error") {
         return [
           {
@@ -26,12 +27,12 @@ describe("buildApp", () => {
             projectId: "proj-error",
             threadId: "thread-error",
             deliveryChatId: null,
-            deliverySurfaceType: "dm",
-            deliverySurfaceRef: "ou_error",
+            deliverySurfaceType: null,
+            deliverySurfaceRef: null,
             sessionName: "codex-error",
             rootId: "main",
             status: "error",
-            stage: "completed",
+            stage: "error",
             latestPreview: "任务失败：API 超时",
             latestTool: "npm test",
             errorText: "API timeout",
@@ -54,18 +55,18 @@ describe("buildApp", () => {
             projectId: "proj-cancel",
             threadId: "thread-cancel",
             deliveryChatId: null,
-            deliverySurfaceType: "dm",
-            deliverySurfaceRef: "ou_cancel",
+            deliverySurfaceType: null,
+            deliverySurfaceRef: null,
             sessionName: "codex-cancel",
             rootId: "main",
             status: "canceled",
-            stage: "completed",
+            stage: "canceled",
             latestPreview: "任务已按请求停止",
             latestTool: null,
             errorText: null,
             cancelRequestedAt: "2026-03-23T10:07:00.000Z",
             cancelRequestedBy: "ops",
-            cancelSource: "ops-ui",
+            cancelSource: "ops",
             startedAt: "2026-03-23T10:06:00.000Z",
             updatedAt: "2026-03-23T10:07:05.000Z",
             finishedAt: "2026-03-23T10:07:05.000Z",
@@ -312,8 +313,10 @@ describe("buildApp", () => {
     expect(ui.body).toContain("最近失败");
     expect(ui.body).toContain("最近取消");
     expect(ui.body).toContain("取消中");
+    expect(ui.body).toContain("其他历史任务（次级）");
     expect(ui.body).toContain("开始时间");
     expect(ui.body).toContain("最近公开进展");
+    expect(ui.body).toContain("技术元数据");
     expect(ui.body).toContain("会话快照（次级）");
     expect(ui.body).toContain('"running":"处理中"');
     expect(ui.body).toContain('"tool_call":"工具调用"');
@@ -322,5 +325,7 @@ describe("buildApp", () => {
     expect(ui.body).not.toContain("默认按最近更新时间倒序");
     expect(ui.body.indexOf("<label>状态</label>")).toBeLessThan(ui.body.indexOf("<label>Root</label>"));
     expect(ui.body.indexOf("<label>最近公开进展</label>")).toBeLessThan(ui.body.indexOf("<label>Root</label>"));
+    expect(ui.body.indexOf("最近失败")).toBeLessThan(ui.body.indexOf("其他历史任务（次级）"));
+    expect(ui.body.indexOf("其他历史任务（次级）")).toBeLessThan(ui.body.indexOf("会话快照（次级）"));
   });
 });
