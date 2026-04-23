@@ -22,3 +22,5 @@ temp/
 .worktrees/
 plan/
 .auth/
+.specstory/
+package-lock.json
