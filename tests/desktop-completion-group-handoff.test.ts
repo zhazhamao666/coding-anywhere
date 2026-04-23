@@ -23,7 +23,7 @@ describe("desktop completion group/topic handoff", () => {
     }
   });
 
-  it("keeps an existing Feishu topic on the same surface and returns the thread-switched card", async () => {
+  it("keeps an existing Feishu topic on the same surface and returns the standard session card", async () => {
     const harness = createHarness(harnesses);
     seedExistingTopicBinding(harness.store);
 
@@ -44,14 +44,16 @@ describe("desktop completion group/topic handoff", () => {
     });
 
     expect(harness.apiClient.replyInteractiveCard).not.toHaveBeenCalled();
-    expect(JSON.stringify(response)).toContain("线程已切换");
-    expect(JSON.stringify(response)).toContain("Alpha follow-up");
-    expect(JSON.stringify(response)).toContain("直接发送普通消息，后续内容会进入这个 Codex 线程。");
-    expect(JSON.stringify(response)).not.toContain("Codex 设置");
-    expect(JSON.stringify(response)).not.toContain("命令已提交");
+    const cardText = JSON.stringify(response);
+    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).toContain("Alpha follow-up");
+    expect(cardText).toContain("最近上下文");
+    expect(cardText).toContain("直接发送下一条消息继续当前线程");
+    expect(cardText).toContain("下次任务设置");
+    expect(cardText).not.toContain("命令已提交");
   });
 
-  it("binds the current group chat directly to the native thread and returns the thread-switched card", async () => {
+  it("binds the current group chat directly to the native thread and returns the standard session card", async () => {
     const harness = createHarness(harnesses);
 
     const response = await harness.cardActionService.handleAction({
@@ -75,12 +77,15 @@ describe("desktop completion group/topic handoff", () => {
       chatId: "oc_chat_alpha",
       codexThreadId: "thread-alpha-2",
     });
-    expect(JSON.stringify(response)).toContain("Alpha follow-up");
-    expect(JSON.stringify(response)).toContain("线程已切换");
-    expect(JSON.stringify(response)).toContain("直接发送普通消息，后续内容会进入这个 Codex 线程。");
-    expect(JSON.stringify(response)).not.toContain("新的飞书话题");
-    expect(JSON.stringify(response)).not.toContain("已在飞书继续");
-    expect(JSON.stringify(response)).not.toContain("命令已提交");
+    const cardText = JSON.stringify(response);
+    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).toContain("Alpha follow-up");
+    expect(cardText).toContain("最近上下文");
+    expect(cardText).toContain("直接发送下一条消息继续当前线程");
+    expect(cardText).toContain("下次任务设置");
+    expect(cardText).not.toContain("新的飞书话题");
+    expect(cardText).not.toContain("已在飞书继续");
+    expect(cardText).not.toContain("命令已提交");
   });
 });
 
