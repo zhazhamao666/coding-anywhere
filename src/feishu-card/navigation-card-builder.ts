@@ -64,6 +64,10 @@ function orderStableActions(input: Array<{ id?: string }>): Array<{ id?: string 
   return ordered;
 }
 
+function isTerminalStableMode(mode: StableCardMode | undefined): mode is "completed" | "failed" | "stopped" {
+  return mode === "completed" || mode === "failed" || mode === "stopped";
+}
+
 export function buildBridgeHubCard(input: {
   title?: string;
   summaryLines: string[];
@@ -209,7 +213,7 @@ function buildPlanModeRow(
         vertical_align: "center",
         elements: [{
           tag: "markdown",
-          content: `**计划模式**：${enabledLabel}`,
+          content: `**计划模式** [${enabledLabel}]`,
         }],
       },
       {
@@ -292,11 +296,9 @@ function normalizeActionsForMode(
   context: CardSurfaceContext | undefined,
   actions: BridgeHubAction[],
 ): BridgeHubAction[] {
-  if (stableMode !== "completed") {
-    return actions;
-  }
-
-  const ordered = orderStableActions(actions as any) as BridgeHubAction[];
+  const ordered = isTerminalStableMode(stableMode)
+    ? orderStableActions(actions) as BridgeHubAction[]
+    : actions;
 
   return ordered.map(action => {
     if (action.id !== "more_info" || isNonEmptyActionValue(action.value)) {

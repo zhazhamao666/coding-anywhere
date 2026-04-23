@@ -48,6 +48,7 @@ import type {
   CodexCatalogThreadSourceInfo,
   PendingPlanInteractionRecord,
   RootProfile,
+  StableSessionCardModel,
   ProgressCardState,
   RuntimeRunSnapshot,
   RunContext,
@@ -2418,59 +2419,31 @@ export class BridgeService {
     return {
       kind: "card",
       card: buildBridgeHubCard({
-        title: "项目列表",
+        title: "选择项目",
         summaryLines: [
-          "**视图**：Codex 项目列表",
-          `**项目数**：${projects.length}`,
+          `**当前可用项目**：${projects.length}`,
         ],
         sections: projects.length > 0
           ? []
           : [
               {
-                title: "暂无可浏览项目",
+                title: "当前没有可用项目",
                 items: ["当前 Codex 线程库中没有可用项目。"],
               },
             ],
         rows: projects.map(project => ({
           title: project.displayName,
           lines: [
-            `路径：${project.cwd}`,
-            `线程：${project.activeThreadCount}/${project.threadCount}`,
-            `最近更新：${project.lastUpdatedAt}`,
+            `线程：${project.activeThreadCount}/${project.threadCount} · 最近更新：${project.lastUpdatedAt}`,
           ],
-          buttons: [
-            {
-              label: "查看线程",
-              value: this.buildCardActionValue(
-                this.buildCardActionContext(input),
-                `${BRIDGE_COMMAND_PREFIX} project threads ${project.projectKey}`,
-              ),
-            },
-            {
-              label: "切换项目",
-              type: "primary",
-              value: this.buildCardActionValue(
-                this.buildCardActionContext(input),
-                `${BRIDGE_COMMAND_PREFIX} project switch ${project.projectKey}`,
-              ),
-            },
-          ],
+          buttonLabel: "进入项目",
+          value: this.buildCardActionValue(
+            this.buildCardActionContext(input),
+            `${BRIDGE_COMMAND_PREFIX} project switch ${project.projectKey}`,
+          ),
+          type: "primary",
         })),
-        actions: [
-          {
-            label: "导航",
-            type: "primary",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} hub`),
-          },
-          {
-            label: "项目列表",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project list`),
-          },
-          {
-            label: "新会话",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
-          },
-        ],
+        actions: this.buildSelectionCardActions(input),
       }),
     };
   }
@@ -2482,18 +2455,14 @@ export class BridgeService {
   ): BridgeReply {
     const displayThreads = orderCodexThreadsForParentChildDisplay(threads);
     const threadById = new Map(threads.map(thread => [thread.threadId, thread]));
-    const subagentCount = threads.filter(thread => getCodexThreadSourceInfo(thread).kind === "subagent").length;
-    const parentAgentCount = threads.length - subagentCount;
 
     return {
       kind: "card",
       card: buildBridgeHubCard({
-        title: "线程列表",
+        title: "选择线程",
         summaryLines: [
-          "**视图**：Codex 线程列表",
-          `**当前项目**：${project.displayName}`,
-          `**路径**：${project.cwd}`,
-          `线程数：${threads.length} · 母 agent：${parentAgentCount} · 子 agent：${subagentCount}`,
+          `**项目**：${project.displayName}`,
+          `**线程总数**：${threads.length}`,
         ],
         sections: threads.length > 0
           ? []
@@ -2511,22 +2480,9 @@ export class BridgeService {
             this.buildCardActionContext(input),
             `${BRIDGE_COMMAND_PREFIX} thread switch ${thread.threadId}`,
           ),
+          type: "primary",
         })),
-        actions: [
-          {
-            label: "导航",
-            type: "primary",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} hub`),
-          },
-          {
-            label: "项目列表",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project list`),
-          },
-          {
-            label: "新会话",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
-          },
-        ],
+        actions: this.buildSelectionCardActions(input),
       }),
     };
   }
@@ -2674,70 +2630,63 @@ export class BridgeService {
     const conversationItems = recentConversation.length > 0
       ? recentConversation.map(item => this.formatConversationPreviewItem(item))
       : ["暂未读取到可展示的最近对话。"];
-
-    const sections: Array<{
-      title: string;
-      items: string[];
-      monospace?: boolean;
-    }> = [];
-    if (currentRun) {
-      sections.push({
-        title: "当前运行",
-        items: this.buildCurrentRunItems(currentRun),
-      });
-    }
-    sections.push({
-      title: "最近对话",
-      items: conversationItems,
+    const model = this.buildStableSessionCardModel({
+      projectLabel: project.displayName,
+      threadLabel: thread.title,
+      statusLabel: currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲",
+      scopeLabel: "当前线程",
+      nextRunSettings: {
+        model: effectivePreferences.model,
+        reasoningEffort: effectivePreferences.reasoningEffort,
+        speed: effectivePreferences.speed,
+      },
+      planModeEnabled: false,
+      nextStepText: currentRun
+        ? "当前任务仍在运行；如需查看细节可打开更多信息。"
+        : "直接发送下一条消息继续当前线程",
     });
-    const actions: Array<{
-      label: string;
-      value: Record<string, unknown>;
-      type?: "default" | "primary" | "danger";
-    }> = [
-      {
-        label: "导航",
-        type: "primary",
-        value: this.buildCardActionValue(actionContext, BRIDGE_COMMAND_PREFIX),
-      },
-      {
-        label: "当前项目",
-        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
-      },
-      {
-        label: "线程列表",
-        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-      },
-      {
-        label: "运行状态",
-        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
-      },
-      {
-        label: "新会话",
-        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
-      },
-    ];
-    this.maybePushStopAction(actions, actionContext, currentRun);
 
     return {
       kind: "card",
       card: buildBridgeHubCard({
-        title: "当前会话",
+        title: "当前会话已就绪",
         summaryLines: [
-          "**视图**：当前会话",
-          `**当前项目**：${project.displayName}`,
-          `**路径**：${project.cwd}`,
-          `**当前线程**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`,
-          `线程 ID：${thread.threadId}`,
-          `**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`,
-          ...this.buildCodexPreferenceSummaryLines(effectivePreferences),
+          `**项目**：${model.projectLabel}`,
+          `**线程**：${model.threadLabel}`,
+          `**状态**：${model.statusLabel}`,
+          `**作用范围**：${model.scopeLabel}`,
         ],
-        sections,
-        extraElements: this.buildCodexPreferenceControlElements({
+        stableMode: "session",
+        planModeState: {
+          enabled: model.planModeEnabled,
+          singleUse: true,
+        },
+        context: actionContext,
+        sections: [
+          {
+            title: "最近上下文",
+            items: conversationItems,
+          },
+          {
+            title: "下一步",
+            items: [model.nextStepText],
+          },
+        ],
+        extraElements: this.buildStableSessionPreferenceControlElements({
           context: actionContext,
           effectivePreferences,
         }),
-        actions,
+        actions: [
+          {
+            id: "switch_thread",
+            label: "切换线程",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+          {
+            id: "more_info",
+            label: "更多信息",
+          },
+        ],
       }),
     };
   }
@@ -2750,64 +2699,76 @@ export class BridgeService {
     const preferenceTarget = this.resolveCodexPreferenceTarget(input, resolved);
     const currentRun = this.findCurrentRunForResolved(resolved);
     const contextItems = this.buildContextSummaryItems(input, resolved, currentRun);
+    const stableContextItems = contextItems.filter(item =>
+      !item.startsWith("线程 ID：") &&
+      !item.startsWith("群聊 ID：") &&
+      !item.startsWith("话题 ID：")
+    );
+    const readableContext = this.resolveReadableContext(input, resolved, currentRun);
     const actionContext = this.buildCardActionContext(input);
-    const summaryLines = [
-      "**视图**：当前会话",
-      `**Root**：${resolved.root.id}`,
-      `**状态**：${currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲"}`,
-    ];
-    summaryLines.push(...this.buildContextSummaryLines(input, resolved, currentRun));
-    summaryLines.push(...this.buildCodexPreferenceSummaryLines(effectivePreferences));
-    const actions: Array<{
-      label: string;
-      value: Record<string, unknown>;
-      type?: "default" | "primary" | "danger";
-    }> = [
-      {
-        label: "导航",
-        type: "primary",
-        value: this.buildCardActionValue(actionContext, BRIDGE_COMMAND_PREFIX),
+    const model = this.buildStableSessionCardModel({
+      projectLabel: readableContext.projectLabel ?? "未选择",
+      threadLabel: readableContext.threadLabel ?? (this.isDmContext(input) ? "未选择" : "未绑定"),
+      statusLabel: currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲",
+      scopeLabel: preferenceTarget.kind === "thread" ? "当前线程" : "当前会话入口",
+      nextRunSettings: {
+        model: effectivePreferences.model,
+        reasoningEffort: effectivePreferences.reasoningEffort,
+        speed: effectivePreferences.speed,
       },
-      {
-        label: "运行状态",
-        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} status`),
-      },
-      {
-        label: "新会话",
-        value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
-      },
-    ];
-    this.maybePushStopAction(actions, actionContext, currentRun);
+      planModeEnabled: false,
+      nextStepText: currentRun
+        ? "当前任务仍在运行；如需查看细节可打开更多信息。"
+        : readableContext.threadId
+          ? "直接发送下一条消息继续当前线程"
+          : readableContext.projectLabel
+            ? "选择已有线程，或直接发送消息创建新会话"
+            : "先选择项目，再开始任务",
+    });
 
     return {
       kind: "card",
       card: buildBridgeHubCard({
-        title: "当前会话",
-        summaryLines,
+        title: "当前会话已就绪",
+        summaryLines: [
+          `**项目**：${model.projectLabel}`,
+          `**线程**：${model.threadLabel}`,
+          `**状态**：${model.statusLabel}`,
+          `**作用范围**：${model.scopeLabel}`,
+        ],
+        stableMode: "session",
+        planModeState: {
+          enabled: model.planModeEnabled,
+          singleUse: true,
+        },
+        context: actionContext,
         sections: [
-          currentRun
-            ? {
-                title: "当前运行",
-                items: this.buildCurrentRunItems(currentRun),
-              }
-            : {
-                title: "当前会话",
-                items: ["当前没有运行中的任务。"],
-              },
+          ...(stableContextItems.length > 0
+            ? [{
+                title: "最近上下文",
+                items: stableContextItems,
+              }]
+            : []),
           {
-            title: "Codex 设置",
-            items: this.buildCodexPreferenceSectionItems(effectivePreferences, preferenceTarget),
-          },
-          {
-            title: "当前上下文",
-            items: contextItems.length > 0 ? contextItems : ["当前上下文暂不可用。"],
+            title: "下一步",
+            items: [model.nextStepText],
           },
         ],
-        extraElements: this.buildCodexPreferenceControlElements({
+        extraElements: this.buildStableSessionPreferenceControlElements({
           context: actionContext,
           effectivePreferences,
         }),
-        actions,
+        actions: [
+          {
+            id: "switch_thread",
+            label: "切换线程",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+          {
+            id: "more_info",
+            label: "更多信息",
+          },
+        ],
       }),
     };
   }
@@ -3281,6 +3242,215 @@ export class BridgeService {
             ],
           },
         ],
+      },
+    ];
+  }
+
+  private buildStableSessionCardModel(input: StableSessionCardModel): StableSessionCardModel {
+    return input;
+  }
+
+  private buildStableSessionPreferenceControlElements(input: {
+    context: {
+      chatId?: string;
+      surfaceType?: "thread";
+      surfaceRef?: string;
+    };
+    effectivePreferences: EffectiveCodexPreferences;
+  }): Array<Record<string, unknown>> {
+    const catalog = this.getCodexPreferenceCatalog();
+    return [
+      {
+        tag: "markdown",
+        content: "**下次任务设置**",
+      },
+      {
+        tag: "column_set",
+        flex_mode: "none",
+        background_style: "default",
+        columns: [
+          {
+            tag: "column",
+            width: "auto",
+            weight: 1,
+            vertical_align: "center",
+            elements: [{
+              tag: "markdown",
+              content: "**模型**",
+            }],
+          },
+          {
+            tag: "column",
+            width: "weighted",
+            weight: 5,
+            vertical_align: "center",
+            elements: [{
+              tag: "select_static",
+              initial_option: input.effectivePreferences.model,
+              placeholder: {
+                tag: "plain_text",
+                content: "选择模型",
+              },
+              options: catalog.modelOptions.map(model => ({
+                text: {
+                  tag: "plain_text",
+                  content: getCodexModelLabel(model),
+                },
+                value: model,
+              })),
+              behaviors: [{
+                type: "callback",
+                value: this.buildCodexPreferenceActionValue(input.context, "set_codex_model"),
+              }],
+            }],
+          },
+        ],
+      },
+      {
+        tag: "column_set",
+        flex_mode: "none",
+        background_style: "default",
+        columns: [
+          {
+            tag: "column",
+            width: "auto",
+            weight: 1,
+            vertical_align: "center",
+            elements: [{
+              tag: "markdown",
+              content: "**推理**",
+            }],
+          },
+          {
+            tag: "column",
+            width: "weighted",
+            weight: 2,
+            vertical_align: "center",
+            elements: [{
+              tag: "select_static",
+              initial_option: input.effectivePreferences.reasoningEffort,
+              placeholder: {
+                tag: "plain_text",
+                content: "选择推理",
+              },
+              options: catalog.reasoningEffortOptions.map(reasoningEffort => ({
+                text: {
+                  tag: "plain_text",
+                  content: getCodexReasoningLabel(reasoningEffort),
+                },
+                value: reasoningEffort,
+              })),
+              behaviors: [{
+                type: "callback",
+                value: this.buildCodexPreferenceActionValue(input.context, "set_reasoning_effort"),
+              }],
+            }],
+          },
+          {
+            tag: "column",
+            width: "auto",
+            weight: 1,
+            vertical_align: "center",
+            elements: [{
+              tag: "markdown",
+              content: "**速度**",
+            }],
+          },
+          {
+            tag: "column",
+            width: "weighted",
+            weight: 2,
+            vertical_align: "center",
+            elements: [{
+              tag: "select_static",
+              initial_option: input.effectivePreferences.speed,
+              placeholder: {
+                tag: "plain_text",
+                content: "选择速度",
+              },
+              options: catalog.speedOptions.map(speed => ({
+                text: {
+                  tag: "plain_text",
+                  content: getCodexSpeedLabel(speed),
+                },
+                value: speed,
+              })),
+              behaviors: [{
+                type: "callback",
+                value: this.buildCodexPreferenceActionValue(input.context, "set_codex_speed"),
+              }],
+            }],
+          },
+        ],
+      },
+    ];
+  }
+
+  private buildStableSessionDiagnostics(input: {
+    input: BridgeMessageInput;
+    projectLabel: string;
+    projectPath: string;
+    threadLabel: string;
+    threadId?: string | null;
+    scopeLabel: string;
+    currentRun?: RuntimeRunSnapshot;
+    effectivePreferences: EffectiveCodexPreferences;
+  }): {
+    contextRows: string[];
+    recentRunRows: string[];
+    nextRunRows: string[];
+  } {
+    return {
+      contextRows: [
+        `项目：${input.projectLabel}`,
+        `项目路径：${input.projectPath}`,
+        `线程：${input.threadLabel}`,
+        ...(input.threadId ? [`threadId：${input.threadId}`] : []),
+        `作用范围：${input.scopeLabel}`,
+        `surface：${this.describeSurface(input.input)}`,
+      ],
+      recentRunRows: input.currentRun
+        ? this.buildCurrentRunItems(input.currentRun, true)
+        : ["当前没有最近运行。"],
+      nextRunRows: [
+        `设置：${getCodexModelLabel(input.effectivePreferences.model)} / ${getCodexReasoningLabel(input.effectivePreferences.reasoningEffort)} / ${getCodexSpeedLabel(input.effectivePreferences.speed)}`,
+        `生效范围：${input.scopeLabel}`,
+      ],
+    };
+  }
+
+  private describeSurface(input: BridgeMessageInput): string {
+    if (input.surfaceType === "thread") {
+      return "feishu_thread";
+    }
+
+    if (input.chatId) {
+      return "feishu_chat";
+    }
+
+    return "feishu_dm";
+  }
+
+  private buildSelectionCardActions(input: BridgeMessageInput): Array<{
+    label: string;
+    value: Record<string, unknown>;
+    type?: "default" | "primary" | "danger";
+  }> {
+    const hasCurrentSession = this.isDmContext(input)
+      ? Boolean(this.lookupDmCodexSelection(input) || this.lookupDmSelectedProject(input))
+      : Boolean(input.chatId || input.surfaceType === "thread");
+
+    return [
+      {
+        label: hasCurrentSession ? "返回当前会话" : "返回导航",
+        value: this.buildCardActionValue(
+          this.buildCardActionContext(input),
+          hasCurrentSession ? `${BRIDGE_COMMAND_PREFIX} session` : BRIDGE_COMMAND_PREFIX,
+        ),
+      },
+      {
+        label: "新会话",
+        value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
       },
     ];
   }
@@ -3979,16 +4149,16 @@ function formatCodexThreadListLines(
 
   if (sourceInfo.kind === "subagent") {
     return [
-      `身份：子 agent · ${formatSubagentIdentity(sourceInfo)}`,
-      `父线程：${formatParentThreadLabel(sourceInfo.parentThreadId, threadById)}`,
-      `线程 ID：${thread.threadId}${formatSubagentDepth(sourceInfo)}`,
+      `子 agent · 父线程：${formatParentThreadLabel(sourceInfo.parentThreadId, threadById)}${formatSubagentDepth(sourceInfo)}`,
+      ...(formatSubagentIdentity(sourceInfo) !== "未命名"
+        ? [`身份：${formatSubagentIdentity(sourceInfo)}`]
+        : []),
       `最近更新：${thread.updatedAt}`,
     ];
   }
 
   return [
-    `线程 ID：${thread.threadId}`,
-    `身份：母 agent · 来源：${sourceInfo.label} · 分支：${thread.gitBranch ?? "unknown"}`,
+    "主线程",
     `最近更新：${thread.updatedAt}`,
   ];
 }

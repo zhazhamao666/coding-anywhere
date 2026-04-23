@@ -110,12 +110,18 @@ describe("BridgeService", () => {
     });
     const sessionCard = (sessionReplies[0] as { card: Record<string, unknown> }).card;
     const sessionCardText = JSON.stringify(sessionCard);
-    expect(sessionCardText).toContain("当前模型");
+    expect(sessionCardText).toContain("当前会话已就绪");
+    expect(sessionCardText).toContain("下次任务设置");
+    expect(sessionCardText).toContain("计划模式");
+    expect(sessionCardText).toContain("切换线程");
+    expect(sessionCardText).toContain("更多信息");
     expect(sessionCardText).toContain("GPT-5.4");
     expect(sessionCardText).toContain("推理");
     expect(sessionCardText).toContain("超高");
     expect(sessionCardText).toContain("速度");
     expect(sessionCardText).toContain("标准");
+    expect(sessionCardText).not.toContain("**视图**：当前会话");
+    expect(sessionCardText).not.toContain("线程 ID：");
     expect(sessionCardText).toContain("\"bridgeAction\":\"set_codex_model\"");
     expect(sessionCardText).toContain("\"bridgeAction\":\"set_reasoning_effort\"");
     expect(sessionCardText).toContain("\"bridgeAction\":\"set_codex_speed\"");
@@ -384,7 +390,7 @@ describe("BridgeService", () => {
       text: "/ca session",
     });
     const sessionCard = (sessionReplies[0] as { card: Record<string, unknown> }).card;
-    expect(JSON.stringify(sessionCard)).toContain("停止任务");
+    expect(JSON.stringify(sessionCard)).not.toContain("停止任务");
     expect(readCardSummaryMarkdown(sessionCard)).toContain("当前线程");
     expect(readCardSummaryMarkdown(sessionCard)).not.toContain("Session");
 
@@ -457,16 +463,12 @@ describe("BridgeService", () => {
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
     expect(cardText).toContain("\"tag\":\"button\"");
     expect(cardText).toContain("当前项目");
-    expect(cardText).toContain("当前项目");
     expect(cardText).toContain("proj-current");
-    expect(cardText).toContain("当前项目线程");
-    expect(cardText).toContain("thread-current");
     expect(cardText).toContain("follow-up");
-    expect(cardText).not.toContain("当前项目群快捷命令");
-    expect(cardText).toContain("导航");
+    expect(cardText).toContain("当前项目线程");
     expect(cardText).toContain("当前项目");
     expect(cardText).toContain("线程列表");
-    expect(cardText).not.toContain("计划模式");
+    expect(cardText).not.toContain("当前项目群快捷命令");
   });
 
   it("returns a hub card with project summaries in DM", async () => {
@@ -1427,6 +1429,45 @@ describe("BridgeService", () => {
     expect(cardText).toContain("chat=oc_chat_1");
   });
 
+  it("renders DM catalog project list cards as single-action selection rows", async () => {
+    const catalog = {
+      listProjects: vi.fn(() => [{
+        projectKey: "proj-native",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        displayName: "coding-anywhere",
+        threadCount: 3,
+        activeThreadCount: 1,
+        lastUpdatedAt: "2026-04-23T10:00:00.000Z",
+        gitBranch: "main",
+      }]),
+      getProject: vi.fn(),
+      listThreads: vi.fn(() => []),
+      getThread: vi.fn(),
+      listRecentConversation: vi.fn(() => []),
+    };
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: catalog,
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project list",
+    });
+
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("选择项目");
+    expect(cardText).toContain("当前可用项目");
+    expect(cardText).toContain("coding-anywhere");
+    expect(cardText).toContain("进入项目");
+    expect(cardText).not.toContain("查看线程");
+    expect(cardText).not.toContain("路径：");
+    expect(cardText).toContain("返回导航");
+    expect(cardText).toContain("新会话");
+  });
+
   it("returns an empty project list card instead of a system message", async () => {
     const service = new BridgeService({
       store,
@@ -1957,10 +1998,14 @@ describe("BridgeService", () => {
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("线程列表");
+    expect(cardText).toContain("选择线程");
     expect(cardText).toContain("coding-anywhere");
-    expect(cardText).toContain("thread-native-current");
     expect(cardText).toContain("follow-up");
+    expect(cardText).toContain("主线程");
+    expect(cardText).toContain("切换到此线程");
+    expect(cardText).not.toContain("线程 ID：thread-native-current");
+    expect(cardText).not.toContain("来源");
+    expect(cardText).not.toContain("分支");
     expect(cardText).toContain("新会话");
   });
 
@@ -2184,18 +2229,20 @@ describe("BridgeService", () => {
     });
 
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("线程数：4 · 母 agent：2 · 子 agent：2");
-    expect(cardText).toContain("身份：母 agent · 来源：VS Code · 分支：main");
+    expect(cardText).toContain("选择线程");
+    expect(cardText).toContain("线程总数");
+    expect(cardText).toContain("主线程");
     expect(cardText).toContain("└ 配置 social-link-ingest 运行环境");
-    expect(cardText).toContain("身份：子 agent · Gauss / worker");
-    expect(cardText).toContain("父线程：导入小红书优化版Karpthy知识库分享（thread-parent）");
-    expect(cardText).toContain("线程 ID：thread-child · 层级：1");
-    expect(cardText).toContain("身份：子 agent · Meitner / explorer");
-    expect(cardText).toContain("父线程：thread-missing（不在当前列表）");
+    expect(cardText).toContain("子 agent · 父线程：导入小红书优化版Karpthy知识库分享（thread-parent） · 层级：1");
+    expect(cardText).toContain("身份：Gauss / worker");
+    expect(cardText).toContain("子 agent · 父线程：thread-missing（不在当前列表） · 层级：2");
+    expect(cardText).toContain("身份：Meitner / explorer");
     expect(cardText).toContain("/ca thread switch thread-child");
     expect(cardText).toContain("/ca thread switch thread-orphan-child");
     expect(cardText).not.toContain("{\\\"subagent\\\"");
     expect(cardText).not.toContain("thread_spawn");
+    expect(cardText).not.toContain("来源：");
+    expect(cardText).not.toContain("分支：");
 
     expect(cardText.indexOf("导入小红书优化版Karpthy知识库分享")).toBeLessThan(
       cardText.indexOf("└ 配置 social-link-ingest 运行环境"),
@@ -2666,4 +2713,36 @@ function readCardSummaryMarkdown(card: Record<string, unknown>): string {
   const body = card.body as { elements?: Array<Record<string, unknown>> } | undefined;
   const summary = body?.elements?.find(element => element.tag === "markdown");
   return typeof summary?.content === "string" ? summary.content : "";
+}
+
+function readCardAllMarkdown(card: Record<string, unknown>): string {
+  const parts: string[] = [];
+  collectMarkdownParts(card, parts);
+  return parts.join("\n");
+}
+
+function collectMarkdownParts(node: unknown, parts: string[]): void {
+  if (!node) {
+    return;
+  }
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      collectMarkdownParts(item, parts);
+    }
+    return;
+  }
+
+  if (typeof node !== "object") {
+    return;
+  }
+
+  const record = node as Record<string, unknown>;
+  if (record.tag === "markdown" && typeof record.content === "string") {
+    parts.push(record.content);
+  }
+
+  for (const value of Object.values(record)) {
+    collectMarkdownParts(value, parts);
+  }
 }

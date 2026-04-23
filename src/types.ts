@@ -36,6 +36,20 @@ export interface CodexPreferenceRecord {
   updatedAt: string;
 }
 
+export interface StableSessionCardModel {
+  projectLabel: string;
+  threadLabel: string;
+  statusLabel: string;
+  scopeLabel: string;
+  nextRunSettings: {
+    model: string;
+    reasoningEffort: CodexReasoningEffort;
+    speed: CodexSpeed;
+  };
+  planModeEnabled: boolean;
+  nextStepText: string;
+}
+
 export type PendingPlanInteractionStatus = "pending" | "resolved" | "superseded";
 
 export interface PendingPlanInteractionRecord extends PlanInteractionDraft {

@@ -302,7 +302,10 @@ describe("feishu card builder", () => {
       title: "当前会话",
       summaryLines: ["**Root**：main", "**当前会话**：codex-main"],
       sections: [],
-      actions: [],
+      actions: [{
+        id: "more_info",
+        label: "更多信息",
+      }],
       stableMode: "session",
       planModeState: {
         enabled: true,
@@ -317,8 +320,9 @@ describe("feishu card builder", () => {
 
     const serialized = JSON.stringify(card);
     expect(serialized).toContain("计划模式");
-    expect(serialized).toContain("开");
+    expect(serialized).toContain("[开]");
     expect(serialized).toContain("\"bridgeAction\":\"toggle_plan_mode\"");
+    expect(serialized).toContain("\"bridgeAction\":\"open_diagnostics\"");
   });
 
   it("orders completed card actions as 新会话 | 切换线程 | 更多信息", () => {
@@ -327,6 +331,104 @@ describe("feishu card builder", () => {
       summaryLines: ["**Root**：main", "**当前会话**：codex-main"],
       sections: [],
       stableMode: "completed",
+      context: {
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+      },
+      actions: [
+        {
+          id: "more_info",
+          label: "更多信息",
+          type: "default",
+        },
+        {
+          id: "switch_thread",
+          label: "切换线程",
+          type: "default",
+          value: {
+            command: "/ca thread list-current",
+          },
+        },
+        {
+          id: "new_session",
+          label: "新会话",
+          type: "primary",
+          value: {
+            command: "/ca new",
+          },
+        },
+      ],
+    } as any);
+
+    const serialized = JSON.stringify(card);
+    const newSessionIndex = serialized.indexOf("新会话");
+    const switchThreadIndex = serialized.indexOf("切换线程");
+    const moreInfoIndex = serialized.indexOf("更多信息");
+
+    expect(newSessionIndex).toBeGreaterThanOrEqual(0);
+    expect(switchThreadIndex).toBeGreaterThanOrEqual(0);
+    expect(moreInfoIndex).toBeGreaterThanOrEqual(0);
+    expect(newSessionIndex).toBeLessThan(switchThreadIndex);
+    expect(switchThreadIndex).toBeLessThan(moreInfoIndex);
+    expect(serialized).toContain("\"bridgeAction\":\"open_diagnostics\"");
+  });
+
+  it("orders failed card actions as 新会话 | 切换线程 | 更多信息", () => {
+    const card = buildNavigationCard({
+      title: "任务出错",
+      summaryLines: ["**Root**：main", "**当前会话**：codex-main"],
+      sections: [],
+      stableMode: "failed",
+      context: {
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+      },
+      actions: [
+        {
+          id: "more_info",
+          label: "更多信息",
+          type: "default",
+        },
+        {
+          id: "switch_thread",
+          label: "切换线程",
+          type: "default",
+          value: {
+            command: "/ca thread list-current",
+          },
+        },
+        {
+          id: "new_session",
+          label: "新会话",
+          type: "primary",
+          value: {
+            command: "/ca new",
+          },
+        },
+      ],
+    } as any);
+
+    const serialized = JSON.stringify(card);
+    const newSessionIndex = serialized.indexOf("新会话");
+    const switchThreadIndex = serialized.indexOf("切换线程");
+    const moreInfoIndex = serialized.indexOf("更多信息");
+
+    expect(newSessionIndex).toBeGreaterThanOrEqual(0);
+    expect(switchThreadIndex).toBeGreaterThanOrEqual(0);
+    expect(moreInfoIndex).toBeGreaterThanOrEqual(0);
+    expect(newSessionIndex).toBeLessThan(switchThreadIndex);
+    expect(switchThreadIndex).toBeLessThan(moreInfoIndex);
+    expect(serialized).toContain("\"bridgeAction\":\"open_diagnostics\"");
+  });
+
+  it("orders stopped card actions as 新会话 | 切换线程 | 更多信息", () => {
+    const card = buildNavigationCard({
+      title: "任务已停止",
+      summaryLines: ["**Root**：main", "**当前会话**：codex-main"],
+      sections: [],
+      stableMode: "stopped",
       context: {
         chatId: "oc_chat_current",
         surfaceType: "thread",
@@ -438,7 +540,7 @@ describe("feishu card builder", () => {
             },
           },
           {
-            label: "切换项目",
+            label: "进入项目",
             type: "primary",
             value: {
               command: "/ca project switch demo",
@@ -449,7 +551,7 @@ describe("feishu card builder", () => {
     });
 
     const serialized = JSON.stringify(card);
-    expect(serialized).toContain("切换项目");
+    expect(serialized).toContain("进入项目");
     expect(serialized).not.toContain("查看线程");
   });
 });
