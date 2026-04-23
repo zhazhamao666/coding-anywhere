@@ -359,6 +359,9 @@ export class FeishuCardActionService {
       actionValue,
       interactionToken: event.token,
       existingMessageId: patchTargetMessageId,
+      chatId: effectiveChatId,
+      surfaceType: actionValue?.surfaceType,
+      surfaceRef: actionValue?.surfaceRef,
       execute: () => this.dependencies.bridgeService.handleMessage({
         channel: "feishu",
         peerId: event.open_id,
@@ -503,6 +506,9 @@ export class FeishuCardActionService {
     actionValue?: CardActionValue;
     interactionToken?: string;
     existingMessageId?: string;
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
     execute: () => Promise<BridgeReply[]>;
   }): void {
     void (async () => {
@@ -513,7 +519,7 @@ export class FeishuCardActionService {
           peerId: input.peerId,
           existingMessageId: input.existingMessageId,
         });
-        const card = this.buildCommandResultCard({
+        let card = this.buildCommandResultCard({
           replies,
           command: input.command,
           actionValue: input.actionValue,
@@ -522,12 +528,55 @@ export class FeishuCardActionService {
           patchTargetCardId: input.actionValue?.cardId,
           patchTargetMessageId: input.existingMessageId,
         });
+        const sessionCard = await this.maybeBuildSessionCardAfterCommand({
+          command: input.command,
+          replies,
+          peerId: input.peerId,
+          chatId: input.chatId,
+          surfaceType: input.surfaceType,
+          surfaceRef: input.surfaceRef,
+        });
+        if (sessionCard) {
+          card = sessionCard;
+        }
         await this.updateCommandCard(input.command, input.existingMessageId, input.interactionToken, card);
       } catch (error) {
         const errorCard = this.buildInfoCard("命令执行失败", [normalizeActionError(error)], input.actionValue);
         await this.updateCommandCard(input.command, input.existingMessageId, input.interactionToken, errorCard);
       }
     })();
+  }
+
+  private async maybeBuildSessionCardAfterCommand(input: {
+    command: string;
+    replies: BridgeReply[];
+    peerId: string;
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
+  }): Promise<Record<string, unknown> | undefined> {
+    const normalizedCommand = input.command.trim();
+    const isNewSession = normalizedCommand === "/ca new" || normalizedCommand.startsWith("/ca new ");
+    const isThreadSwitch = normalizedCommand.startsWith("/ca thread switch ");
+    if (!isNewSession && !isThreadSwitch) {
+      return undefined;
+    }
+
+    // Only collapse success transitions. For failures we keep the original error card.
+    if (isThreadSwitch && !isSuccessfulThreadSwitchReply(input.replies)) {
+      return undefined;
+    }
+
+    const replies = await this.dependencies.bridgeService.handleMessage({
+      channel: "feishu",
+      peerId: input.peerId,
+      chatId: input.chatId,
+      surfaceType: input.surfaceType,
+      surfaceRef: input.surfaceRef,
+      text: "/ca session",
+    });
+    const cardReply = replies.find(item => item.kind === "card") as Extract<BridgeReply, { kind: "card" }> | undefined;
+    return cardReply?.card;
   }
 
   private async updateCommandCard(
@@ -714,6 +763,25 @@ function isDesktopThreadContinuationResult(value: unknown): value is DesktopThre
   return !!value
     && typeof value === "object"
     && "reply" in value;
+}
+
+function isSuccessfulThreadSwitchReply(replies: BridgeReply[]): boolean {
+  const reply = replies.find(item => item.kind !== "progress");
+  if (!reply) {
+    return false;
+  }
+
+  if (reply.kind === "system") {
+    return reply.text.startsWith("[ca] thread switched to ");
+  }
+
+  if (reply.kind === "card") {
+    const header = reply.card.header as { title?: { content?: string } } | undefined;
+    const title = header?.title?.content?.trim() ?? "";
+    return title === "线程已切换";
+  }
+
+  return false;
 }
 
 function readTextField(formValue: Record<string, unknown> | undefined, key: string): string | undefined {

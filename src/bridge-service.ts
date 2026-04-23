@@ -1075,7 +1075,7 @@ export class BridgeService {
             title: resolved.threadId ?? resolved.sessionName,
             status: "warm",
           });
-          return [{ kind: "system", text: `[ca] thread reset to ${created.threadId}` }];
+          return [this.buildResolvedSessionCardReply(input, this.resolveContext(input))];
         }
 
         if (input.chatId) {
@@ -1089,7 +1089,7 @@ export class BridgeService {
             chatId: input.chatId,
             codexThreadId: created.threadId,
           });
-          return [{ kind: "system", text: `[ca] thread switched to ${created.threadId}` }];
+          return [this.buildResolvedSessionCardReply(input, this.resolveContext(input))];
         }
 
         this.dependencies.store.bindCodexWindow({
@@ -1097,7 +1097,7 @@ export class BridgeService {
           peerId: input.peerId,
           codexThreadId: created.threadId,
         });
-        return [{ kind: "system", text: `[ca] thread switched to ${created.threadId}` }];
+        return [this.buildResolvedSessionCardReply(input, this.resolveContext(input))];
       }
       case "stop": {
         const resolved = this.tryResolveContext(input);
@@ -1682,7 +1682,15 @@ export class BridgeService {
           title: thread.title,
           status: "warm",
         });
-        return [{ kind: "system", text: `[ca] thread switched to ${thread.threadId}` }];
+        const recentConversation = this.dependencies.codexCatalog.listRecentConversation(thread.threadId);
+        return [
+          this.buildCurrentCodexSessionCardReply(
+            input,
+            project,
+            thread,
+            selectSwitchCardConversation(recentConversation),
+          ),
+        ];
       }
 
       if (input.chatId) {
@@ -2981,56 +2989,7 @@ export class BridgeService {
     thread: CodexCatalogThread,
     recentConversation: CodexCatalogConversationItem[],
   ): BridgeReply {
-    const conversationItems = recentConversation.length > 0
-      ? recentConversation.map(item => this.formatConversationPreviewItem(item))
-      : ["暂未读取到可展示的最近对话。"];
-
-    return {
-      kind: "card",
-      card: buildBridgeHubCard({
-        title: "线程已切换",
-        summaryLines: [
-          "**视图**：线程已切换",
-          `**当前项目**：${project.displayName}`,
-          `**路径**：${project.cwd}`,
-          `**当前线程**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`,
-          `线程 ID：${thread.threadId}`,
-        ],
-        sections: [
-          {
-            title: "最近对话",
-            items: conversationItems,
-          },
-          {
-            title: "下一步",
-            items: [
-              `${BRIDGE_COMMAND_PREFIX} thread list-current`,
-              `${BRIDGE_COMMAND_PREFIX} project current`,
-              "直接发送普通消息，后续内容会进入这个 Codex 线程。",
-            ],
-          },
-        ],
-        actions: [
-          {
-            label: "导航",
-            type: "primary",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
-          },
-          {
-            label: "当前项目",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
-          },
-          {
-            label: "线程列表",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-          },
-          {
-            label: "当前会话",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} session`),
-          },
-        ],
-      }),
-    };
+    return this.buildCurrentCodexSessionCardReply(input, project, thread, recentConversation);
   }
 
   private buildCodexProjectUnavailableCardReply(input: BridgeMessageInput): BridgeReply {

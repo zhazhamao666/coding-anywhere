@@ -63,8 +63,8 @@
 33. `npm run dev` 与 `npm run start` 维持前台子进程模型，并显式转发 `SIGINT` / `SIGTERM`，便于在当前终端 `Ctrl+C` 或关闭窗口时一起退出
 34. 飞书 SDK 传入的数组形态日志会先归一化成单条字符串，再交给项目日志器输出，减少控制台中出现 JSON 数组样式的日志
 35. 普通消息不再走 `acpx sessions ensure + prompt`；所有执行面统一改为 `codex exec --json` 创建线程或 `codex exec resume --json <thread_id>` 续跑线程
-36. DM 中切换到某个 Codex 原生线程后，切换成功卡片会附带“最后 1 条 user 消息 + 最后 4 条 assistant 消息”的原文预览，便于快速恢复上下文
-37. 长任务在飞书中的终态展示调整为“摘要卡 + 完整正文消息”：状态卡收口时只保留终态摘要与“查看下方消息”的提示，完整 assistant 正文仍单独作为普通消息 / 线程回复发送，避免同一份结果在卡片和消息中重复完整展示
+36. DM 中切换到某个 Codex 原生线程后，成功回执现在会直接落到“当前会话已就绪”稳定态主卡，并附带“最后 1 条 user 消息 + 最后 4 条 assistant 消息”的最近上下文预览，便于快速恢复上下文
+37. 长任务在飞书中的终态展示现在收敛为“终态卡 + 完整正文消息”：终态卡会直接内嵌 `Codex 最终返回了什么` 的收敛正文、本次/下次任务设置，以及 `新会话 | 切换线程 | 更多信息` 后续动作；完整 assistant 正文仍单独作为普通消息 / 线程回复发送，避免卡片和消息同时完整重复同一大段结果
 38. `/ca new` 不再重置 CA session，而是创建并切换到新的 native Codex thread；该行为现在同时适用于 DM、已绑定项目群主时间线和已注册飞书线程
 39. `/ca stop` 现在会按当前 DM / 已注册飞书线程 surface 查找 live run：排队中的 run 直接取消并收口为 `canceled`，运行中的 run 会先进入 `canceling` 再终态收口
 40. `thread list-current` 在已绑定项目群中会直接列出当前项目对应的 Codex native thread
@@ -87,7 +87,7 @@
 57. `FeishuWsClient` 现在会在每次底层长连接真正连上后额外打印 transport connected 日志，并在 socket `close` / `error` 时输出关闭码、关闭原因和结构化错误信息，便于定位 DNS、TLS 或代理隧道层面的出网问题
 58. 飞书长连接的重连次数、重连间隔和首次重连抖动现在都已提升为显式配置项，默认仍保持 SDK 的“无限重试 + 120 秒间隔 + 30 秒随机抖动”
 59. `/ca status` 现在会返回结构化“运行状态”卡：若当前 surface 有 live run，则展示 `runId`、状态/阶段、耗时、最近工具、最新摘要和投递上下文；若没有，则返回空闲态并保留当前上下文摘要
-60. `/ca` 导航卡与“当前会话”卡现在都补上了“运行状态”和“停止任务”按钮，继续复用同一条 `/ca` 卡片回调重放链路
+60. `/ca` 与 `/ca session` 现在都优先落到同一套“当前会话已就绪”稳定态主卡：首屏以继续当前线程为主，不再在主卡首屏平铺“运行状态 / 停止任务”这类运行态动作
 61. runtime 现在额外暴露 `/ops/runtime` 实时调度快照，以及 `/ops/runs/:id/cancel` 运行中/排队任务取消接口
 62. `/ops/ui` 已升级为“概览 + 活跃/排队任务面板 + 历史详情”的组合视图，支持直接取消 live run；运行状态与阶段标签会和飞书卡片共用同一套中文词汇，不再在后台裸露 `running / tool_call` 这类英文原值
 63. `observability_runs` 现在会额外记录 `cancel_requested_at`、`cancel_requested_by`、`cancel_source`，便于还原取消请求来源
@@ -95,19 +95,19 @@
 65. `/ops/runs` 历史列表改为按最近更新时间倒序展示，不再把更早的非终态 run 固定钉在顶部
 66. 当 `/ca new` 或普通续跑命中非 Git 项目的 `cwd` 时，runner 现在会自动补 `--skip-git-repo-check`，允许非 Git 项目继续创建或续跑 native Codex thread
 67. `/ca`、`/ca status`、`/ca session` 这几张主卡现在会优先展示人类可读的项目名 / 线程名；raw `thread_id` 只保留为辅助诊断字段，不再把 `Session` 作为主信息直接抛给飞书用户
-68. `/ca` 导航卡、“当前会话”卡和运行状态卡现在只有在当前 surface 确实存在 live run 时才展示“停止任务”；同时会在卡片里直接带出当前运行摘要，避免只给动作不给上下文
-69. 运行中的流式状态卡本身现在也带“停止任务”按钮；即便 DM 走的是 CardKit 流式 shell 卡，非终态也会补上同一条 `/ca stop` 卡片回调入口
-70. `/ca` 导航卡、`/ca status`、运行中的流式卡、终态摘要卡，以及 assistant Markdown 正文卡写入 `config.summary` 的预览文本，都会先把 assistant Markdown 归一化为纯文本再展示，避免 `**标题**`、列表标记等原始语法直接泄漏到飞书卡片摘要区或会话列表预览
+68. 运行态相关动作现在只留在真正的运行中卡与 `/ca status` 里：稳定态会话卡继续只承载上下文、下次任务设置、计划模式开关和后续动作，避免把会话首页做成运维面板
+69. 运行中的流式状态卡现在只保留一个“停止任务”危险按钮；即便 DM 走的是 CardKit 流式 shell 卡，非终态也会补上同一条 `/ca stop` 卡片回调入口，不再额外混入导航动作
+70. `/ca`、`/ca status`、运行中的流式卡、普通对话 run 的终态卡，以及 assistant Markdown 正文卡写入 `config.summary` 的预览文本，都会先把 assistant Markdown 归一化为纯文本再展示，避免 `**标题**`、列表标记等原始语法直接泄漏到飞书卡片摘要区或会话列表预览
 71. assistant 的最终正文如果包含明显 Markdown 结构，会优先以 JSON 2.0 Markdown 卡片发送；若内容过大超出飞书 `interactive` 消息安全体积，则会回退为去掉 Markdown 标记的纯文本消息
 72. Windows 仓库根目录现在额外提供 `start-coding-anywhere.cmd` 与 `stop-coding-anywhere.cmd` 一键启停脚本；前者会先自拉起独立的 `cmd /k` 窗口，再执行 `npm run build` 和前台 `npm run start`，并在服务退出后保留窗口显示退出码，后者会通过共享清理逻辑停止当前项目相关进程
-73. 飞书侧现在可以在 `/ca`、`/ca status`、`/ca session`、运行中的流式状态卡和终态摘要卡中直接看到当前生效的 Codex `model`、`reasoning effort` 与 `speed`
+73. 飞书侧现在可以在 `/ca`、`/ca status`、`/ca session`、运行中的流式状态卡和普通对话 run 的终态卡中直接看到当前生效的 Codex `model`、`reasoning effort` 与 `speed`
 74. Codex 偏好现在按“当前线程优先、当前 surface 兜底、系统默认回退”的顺序生效：已绑定 native thread 的 DM / 飞书线程会把设置记到 `thread_id` 级别；尚未绑定 native thread 的 DM、项目群或待创建线程 surface 则先记到当前 surface，并在后续创建新线程时继承
 75. `/ca session`、`/ca status` 以及具体对话卡现在都会附带三个 JSON 2.0 `select_static` 下拉选择器，允许在飞书里随时切换当前线程 / 当前 surface 的 `model`、`reasoning effort` 与 `speed`；选项文案和顺序会对齐 Codex App
 76. bridge 在需要显式覆盖 Codex 默认行为时，会把飞书侧选中的设置透传给 CLI：创建线程或续跑线程时分别写入 `codex exec -m <model>`、`-c model_reasoning_effort="..."`，以及速度相关的 `-c service_tier="fast"` / `-c features.fast_mode=...` 覆盖
 77. DM 中执行 `/ca project switch <projectKey>` 时，如果当前窗口还绑定着旧的 native Codex thread，bridge 现在会先解除这条旧绑定，再把“当前项目”切到目标项目；后续普通消息会在新项目下创建 fresh thread，而不是继续误跑旧项目
 78. 如果 DM 当前保存了“已选项目”和“已绑线程”两个互相冲突的跨项目状态，bridge 现在会优先相信显式项目选择，并自动清理那条旧线程绑定，避免继续把普通消息送进错误项目
 79. Playwright 版真实飞书 live smoke 现在支持通过 `FEISHU_LIVE_PROJECT_KEY` 先强制切到指定测试项目，再发送 smoke 指令，降低在业务项目上误跑真实验证的风险
-80. 桌面 completion 通知卡的主按钮文案现在统一为“在飞书继续”，`continue_desktop_thread` 也已经覆盖三种接管路径：DM、已绑定飞书话题和项目群主时间线都会把目标 native Codex thread 接到对应飞书 surface，并统一落到“线程已切换”卡；其中项目群主时间线现在不再自动创建飞书话题，而是直接把当前群对话绑定到该 native thread
+80. 桌面 completion 通知卡的主按钮文案现在统一为“在飞书继续”，`continue_desktop_thread` 也已经覆盖三种接管路径：DM、已绑定飞书话题和项目群主时间线都会把目标 native Codex thread 接到对应飞书 surface，并统一落到“当前会话已就绪”稳定态主卡；其中项目群主时间线现在不再自动创建飞书话题，而是直接把当前群对话绑定到该 native thread
 81. 飞书已绑定项目群主时间线现在和 DM 保持同一套心智：`切换到此线程` / `在飞书继续` 都会把当前对话窗口直接绑定到一个 native Codex thread，后续普通群消息会继续进入这个线程
 82. 桌面侧原生 Codex thread 已经从“完成后单次通知”升级为完整生命周期通知：runtime 会在新一轮顶层 desktop run 发现 `task_started` 后先发一张 `桌面任务进行中` 卡，并在后续轮询里复用同一 `message_id` patch 最近公开进展与结构化计划清单；卡片会先展示“你最后说了什么”，再展示当前情况，不再额外放一个独立的 `进度 / Ran N commands` 区块；其中“你最后说了什么”会优先从 rollout 的结构化快照中提取，并显式忽略 `<subagent_notification>`、`<turn_aborted>` 这类 synthetic wrapper，避免把系统包装文本误显示成用户输入
 83. 同一轮 desktop run 完成后，bridge 会优先把这张运行态卡原地更新成 `桌面任务已完成`，在同一张卡里直接展示“你最后说了什么”和 `Codex 最终返回了什么` 的正文内容，不再额外补发第二张“完整回复”卡或结果消息；`在飞书继续` 也只会出现在完成态
@@ -306,7 +306,7 @@ Windows 停止入口模块。
 - 将 CA 输出转成飞书文本消息、图片消息、卡片或线程回复
 - 发送导航类按钮卡片时统一使用普通 `interactive` 消息卡片
 - 保留 CardKit 仅用于流式进度卡，不再把导航卡混入 CardKit/cardId 回写链路
-- 对普通对话 run 的终态保持“摘要卡 + 完整正文消息”分工，避免卡片和消息同时完整展示同一大段 assistant 结果
+- 对普通对话 run 的终态保持“终态卡 + 完整正文消息”分工：终态卡直接内嵌 `Codex 最终返回了什么` 的收敛正文和后续动作，但不再和下方正文消息同时完整重复同一大段 assistant 结果
 - 对 assistant 终态正文里的 Markdown 做飞书适配：结构化内容优先走 JSON 2.0 Markdown 卡，超长内容再降级为去标记纯文本
 - 对 assistant 终态正文里的顶层 Codex app `::git-*` directive 做结构化解析：这些 directive 不再作为可见正文透出给飞书用户，而是转成可选的紧凑 git 变更摘要
 - 这套 assistant 正文渲染策略现在已抽到共享 helper，供普通 bridge reply 和桌面 completion notifier 复用，保证 Markdown 卡 / 纯文本回退行为一致
@@ -329,7 +329,7 @@ Windows 停止入口模块。
 - 在 DM 中执行项目切换时主动解除旧线程绑定，并对“已选项目”和“已绑线程”的跨项目冲突做自动清理
 - 为计划模式表单和计划选择按钮编码 bridge 动作上下文
 - 为未来的桌面 completion 通知提供纯本地路由解析：优先 native thread 的首选话题绑定，并把稳定 `anchorMessageId` 一起带入 thread target；其次精确项目绑定或唯一 cwd 命中的项目群，最后 DM fallback；cwd 命中多个项目时不会猜测路由目标
-- 处理桌面 completion 的 continue handoff：DM、已绑定话题和项目群三条路径都会把目标 native thread 接到对应飞书 surface，并统一复用“线程已切换”卡；项目群主时间线会直接把当前群对话绑定到目标 thread，而不是创建新话题
+- 处理桌面 completion 的 continue handoff：DM、已绑定话题和项目群三条路径都会把目标 native thread 接到对应飞书 surface，并统一复用“当前会话已就绪”稳定态主卡；项目群主时间线会直接把当前群对话绑定到目标 thread，而不是创建新话题
 - root 上下文封装
 - 同 surface 待处理图片的消费与 prompt 附件清单封装
 - run 生命周期组织
@@ -987,9 +987,9 @@ channel + peer_id -> codex_thread_id
 - 还不能自动创建飞书项目群，只能先绑定已有群；当前群可以通过 `/ca project bind-current` 或项目列表卡片按钮完成绑定
 - CA 不提供精确跳转到指定飞书话题的能力
 - `/ops/ui` 仍然主要围绕 run 控制与历史详情展开，项目/线程管理页仍以 JSON drill-down 为主，没有做成完整多页后台
-- 卡片按钮目前除了导航命令外，只额外覆盖桥接式计划模式的表单提交与单选题续跑，不是通用的任意参数命令表单平台
+- 卡片按钮目前除了导航命令外，还覆盖稳定态会话卡的 `计划模式 [开/关]`、`更多信息` 诊断切换、Codex 设置下拉，以及桥接式计划选择续跑；但它仍不是通用的任意参数命令表单平台
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
-- 普通对话 run 的终态投递策略当前固定为“摘要卡 + 完整正文消息”，尚未开放配置；如后续确有分场景需求，可再扩展为可配置策略，但当前记为低优先级后续计划
+- 普通对话 run 的终态投递策略当前固定为“终态卡 + 完整正文消息”：终态卡会收敛显示 `Codex 最终返回了什么` 和后续动作，但完整 assistant 正文仍以下方消息承载；如后续确有分场景需求，可再扩展为可配置策略，但当前记为低优先级后续计划
 - 现在的“计划模式”仍然是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，只是飞书侧入口已经从独立表单卡收敛成会话级单次开关；它依然不等同于官方交互式 CLI `/plan` 原语
 - 桌面 completion 通知虽然已经有本地路由决策、DM owner 配置解析、实际消息发送器、runtime 轮询，以及 DM / group / topic continue handoff，但 history/mute 回调以及“同一 completion 失败后自动修复”还没有接通
 - 当前只支持文本 + 图片；通用文件、语音仍未接通
@@ -1010,7 +1010,7 @@ channel + peer_id -> codex_thread_id
 7. 飞书 DM 发一个足够长的任务，再次点击“运行状态”，确认卡片能展示 `runId`、状态、耗时、最近工具与摘要
 8. 在任务仍未结束时发送 `/ca stop`，确认 run 会先进入 `canceling`，随后收口为 `canceled`
 9. 打开 `/ops/runtime` 与 `/ops/ui`，确认 active / queued 面板、取消按钮和 run 时间线一致
-10. 再发一个普通任务，确认 DM 中先出现流式状态卡；run 完成后，卡片收口为摘要卡，完整 assistant 正文以下方单独消息展示
+10. 再发一个普通任务，确认 DM 中先出现流式状态卡；run 完成后，卡片收口为终态卡，并直接显示 `Codex 最终返回了什么` 的收敛正文、`新会话 | 切换线程 | 更多信息` 动作，以及下次任务设置；完整 assistant 正文以下方单独消息展示
 11. 观察服务控制台，确认收包日志和发包日志都带有 `YYYY-MM-DD HH:mm:ss.SSS` 前缀，且流式状态更新不会连续刷出多条重复发包日志；如长连接发生抖动，还应能看到 `feishu ws transport connected`、`feishu ws socket closed: code=...; reason=...` 和 `feishu ws socket error` 这类诊断日志
 12. 飞书 DM 先发一张图片，再补一条文字说明，确认 bridge 会先回复“已收到图片”，随后下一条文本 run 会消费该图片
 13. Windows 本地双击 `stop-coding-anywhere.cmd`（或执行 `npm run stop`），确认服务进程退出，且再次双击启动时不会因残留端口占用而失败
@@ -1039,7 +1039,7 @@ channel + peer_id -> codex_thread_id
 
 1. 在已绑定项目群主时间线里发送普通文本
 2. 观察状态更新与最终结果，确认普通群消息会继续进入当前绑定的 native `thread_id`
-3. 在同一群执行 `/ca thread switch <threadId>`，确认回执为“线程已切换”卡，而不是新话题提示
+3. 在同一群执行 `/ca thread switch <threadId>`，确认回执为“当前会话已就绪”卡，而不是新话题提示
 4. 再发送一条普通文本，确认实际续跑的是刚切换的 thread
 
 ### 15.2.2 图片链路回归

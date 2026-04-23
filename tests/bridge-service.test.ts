@@ -1558,12 +1558,12 @@ describe("BridgeService", () => {
     );
     expect(runner.close).not.toHaveBeenCalled();
     expect(updatedThread?.threadId).toBe("thread-created");
-    expect(replies).toEqual([
-      {
-        kind: "system",
-        text: "[ca] thread reset to thread-created",
-      },
-    ]);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      kind: "card",
+    });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("当前会话已就绪");
   });
 
   it("binds a project chat from a CA command", async () => {
@@ -2524,12 +2524,12 @@ describe("BridgeService", () => {
       sessionName: "thread-native-current",
       title: "native follow-up",
     });
-    expect(replies).toEqual([
-      {
-        kind: "system",
-        text: "[ca] thread switched to thread-native-current",
-      },
-    ]);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      kind: "card",
+    });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("当前会话已就绪");
   });
 
   it("resumes the same native thread when a pending plan choice is selected", async () => {
@@ -2753,15 +2753,15 @@ describe("BridgeService", () => {
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("线程已切换");
-    expect(cardText).toContain("最近对话");
+    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).toContain("最近上下文");
     expect(cardText).toContain("最后一条用户消息，应该在群绑定卡里展示。");
     expect(cardText).toContain("第二条应展示的助手回复");
     expect(cardText).toContain("第三条应展示的助手回复");
     expect(cardText).toContain("第四条应展示的助手回复");
     expect(cardText).toContain("第五条应展示的助手回复");
     expect(cardText).not.toContain("更早的助手回复，不应展示");
-    expect(cardText).toContain("直接发送普通消息，后续内容会进入这个 Codex 线程。");
+    expect(cardText).toContain("直接发送下一条消息继续当前线程");
   });
 
   it("resumes the same native thread on the next plain group message after switching the current project chat", async () => {

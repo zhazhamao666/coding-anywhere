@@ -708,8 +708,25 @@ describe("FeishuCardActionService", () => {
 
   it("acks /ca new with a toast and delay-updates the original card after the new thread is created", async () => {
     const deferred = createDeferred<BridgeReply[]>();
+    const sessionCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "当前会话已就绪",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
     const bridgeService = {
-      handleMessage: vi.fn(() => deferred.promise),
+      handleMessage: vi.fn(async (input: any) => {
+        if (input.text === "/ca session") {
+          return [{ kind: "card", card: sessionCard } as unknown as BridgeReply];
+        }
+        return deferred.promise;
+      }),
     };
     const apiClient = createApiClientDouble();
 
@@ -744,13 +761,7 @@ describe("FeishuCardActionService", () => {
     await vi.waitFor(() => {
       expect(apiClient.delayUpdateInteractiveCard).toHaveBeenCalledWith({
         token: "c-new-token-1",
-        card: expect.objectContaining({
-          header: expect.objectContaining({
-            title: expect.objectContaining({
-              content: "命令结果",
-            }),
-          }),
-        }),
+        card: sessionCard,
       });
     });
     expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
@@ -770,8 +781,25 @@ describe("FeishuCardActionService", () => {
         elements: [],
       },
     };
+    const sessionCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "当前会话已就绪",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
     const bridgeService = {
-      handleMessage: vi.fn(() => deferred.promise),
+      handleMessage: vi.fn(async (input: any) => {
+        if (input.text === "/ca session") {
+          return [{ kind: "card", card: sessionCard } as unknown as BridgeReply];
+        }
+        return deferred.promise;
+      }),
     };
     const apiClient = createApiClientDouble();
 
@@ -806,7 +834,7 @@ describe("FeishuCardActionService", () => {
     await vi.waitFor(() => {
       expect(apiClient.delayUpdateInteractiveCard).toHaveBeenCalledWith({
         token: "c-thread-switch-1",
-        card: replyCard,
+        card: sessionCard,
       });
     });
   });
@@ -884,7 +912,7 @@ describe("FeishuCardActionService", () => {
         ) => {
           await options?.onProgress?.(createSnapshot({
             status: "waiting",
-            stage: "waiting_for_user",
+            stage: "waiting",
             preview: "等待继续当前计划线程",
           }));
           return new Promise<BridgeReply[]>(() => undefined);

@@ -7,6 +7,7 @@ import {
 import { formatRuntimeStatusLabel as formatStatusLabel } from "../runtime-status-labels.js";
 import {
   buildCommandActionValue,
+  buildOpenDiagnosticsActionValue,
   buildPlanChoiceActionValue,
   buildPlanSubmitActionValue,
   buildPreferenceActionValue,
@@ -45,32 +46,30 @@ export function buildStreamingCardMarkdown(state: ProgressCardState): string {
   if (state.sessionName) {
     lines.push(`**当前会话**：${state.sessionName}`);
   }
-  if (state.model) {
-    lines.push(`**当前模型**：${getCodexModelLabel(state.model)}`);
+  const taskSettingsSummary = formatTaskSettingsSummary(state);
+  if (taskSettingsSummary) {
+    lines.push(
+      isTerminalStatus(state.status)
+        ? `**${state.status === "done" ? "刚完成任务设置" : "本次任务设置"}**：${taskSettingsSummary}`
+        : `**本次任务设置**：${taskSettingsSummary}`,
+    );
   }
-  if (state.reasoningEffort) {
-    lines.push(`**推理**：${getCodexReasoningLabel(state.reasoningEffort)}`);
-  }
-  if (state.speed) {
-    lines.push(`**速度**：${getCodexSpeedLabel(state.speed)}`);
-  }
-  if ((state.commandCount ?? 0) > 0) {
-    lines.push(`**进度**：${formatCommandCountText(state.commandCount ?? 0)}`);
-  }
-  const previewText = formatPreviewForCard(state);
-  if (previewText) {
-    lines.push("", previewText);
+
+  if (!isTerminalStatus(state.status)) {
+    const progressLines = buildProgressLines(state);
+    if (progressLines.length > 0) {
+      lines.push("", "**当前进展**", ...progressLines.map(line => `- ${line}`));
+    }
   }
 
   return lines.join("\n");
 }
 
 export function buildBridgeCard(state: ProgressCardState): Record<string, unknown> {
-  const content = buildStreamingCardMarkdown(state);
   const elements: Array<Record<string, unknown>> = [
     {
       tag: "markdown",
-      content,
+      content: buildStreamingCardMarkdown(state),
     },
     ...buildCodexPreferenceControlElements(state),
   ];
@@ -133,38 +132,22 @@ export function buildBridgeCard(state: ProgressCardState): Record<string, unknow
     });
   }
 
-  if (!isTerminalStatus(state.status)) {
+  if (isTerminalStatus(state.status)) {
     elements.push({
       tag: "hr",
     });
     elements.push({
-      tag: "column_set",
-      flex_mode: "flow",
-      background_style: "default",
-      columns: [{
-        tag: "column",
-        width: "auto",
-        weight: 1,
-        vertical_align: "top",
-        elements: [{
-          tag: "button",
-          text: {
-            tag: "plain_text",
-            content: "停止任务",
-          },
-          type: "danger",
-          value: buildStopActionValue(state),
-        }],
-      }],
+      tag: "markdown",
+      content: buildTerminalResultMarkdown(state),
     });
-  }
-
-  if (isTerminalStatus(state.status)) {
     elements.push({
       tag: "markdown",
       content: `**终态**：${formatStatusLabel(state.status)} · **耗时**：${formatElapsed(state.elapsedMs)}`,
       text_size: "notation",
     });
+    elements.push(...buildTerminalActionElements(state));
+  } else {
+    elements.push(...buildStopButtonElements(state));
   }
 
   return buildFeishuCardFrame({
@@ -298,34 +281,16 @@ function formatElapsed(elapsedMs: number): string {
 }
 
 function buildCardSummary(state: ProgressCardState): string {
-  if (state.status === "done") {
-    return `${formatStatusLabel(state.status)} - 完整回复请查看下方消息`;
+  if (isTerminalStatus(state.status)) {
+    const excerpt = summarizeTerminalPreview(normalizeMarkdownToPlainText(state.preview));
+    return excerpt
+      ? `${formatStatusLabel(state.status)} - ${excerpt.replace(/\s+/g, " ").slice(0, 80)}`
+      : `${formatStatusLabel(state.status)} - Codex 最终返回了什么`;
   }
 
-  return `${formatStatusLabel(state.status)} - ${normalizeMarkdownToPlainText(state.preview)}`;
-}
-
-function formatPreviewForCard(state: ProgressCardState): string {
-  const normalizedPreview = normalizeMarkdownToPlainText(state.preview);
-  if ((state.commandCount ?? 0) > 0 && normalizedPreview.trim() === formatCommandCountText(state.commandCount ?? 0)) {
-    return "";
-  }
-
-  if (state.status !== "done") {
-    return normalizedPreview;
-  }
-
-  const excerpt = summarizeTerminalPreview(normalizedPreview);
-  if (!excerpt) {
-    return "完整回复请查看下方消息";
-  }
-
-  return [
-    "**摘要**：",
-    excerpt,
-    "",
-    "**完整回复**：请查看下方消息",
-  ].join("\n");
+  const progressLines = buildProgressLines(state);
+  const firstLine = progressLines[0] ?? normalizeMarkdownToPlainText(state.preview) ?? "";
+  return `${formatStatusLabel(state.status)} - ${firstLine}`.trim();
 }
 
 function summarizeTerminalPreview(preview: string): string {
@@ -356,6 +321,59 @@ function buildTodoMarkdown(items: PlanTodoItem[]): string {
 
 function formatCommandCountText(commandCount: number): string {
   return commandCount === 1 ? "Ran 1 command" : `Ran ${commandCount} commands`;
+}
+
+function buildTerminalResultMarkdown(state: ProgressCardState): string {
+  const normalizedPreview = normalizeMarkdownToPlainText(state.preview);
+  const excerpt = summarizeTerminalPreview(normalizedPreview);
+  if (!excerpt) {
+    return "**Codex 最终返回了什么**\n- 暂无可展示的结果";
+  }
+
+  return [
+    "**Codex 最终返回了什么**",
+    excerpt,
+    "",
+    "完整结果见下方消息",
+  ].join("\n");
+}
+
+function formatTaskSettingsSummary(state: ProgressCardState): string {
+  if (!state.model && !state.reasoningEffort && !state.speed) {
+    return "";
+  }
+
+  const model = state.model ? getCodexModelLabel(state.model) : "未设置";
+  const reasoning = state.reasoningEffort ? getCodexReasoningLabel(state.reasoningEffort) : "未设置";
+  const speed = state.speed ? getCodexSpeedLabel(state.speed) : "未设置";
+  return `${model} / ${reasoning} / ${speed}`;
+}
+
+function buildProgressLines(state: ProgressCardState): string[] {
+  const normalizedPreview = normalizeMarkdownToPlainText(state.preview).trim();
+  const commandText = (state.commandCount ?? 0) > 0
+    ? formatCommandCountText(state.commandCount ?? 0)
+    : "";
+  const previewLines = normalizedPreview
+    ? normalizedPreview
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+    : [];
+
+  if (!commandText) {
+    return previewLines;
+  }
+
+  if (previewLines.length === 0) {
+    return [commandText];
+  }
+
+  if (previewLines.length === 1 && previewLines[0] === commandText) {
+    return [commandText];
+  }
+
+  return [commandText, ...previewLines];
 }
 
 function buildStopButtonElements(state: ProgressCardState): Array<Record<string, unknown>> {
@@ -417,10 +435,7 @@ function buildCodexPreferenceControlElements(state: ProgressCardState): Array<Re
     },
     {
       tag: "markdown",
-      content: [
-        "**Codex 设置**",
-        "调整后会作用于当前会话的后续运行，不会打断这次正在执行的任务。",
-      ].join("\n"),
+      content: "**下次任务设置**",
     },
     {
       tag: "column_set",
@@ -534,4 +549,74 @@ function buildPreferenceActionValueForState(
     surfaceType: state.deliverySurfaceType ?? undefined,
     surfaceRef: state.deliverySurfaceRef ?? undefined,
   }, bridgeAction);
+}
+
+function buildTerminalActionElements(state: ProgressCardState): Array<Record<string, unknown>> {
+  const context = {
+    chatId: state.deliveryChatId ?? undefined,
+    surfaceType: state.deliverySurfaceType ?? undefined,
+    surfaceRef: state.deliverySurfaceRef ?? undefined,
+  };
+
+  return [
+    {
+      tag: "hr",
+    },
+    {
+      tag: "column_set",
+      flex_mode: "flow",
+      background_style: "default",
+      columns: [
+        {
+          tag: "column",
+          width: "auto",
+          weight: 1,
+          vertical_align: "top",
+          elements: [{
+            tag: "button",
+            text: {
+              tag: "plain_text",
+              content: "新会话",
+            },
+            type: "primary",
+            value: buildCommandActionValue({
+              command: "/ca new",
+              context,
+            }),
+          }],
+        },
+        {
+          tag: "column",
+          width: "auto",
+          weight: 1,
+          vertical_align: "top",
+          elements: [{
+            tag: "button",
+            text: {
+              tag: "plain_text",
+              content: "切换线程",
+            },
+            value: buildCommandActionValue({
+              command: "/ca thread list-current",
+              context,
+            }),
+          }],
+        },
+        {
+          tag: "column",
+          width: "auto",
+          weight: 1,
+          vertical_align: "top",
+          elements: [{
+            tag: "button",
+            text: {
+              tag: "plain_text",
+              content: "更多信息",
+            },
+            value: buildOpenDiagnosticsActionValue(context),
+          }],
+        },
+      ],
+    },
+  ];
 }

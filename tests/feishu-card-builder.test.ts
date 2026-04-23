@@ -95,13 +95,13 @@ describe("feishu card builder", () => {
     }));
 
     expect(markdown).toContain("工具执行中");
-    expect(markdown).toContain("Ran 3 commands");
+    expect(markdown).toContain("**当前进展**");
+    expect(markdown).toContain("- Ran 3 commands");
     expect(markdown).toContain("codex-main");
-    expect(markdown).toContain("GPT-5.4");
-    expect(markdown).toContain("超高");
-    expect(markdown).toContain("快速");
+    expect(markdown).toContain("本次任务设置");
     expect(markdown).toContain("明确待办");
     expect(markdown).not.toContain("npm test");
+    expect(markdown).not.toContain("**进度**");
     expect(markdown).not.toContain("**明确待办**");
   });
 
@@ -132,11 +132,38 @@ describe("feishu card builder", () => {
     }));
 
     const serialized = JSON.stringify(card);
-    expect(serialized).toContain("完整回复请查看下方消息");
+    expect(serialized).toContain("Codex 最终返回了什么");
     expect(serialized).toContain("第一段：任务已经完成。");
     expect(serialized).toContain("第二段：我调整了终态卡的展示策略。");
     expect(serialized).toContain("第三段：完整回复继续保留在下方消息中。");
     expect(serialized).not.toContain("第四段：这行不应该完整出现在终态卡中。");
+    expect(serialized).toContain("完整结果见下方消息");
+    expect(serialized).toContain("新会话");
+    expect(serialized).toContain("切换线程");
+    expect(serialized).toContain("更多信息");
+    expect(serialized).not.toContain("停止任务");
+  });
+
+  it("renders running cards with only the stop action and next-task settings controls", () => {
+    const card = buildBridgeCard(createState({
+      status: "running",
+      stage: "text",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      speed: "fast",
+      preview: "继续整理飞书卡片重构方案",
+      commandCount: 2,
+      deliveryChatId: "oc_chat_current",
+      deliverySurfaceType: "thread",
+      deliverySurfaceRef: "omt_current",
+    }));
+
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain("下次任务设置");
+    expect(serialized).toContain("停止任务");
+    expect(serialized).not.toContain("新会话");
+    expect(serialized).not.toContain("切换线程");
+    expect(serialized).not.toContain("更多信息");
   });
 
   it("renders structured todo items and plan-choice buttons on bridge cards", () => {
