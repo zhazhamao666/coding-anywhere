@@ -70,6 +70,49 @@ describe("SessionStore", () => {
     expect(store.getCodexProjectSelection("feishu", "ou_demo")).toBeUndefined();
   });
 
+  it("persists surface interaction state independently from Codex preferences", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    store.upsertSurfaceInteractionState({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      sessionMode: "plan_next_message",
+      diagnosticsOpen: true,
+    });
+
+    expect(store.getSurfaceInteractionState({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    })).toMatchObject({
+      channel: "feishu",
+      peerId: "ou_demo",
+      sessionMode: "plan_next_message",
+      diagnosticsOpen: true,
+    });
+
+    store.deleteSurfaceInteractionState({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    });
+
+    expect(store.getSurfaceInteractionState({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    })).toBeUndefined();
+  });
+
   it("persists run summaries and event timelines for backend observability", () => {
     store = new SessionStore(path.join(rootDir, "bridge.db"));
 

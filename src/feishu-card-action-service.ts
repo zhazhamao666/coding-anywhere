@@ -1,6 +1,5 @@
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
-import { buildPlanModeFormCard } from "./feishu-card/card-builder.js";
 import { StreamingCardController } from "./feishu-card/streaming-card-controller.js";
 import type { FeishuApiClientLike, StreamingCardControllerLike } from "./feishu-adapter.js";
 import type { BridgeReply } from "./types.js";
@@ -19,6 +18,9 @@ interface CardActionValue {
   bridgeAction?:
     | "open_plan_form"
     | "submit_plan_form"
+    | "toggle_plan_mode"
+    | "open_diagnostics"
+    | "close_diagnostics"
     | "answer_plan_choice"
     | "continue_desktop_thread"
     | "view_desktop_thread_history"
@@ -74,6 +76,14 @@ export class FeishuCardActionService {
           model?: string;
           reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
           speed?: "standard" | "fast";
+        }): Promise<BridgeReply>;
+        handleSessionCardUiAction?(input: {
+          channel: string;
+          peerId: string;
+          action: "toggle_plan_mode" | "open_diagnostics" | "close_diagnostics";
+          chatId?: string;
+          surfaceType?: "thread";
+          surfaceRef?: string;
         }): Promise<BridgeReply>;
         continueDesktopThread?(input: {
           channel: string;
@@ -158,15 +168,36 @@ export class FeishuCardActionService {
       ], actionValue));
     }
 
-    if (bridgeAction === "open_plan_form") {
-      const card = buildPlanModeFormCard({
-        context: {
-          chatId: effectiveChatId,
-          surfaceType: actionValue?.surfaceType,
-          surfaceRef: actionValue?.surfaceRef,
-        },
+    if (
+      bridgeAction === "toggle_plan_mode" ||
+      bridgeAction === "open_diagnostics" ||
+      bridgeAction === "close_diagnostics" ||
+      bridgeAction === "open_plan_form"
+    ) {
+      if (!this.dependencies.bridgeService.handleSessionCardUiAction) {
+        return this.buildRawCardResponse(this.buildInfoCard("当前会话不可用", [
+          "当前环境暂时无法切换会话卡片状态。",
+        ], actionValue));
+      }
+
+      const updatedReply = await this.dependencies.bridgeService.handleSessionCardUiAction({
+        channel: "feishu",
+        peerId: event.open_id,
+        action: bridgeAction === "open_plan_form" ? "toggle_plan_mode" : bridgeAction,
+        chatId: effectiveChatId,
+        surfaceType: actionValue?.surfaceType,
+        surfaceRef: actionValue?.surfaceRef,
       });
-      return this.buildRawCardResponse(card);
+
+      if (updatedReply.kind === "card") {
+        return this.buildRawCardResponse(updatedReply.card);
+      }
+
+      return this.buildRawCardResponse(this.buildInfoCard("当前会话不可用", [
+        updatedReply.kind === "system" || updatedReply.kind === "assistant"
+          ? updatedReply.text
+          : "当前会话卡片暂时无法更新。",
+      ], actionValue));
     }
 
     if (bridgeAction === "continue_desktop_thread") {

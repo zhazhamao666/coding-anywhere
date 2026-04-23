@@ -36,6 +36,19 @@ export interface CodexPreferenceRecord {
   updatedAt: string;
 }
 
+export type SessionMode = "normal" | "plan_next_message";
+
+export interface SurfaceInteractionStateRecord {
+  channel: string;
+  peerId: string;
+  chatId: string | null;
+  surfaceType: "thread" | null;
+  surfaceRef: string | null;
+  sessionMode: SessionMode;
+  diagnosticsOpen: boolean;
+  updatedAt: string;
+}
+
 export interface StableSessionCardModel {
   projectLabel: string;
   threadLabel: string;

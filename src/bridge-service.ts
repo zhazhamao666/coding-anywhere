@@ -20,7 +20,7 @@ import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
 import { buildFeishuVisibleAssistantText } from "./feishu-assistant-message.js";
 import {
   buildCommandActionValue as buildSharedCommandActionValue,
-  buildPlanFormActionValue,
+  buildPlanModeToggleActionValue,
   buildPreferenceActionValue as buildSharedPreferenceActionValue,
 } from "./feishu-card/action-contract.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
@@ -54,6 +54,7 @@ import type {
   RunContext,
   RunOutcome,
   RunnerEvent,
+  SurfaceInteractionStateRecord,
 } from "./types.js";
 import { SessionStore } from "./workspace/session-store.js";
 
@@ -195,6 +196,48 @@ export class BridgeService {
       codexPreferences?: CodexPreferenceCatalog;
     },
   ) {}
+
+  public async handleSessionCardUiAction(input: {
+    channel: string;
+    peerId: string;
+    action: "toggle_plan_mode" | "open_diagnostics" | "close_diagnostics";
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
+  }): Promise<BridgeReply> {
+    const nextState = this.getSurfaceInteractionState(input);
+    if (input.action === "toggle_plan_mode") {
+      nextState.sessionMode = nextState.sessionMode === "plan_next_message" ? "normal" : "plan_next_message";
+    } else if (input.action === "open_diagnostics") {
+      nextState.diagnosticsOpen = true;
+    } else {
+      nextState.diagnosticsOpen = false;
+    }
+
+    this.dependencies.store.upsertSurfaceInteractionState({
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+      sessionMode: nextState.sessionMode,
+      diagnosticsOpen: nextState.diagnosticsOpen,
+    });
+
+    const [reply] = await this.handleMessage({
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId,
+      surfaceType: input.surfaceType,
+      surfaceRef: input.surfaceRef,
+      text: `${BRIDGE_COMMAND_PREFIX} session`,
+    });
+
+    return reply ?? {
+      kind: "system",
+      text: "[ca] current session unavailable",
+    };
+  }
 
   public resolveDesktopCompletionRoute(input: {
     threadId: string;
@@ -424,6 +467,22 @@ export class BridgeService {
       return this.handleCommand(input, routed.command.name, routed.command.args);
     }
 
+    const surfaceInteractionState = this.getSurfaceInteractionState(input);
+    const effectivePromptText = surfaceInteractionState.sessionMode === "plan_next_message"
+      ? this.wrapPromptAsSingleUsePlanMessage(routed.prompt)
+      : routed.prompt;
+    if (surfaceInteractionState.sessionMode === "plan_next_message") {
+      this.dependencies.store.upsertSurfaceInteractionState({
+        channel: input.channel,
+        peerId: input.peerId,
+        chatId: input.chatId ?? null,
+        surfaceType: input.surfaceType ?? null,
+        surfaceRef: input.surfaceRef ?? null,
+        sessionMode: "normal",
+        diagnosticsOpen: surfaceInteractionState.diagnosticsOpen,
+      });
+    }
+
     const stagedAssets = this.dependencies.store.listPendingBridgeAssetsForSurface({
       channel: input.channel,
       peerId: input.peerId,
@@ -588,7 +647,7 @@ export class BridgeService {
         : [];
       const promptText = buildPromptForCodexRun({
         root: activeResolved.root,
-        prompt: routed.prompt,
+        prompt: effectivePromptText,
         wrapPrompt: activeResolved.wrapPrompt,
         assets: consumedAssets,
       });
@@ -2627,6 +2686,7 @@ export class BridgeService {
     const effectivePreferences = this.resolveEffectiveCodexPreferences(input, resolved);
     const currentRun = this.findCurrentRunByThreadId(thread.threadId, `codex-thread:${thread.threadId}`);
     const actionContext = this.buildCardActionContext(input);
+    const surfaceInteractionState = this.getSurfaceInteractionState(input);
     const conversationItems = recentConversation.length > 0
       ? recentConversation.map(item => this.formatConversationPreviewItem(item))
       : ["暂未读取到可展示的最近对话。"];
@@ -2640,28 +2700,44 @@ export class BridgeService {
         reasoningEffort: effectivePreferences.reasoningEffort,
         speed: effectivePreferences.speed,
       },
-      planModeEnabled: false,
+      planModeEnabled: surfaceInteractionState.sessionMode === "plan_next_message",
       nextStepText: currentRun
         ? "当前任务仍在运行；如需查看细节可打开更多信息。"
-        : "直接发送下一条消息继续当前线程",
+        : surfaceInteractionState.sessionMode === "plan_next_message"
+          ? "直接发送你的需求，我会按计划模式处理"
+          : "直接发送下一条消息继续当前线程",
     });
+    const summaryLines = [
+      `**项目**：${model.projectLabel}`,
+      `**线程**：${model.threadLabel}`,
+      `**状态**：${model.statusLabel}`,
+      `**作用范围**：${model.scopeLabel}`,
+    ];
+    const diagnostics = surfaceInteractionState.diagnosticsOpen
+      ? this.buildStableSessionDiagnostics({
+          input,
+          projectLabel: project.displayName,
+          projectPath: project.cwd,
+          threadLabel: thread.title,
+          threadId: thread.threadId,
+          scopeLabel: model.scopeLabel,
+          currentRun,
+          effectivePreferences,
+        })
+      : undefined;
 
     return {
       kind: "card",
       card: buildBridgeHubCard({
         title: "当前会话已就绪",
-        summaryLines: [
-          `**项目**：${model.projectLabel}`,
-          `**线程**：${model.threadLabel}`,
-          `**状态**：${model.statusLabel}`,
-          `**作用范围**：${model.scopeLabel}`,
-        ],
+        summaryLines,
         stableMode: "session",
         planModeState: {
           enabled: model.planModeEnabled,
           singleUse: true,
         },
         context: actionContext,
+        diagnostics,
         sections: [
           {
             title: "最近上下文",
@@ -2699,6 +2775,7 @@ export class BridgeService {
     const preferenceTarget = this.resolveCodexPreferenceTarget(input, resolved);
     const currentRun = this.findCurrentRunForResolved(resolved);
     const contextItems = this.buildContextSummaryItems(input, resolved, currentRun);
+    const surfaceInteractionState = this.getSurfaceInteractionState(input);
     const stableContextItems = contextItems.filter(item =>
       !item.startsWith("线程 ID：") &&
       !item.startsWith("群聊 ID：") &&
@@ -2716,32 +2793,48 @@ export class BridgeService {
         reasoningEffort: effectivePreferences.reasoningEffort,
         speed: effectivePreferences.speed,
       },
-      planModeEnabled: false,
+      planModeEnabled: surfaceInteractionState.sessionMode === "plan_next_message",
       nextStepText: currentRun
         ? "当前任务仍在运行；如需查看细节可打开更多信息。"
+        : surfaceInteractionState.sessionMode === "plan_next_message"
+          ? "直接发送你的需求，我会按计划模式处理"
         : readableContext.threadId
           ? "直接发送下一条消息继续当前线程"
           : readableContext.projectLabel
             ? "选择已有线程，或直接发送消息创建新会话"
             : "先选择项目，再开始任务",
     });
+    const summaryLines = [
+      `**项目**：${model.projectLabel}`,
+      `**线程**：${model.threadLabel}`,
+      `**状态**：${model.statusLabel}`,
+      `**作用范围**：${model.scopeLabel}`,
+    ];
+    const diagnostics = surfaceInteractionState.diagnosticsOpen
+      ? this.buildStableSessionDiagnostics({
+          input,
+          projectLabel: model.projectLabel,
+          projectPath: resolved.context.cwd,
+          threadLabel: model.threadLabel,
+          threadId: readableContext.threadId ?? resolved.threadId,
+          scopeLabel: model.scopeLabel,
+          currentRun,
+          effectivePreferences,
+        })
+      : undefined;
 
     return {
       kind: "card",
       card: buildBridgeHubCard({
         title: "当前会话已就绪",
-        summaryLines: [
-          `**项目**：${model.projectLabel}`,
-          `**线程**：${model.threadLabel}`,
-          `**状态**：${model.statusLabel}`,
-          `**作用范围**：${model.scopeLabel}`,
-        ],
+        summaryLines,
         stableMode: "session",
         planModeState: {
           enabled: model.planModeEnabled,
           singleUse: true,
         },
         context: actionContext,
+        diagnostics,
         sections: [
           ...(stableContextItems.length > 0
             ? [{
@@ -3248,6 +3341,36 @@ export class BridgeService {
 
   private buildStableSessionCardModel(input: StableSessionCardModel): StableSessionCardModel {
     return input;
+  }
+
+  private getSurfaceInteractionState(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
+  }): SurfaceInteractionStateRecord {
+    return this.dependencies.store.getSurfaceInteractionState({
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+    }) ?? {
+      channel: input.channel,
+      peerId: input.peerId,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+      sessionMode: "normal",
+      diagnosticsOpen: false,
+      updatedAt: new Date(0).toISOString(),
+    };
+  }
+
+  private wrapPromptAsSingleUsePlanMessage(prompt: string): string {
+    const trimmed = prompt.trim();
+    return `/plan ${trimmed.length > 0 ? trimmed : prompt}`;
   }
 
   private buildStableSessionPreferenceControlElements(input: {
@@ -3952,7 +4075,7 @@ export class BridgeService {
       surfaceRef?: string;
     },
   ): Record<string, unknown> {
-    return buildPlanFormActionValue(context);
+    return buildPlanModeToggleActionValue(context);
   }
 }
 

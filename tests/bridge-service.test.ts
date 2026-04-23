@@ -191,6 +191,168 @@ describe("BridgeService", () => {
     );
   });
 
+  it("renders the current session card with plan mode enabled after the surface toggle is turned on", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-current",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-current",
+      title: "follow-up",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+    });
+
+    const reply = await service.handleSessionCardUiAction({
+      channel: "feishu",
+      peerId: "ou_demo",
+      action: "toggle_plan_mode",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    });
+
+    expect(reply).toMatchObject({
+      kind: "card",
+    });
+    const cardText = JSON.stringify((reply as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).toContain("计划模式");
+    expect(cardText).toContain("[开]");
+    expect(cardText).toContain("直接发送你的需求，我会按计划模式处理");
+    expect(cardText).toContain("\"bridgeAction\":\"toggle_plan_mode\"");
+  });
+
+  it("consumes plan-next-message mode once and resets the session card back to normal", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-current",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-current",
+      title: "follow-up",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+    store.upsertSurfaceInteractionState({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      sessionMode: "plan_next_message",
+      diagnosticsOpen: false,
+    });
+
+    const runner = createRunnerDouble();
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "先帮我梳理这个重构方案",
+    });
+
+    expect(runner.submitVerbatim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetKind: "codex_thread",
+        threadId: "thread-current",
+      }),
+      expect.stringContaining("/plan 先帮我梳理这个重构方案"),
+      expect.any(Function),
+    );
+
+    const sessionReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+      text: "/ca session",
+    });
+    const cardText = JSON.stringify((sessionReplies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("[关]");
+    expect(cardText).not.toContain("[开]");
+  });
+
+  it("inline-replaces the session card with diagnostics and can switch back to the main session view", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.createCodexThread({
+      threadId: "thread-current",
+      projectId: "proj-current",
+      feishuThreadId: "omt_current",
+      chatId: "oc_chat_current",
+      anchorMessageId: "om_current",
+      latestMessageId: "om_current",
+      sessionName: "thread-current",
+      title: "follow-up",
+      ownerOpenId: "ou_demo",
+      status: "warm",
+    });
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+    });
+
+    const diagnosticsReply = await service.handleSessionCardUiAction({
+      channel: "feishu",
+      peerId: "ou_demo",
+      action: "open_diagnostics",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    });
+    const diagnosticsText = JSON.stringify((diagnosticsReply as { card: Record<string, unknown> }).card);
+    expect(diagnosticsText).toContain("上下文");
+    expect(diagnosticsText).toContain("最近运行");
+    expect(diagnosticsText).toContain("返回当前会话");
+    expect(diagnosticsText).not.toContain("下次任务设置");
+
+    const sessionReply = await service.handleSessionCardUiAction({
+      channel: "feishu",
+      peerId: "ou_demo",
+      action: "close_diagnostics",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    });
+    const sessionText = JSON.stringify((sessionReply as { card: Record<string, unknown> }).card);
+    expect(sessionText).toContain("当前会话已就绪");
+    expect(sessionText).toContain("下次任务设置");
+    expect(sessionText).not.toContain("返回当前会话");
+  });
+
   it("hides git app directives in the DM current session card and keeps only the compact git summary", async () => {
     store.createProject({
       projectId: "proj-current",

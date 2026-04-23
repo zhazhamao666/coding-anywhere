@@ -683,7 +683,7 @@ describe("FeishuAdapter", () => {
       apiClient: apiClient as any,
     });
 
-    const card = await service.handleAction({
+    const response = await service.handleAction({
       open_id: "ou_demo",
       open_message_id: "om_card_1",
       action: {
@@ -695,16 +695,9 @@ describe("FeishuAdapter", () => {
       },
     });
 
-    expect(card).toMatchObject({
-      card: {
-        type: "raw",
-        data: {
-          header: {
-            title: {
-              content: "命令已提交",
-            },
-          },
-        },
+    expect(response).toMatchObject({
+      toast: {
+        type: "info",
       },
     });
 

@@ -199,7 +199,6 @@ function buildPlanModeRow(
   context: CardSurfaceContext,
 ): Record<string, unknown> {
   const enabledLabel = formatPlanModeStateLabel(state);
-  const toggleLabel = state.enabled ? "关闭" : "开启";
 
   return {
     tag: "column_set",
@@ -209,23 +208,13 @@ function buildPlanModeRow(
       {
         tag: "column",
         width: "weighted",
-        weight: 4,
-        vertical_align: "center",
-        elements: [{
-          tag: "markdown",
-          content: `**计划模式** [${enabledLabel}]`,
-        }],
-      },
-      {
-        tag: "column",
-        width: "auto",
         weight: 1,
         vertical_align: "center",
         elements: [{
           tag: "button",
           text: {
             tag: "plain_text",
-            content: toggleLabel,
+            content: `计划模式 [${enabledLabel}]`,
           },
           type: "default",
           value: buildPlanModeToggleActionValue(context),

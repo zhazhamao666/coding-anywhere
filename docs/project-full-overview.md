@@ -69,7 +69,7 @@
 39. `/ca stop` 现在会按当前 DM / 已注册飞书线程 surface 查找 live run：排队中的 run 直接取消并收口为 `canceled`，运行中的 run 会先进入 `canceling` 再终态收口
 40. `thread list-current` 在已绑定项目群中会直接列出当前项目对应的 Codex native thread
 41. `/ca thread switch <threadId>` 现在不仅可用于 DM，也可用于已注册飞书线程重绑当前 surface，或在已绑定项目群主时间线里把“当前群对话”直接绑定到选中的 native thread
-42. DM 与已注册飞书线程的导航卡现在提供一次性“计划模式”按钮，点击后会打开 JSON 2.0 表单卡，并把输入包装成 `/plan ...` 送入当前 native Codex thread
+42. 飞书稳定态会话卡上的“计划模式”现在已经改成 surface 级单次开关：点击后原卡即时切换 `计划模式 [开/关]`，下一条普通消息会自动按 `/plan ...` 送入当前 native Codex thread，并在消费一次后自动恢复为 `关`
 43. 计划中的 `todo_list` 会被结构化渲染到飞书状态卡，而不再只作为一段 waiting 文本掠过
 44. bridge 现在会把计划中的单选问题持久化为待回答交互，并在飞书卡片上渲染可点击选项；用户点选后会继续续跑同一个 native Codex thread
 45. 飞书卡片回调现在显式分成三种模式：导航/设置类动作直接返回 `raw card` 即时替换；`/ca new`、线程切换等有界异步动作先返回 toast，再使用回调 `token` 调用延时更新接口回填终态卡；计划表单提交与计划选项点击则先返回 toast，再在当前 surface 下新发一条进度卡消息续跑，不再 patch 被点击的卡
@@ -117,6 +117,9 @@
 87. 线程切换卡、线程绑定卡和“当前会话”卡里的最近对话预览，现在也会对 assistant 文本复用同一套 Codex app directive 可见性规则：`::git-stage` / `::git-commit` 这类 app 指令不会再原样显示到飞书卡片里，但若对应仓库可读，仍会保留 `N 个文件已更改` 这种紧凑摘要
 88. `/ca session` 和各类“会话已切换”回执现在开始统一收敛为“当前会话已就绪”稳定态主卡：首屏只保留项目 / 线程 / 状态 / 作用范围四条上下文、常驻的下次任务设置下拉、计划模式状态项，以及 `切换线程 | 更多信息` 两个后续动作，不再在主卡首屏平铺线程 ID、群聊 ID、诊断字段或旧版大导航按钮组
 89. DM / 已绑定项目群里的 Codex 项目列表和线程列表现在开始改用“选择卡”版式：项目行统一只有 `进入项目` 一个主动作，线程行统一只有 `切换到此线程` 一个主动作；路径、raw source、完整 `thread_id` 和分支等技术字段会从首屏列表中移除，底部动作也统一收敛为“返回当前会话/返回导航 + 新会话”
+90. 飞书稳定态会话卡上的 `计划模式 [开/关]` 现在已经改成 surface 级单次开关：点击后会原卡即时切换状态，不再先弹独立计划表单；下一条普通文本消息会自动按 `/plan ...` 包装送入当前会话，并在消费一次后自动回到 `关`
+91. 飞书稳定态会话卡上的 `更多信息` 现在已经改成原卡 `inline_replace` 的只读诊断卡：会集中展示当前上下文、最近运行和下次任务设置摘要，并通过 `返回当前会话` 原地切回主卡，而不是额外污染消息时间线
+92. 旧的 `open_plan_form` / `submit_plan_form` 计划表单链路已经退出飞书主会话卡流程；历史卡片回调仍可兼容处理，但新的稳定态会话 UI 不再把“计划模式”实现成一张独立表单卡
 
 ### 2.3 当前仍未打通的部分
 
@@ -361,7 +364,7 @@ bridge 图片指令解析与路径校验层。
 - 对即时导航场景返回新版 `card.action.trigger` 规范要求的 `raw card` 响应体
 - 不在即时导航回调里同步调用 `updateInteractiveCard` / `updateCardKitCard`，避免与官方立即更新模型冲突
 - 当命令返回的是系统文本时，会构造带有明确标题的结果卡，而不是统一套用 `CA Hub` 头部
-- 对计划模式按钮返回 JSON 2.0 表单卡，并读取 `form_value` 中的多行输入
+- 对 `计划模式 [开/关]`、`更多信息`、`返回当前会话` 这类稳定态会话动作直接返回 `raw card` 原地替换结果
 - 对 bridge 持久化的计划选择返回 toast，并在后台为当前 surface 新发进度卡消息继续同一 native thread
 - 对有界异步 `/ca` 命令优先返回 toast，再使用 callback `token` 调用延时更新接口回填终态卡；只有拿不到 `token` 时才回退到 `open_message_id` patch
 - 当后台异步 run 返回图片结果时，优先发送原生飞书图片消息；无法发图时退回明确的文本说明，不静默吞掉结果
@@ -372,9 +375,9 @@ bridge 图片指令解析与路径校验层。
 
 职责：
 
-- 统一编码 `/ca` 命令按钮、计划模式按钮、计划选择按钮、Codex 设置回调和桌面线程 handoff 按钮的 `value`
+- 统一编码 `/ca` 命令按钮、计划模式开关、诊断卡切换、计划选择按钮、Codex 设置回调和桌面线程 handoff 按钮的 `value`
 - 统一补齐 `chatId`、`surfaceType`、`surfaceRef` 等 surface 上下文字段
-- 供 `BridgeService`、流式状态卡 builder、计划表单卡和桌面 completion 卡复用，避免多处手工拼接 callback payload
+- 供 `BridgeService`、稳定态会话卡、流式状态卡和桌面 completion 卡复用，避免多处手工拼接 callback payload
 
 ### 5.4.2 `src/feishu-card/frame-builder.ts`
 
@@ -384,7 +387,7 @@ bridge 图片指令解析与路径校验层。
 
 - 统一产出 JSON 2.0 卡片的 `schema`、`config`、`header` 与 `body` 基础骨架
 - 集中维护 `wide_screen_mode`、`update_multi` 与 `summary` 默认值
-- 供导航卡、计划表单卡、流式状态卡和桌面 completion 卡复用，保证卡片基础结构一致
+- 供导航卡、稳定态会话卡、诊断卡、流式状态卡和桌面 completion 卡复用，保证卡片基础结构一致
 
 ### 5.5 `src/run-worker-manager.ts`
 
@@ -609,7 +612,7 @@ Feishu DM / Group Thread image
 - DM 中 `/ca project list`
   - 读取 Codex `state_*.sqlite`
   - 展示 Codex 派生项目列表
-  - 每个项目行只展示一个主动作按钮（优先 primary，否则取第一个），当前默认展示“切换项目”；如需查看线程，可先切换项目后再进入线程列表
+  - 每个项目行只展示一个主动作按钮，当前默认展示“进入项目”；如需查看线程，可先进入项目后再进入线程列表
 - 群聊 / 已注册线程中的 `/ca project list`
   - 如果已配置 Codex catalog，也展示 Codex 派生项目列表
   - 群主时间线中会标出每个项目的群绑定状态，并允许点击未绑定项目直接绑定当前群
@@ -647,21 +650,21 @@ Feishu DM / Group Thread image
 - `/ca project list` 会返回项目列表卡片
 - `/ca project current` 会返回当前项目摘要卡片；在 DM 中若当前没有 native thread 绑定，则会回退到当前所选项目
 - `/ca thread list <projectId>` 与 `/ca thread list-current` 会返回线程列表卡片；在 DM 中若当前没有 native thread 绑定，则 `thread list-current` 会回退到当前所选项目
-- 线程列表卡会汇总“线程数 / 母 agent / 子 agent”，父线程显示来源和分支，子线程以缩进行跟随父线程显示，并标出 agent 名称、角色、父线程引用和层级；父线程不在当前列表时会显示父线程 ID 和“不在当前列表”
+- 线程列表卡现在改用“选择卡”版式：首屏只展示线程标题、主线程 / 子 agent 标记、最近更新时间，以及必要时的父线程引用与层级，不再在列表首屏直接暴露 raw `thread_id`、来源 JSON 或分支字段
 - DM 中 `/ca thread switch <threadId>` 成功后会返回线程切换确认卡，并附带“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
-- DM 中已切到 Codex 原生线程后，`/ca session` 会返回当前会话卡片，并附带同一套“最后 1 条 user + 最后 4 条 assistant”的最近对话原文预览
-- 其它 surface 上的 `/ca session` 也会回到结构化“当前会话”卡，展示当前上下文与 live run 摘要
+- DM 中已切到 Codex 原生线程后，`/ca session` 会返回“当前会话已就绪”卡：首屏只保留项目 / 线程 / 状态 / 作用范围、常驻设置项、计划模式开关与最近上下文预览
+- 其它 surface 上的 `/ca session` 也会回到同一套结构化“当前会话已就绪”卡；`更多信息` 会在原卡内切到只读诊断视图，再通过 `返回当前会话` 切回
 - `/ca session`、`/ca status` 以及具体对话卡都会附带三个 JSON 2.0 `select_static` 下拉选择器，可直接在飞书里切换当前线程 / 当前 surface 的 `model`、`reasoning effort` 与 `speed`
 - 对已经绑定 native thread 的上下文，设置会持久化到 `thread_id`；对尚未绑定 native thread 的上下文，设置会持久化到当前飞书 surface，并在后续 `new_codex_thread` 创建时继承
 - `/ca thread create*` 成功后会返回线程摘要卡片
-- DM 中的项目列表卡和线程列表卡现在带行级按钮：项目列表每行只保留一个主动作（优先 primary），当前默认展示“切换项目”；线程列表每行仍为“切换到此线程”；线程列表底部也提供直接“新会话”入口
+- DM 中的项目列表卡和线程列表卡现在带行级按钮：项目列表每行只保留一个主动作“进入项目”，线程列表每行只保留一个主动作“切换到此线程”；列表底部动作也统一收敛为“返回当前会话/返回导航 + 新会话”
 - 群主时间线中的项目列表卡也带行级按钮：未绑定项目可“绑定到本群”，已绑定当前群可进入“当前项目”，已绑定其他群只展示状态，避免误转绑
 - DM 中点选线程后，CA 只记录当前窗口绑定到哪个 `codex_thread_id`
 - 已注册飞书线程中点选线程后，CA 会把当前 surface 重绑到选中的 native `thread_id`
 - 已绑定项目群中点选线程后，CA 会把当前群对话直接绑定到选中的 native `thread_id`
 - 导航卡、列表卡和摘要卡上的按钮会通过飞书长连接回调重放无参 `/ca` 命令
-- DM 和已注册飞书线程的导航卡额外带有一次性“计划模式”按钮；当前项目群主时间线仍不会直接展示这个入口
-- 计划模式按钮会先返回一个 JSON 2.0 表单卡，提交后由 bridge 在后台发起 `/plan ...` 续跑
+- 计划模式现在不再通过独立表单卡发起，而是作为稳定态会话卡上的单次开关；当前项目群主时间线在未进入具体会话前仍不会默认展示这一项
+- 当计划模式处于 `开` 时，下一条普通文本会由 bridge 自动包装成 `/plan ...` 续跑；消费一次后自动恢复为 `关`
 - 如果计划中抛出单选问题，状态卡会渲染结构化 todo list 与可点击选项按钮；按钮点击后继续同一个 native `thread_id`
 - 长连接卡片回调会在本地先归一化成统一动作结构，再交给 `BridgeService` 生成新的卡片结果；归一化结果会保留 `open_chat_id`、`action.options`、`action.checked` 与 `action.input_value`
 - 按钮回调对导航场景直接返回新版 `card.action.trigger` 的 `raw card` 响应体
@@ -962,7 +965,7 @@ channel + peer_id -> codex_thread_id
 - 可以在群主时间线里直接绑定当前群，而不用手工输入 `chatId`；也可以从项目列表卡中点击未绑定的 Codex 项目完成绑定，不需要知道 `projectId` 或手工复制 `cwd`
 - 可以直接点击卡片按钮回到导航、当前项目和线程列表，而不用重新手输命令
 - 当卡片同时展示“当前线程”和 `Session` 时，当前线程现在只显示线程名称，不再重复展示同一个 native `thread_id`
-- 可以在 DM 和已注册飞书线程里直接点击“计划模式”，用表单方式发起一次 `/plan ...`
+- 可以在 DM 和已注册飞书线程的“当前会话已就绪”卡里直接切换 `计划模式 [开/关]`，让下一条普通消息按 `/plan ...` 方式发起
 - 计划中的待办项会作为结构化 checklist 出现在飞书状态卡上
 - 计划中的单选问题可以直接点卡片按钮继续，不需要把选项再手输回消息里
 - 可以先在 DM 或已注册飞书线程里发送图片，再补一条文字说明；bridge 会自动把这些图片带进下一次 Codex run
@@ -987,7 +990,7 @@ channel + peer_id -> codex_thread_id
 - 卡片按钮目前除了导航命令外，只额外覆盖桥接式计划模式的表单提交与单选题续跑，不是通用的任意参数命令表单平台
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
 - 普通对话 run 的终态投递策略当前固定为“摘要卡 + 完整正文消息”，尚未开放配置；如后续确有分场景需求，可再扩展为可配置策略，但当前记为低优先级后续计划
-- 现在的“计划模式”是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，不等同于官方交互式 CLI `/plan` 原语
+- 现在的“计划模式”仍然是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，只是飞书侧入口已经从独立表单卡收敛成会话级单次开关；它依然不等同于官方交互式 CLI `/plan` 原语
 - 桌面 completion 通知虽然已经有本地路由决策、DM owner 配置解析、实际消息发送器、runtime 轮询，以及 DM / group / topic continue handoff，但 history/mute 回调以及“同一 completion 失败后自动修复”还没有接通
 - 当前只支持文本 + 图片；通用文件、语音仍未接通
 - outbound 图片必须位于当前 run `cwd` 或 bridge 受管资产目录下；超出范围的路径会被拒绝并退回文本错误
@@ -1094,7 +1097,7 @@ channel + peer_id -> codex_thread_id
 10. 针对 Codex 原生计划行为和子代理行为的扩展测试，会优先使用一次性真实 JSONL 录制生成的 fixture，再回到默认的 transcript 驱动回归，不把这类高成本调用放进常规测试路径
 11. `tests/codex-cli-runner.test.ts` 现在会直接回放 `plan-mode.jsonl` 与 `sub-agent.jsonl`，校验 native 计划事件和子代理生命周期事件是否被归一化成正确的 runner 事件
 12. `tests/bridge-real-codex.test.ts` 现在也会用同一批 fixture 校验 bridge 层的等待态、工具调用观测和最终回复，不要求额外真实 Codex 调用
-13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式表单卡、todo list 展示、待回答计划选择题和续跑同一 native thread 的桥接链路
+13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式单次开关、诊断卡切换、todo list 展示、待回答计划选择题，以及续跑同一 native thread 的桥接链路
 14. `tests/codex-desktop-completion-observer.test.ts` 与 `tests/codex-desktop-lifecycle-observer.test.ts` 会分别锁定 completion 兼容层和完整 lifecycle observer：既覆盖 offset 读取、`task_complete` 检测、最终 assistant 正文提取和稳定 `completionKey`，也覆盖 `task_started` / `agent_message` / `update_plan` / `shell_command` 组合下的公开进度快照、稳定 `runKey` 和跨轮询累计命令计数
 15. `tests/desktop-completion-routing.test.ts` 会用本地 SQLite store + 小型 catalog double 校验桌面 completion 的本地投递目标解析：同一 native thread 有多个话题绑定时会选择首选绑定；项目群 fallback 会先看精确 `projectKey`，再看唯一 cwd 命中；cwd 命中多个项目时不会猜测，而是退回 DM 或明确报出 DM owner 歧义错误
 16. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面生命周期卡在运行中 / 已完成两态下的字段顺序、按钮、计划清单和 payload 预算行为：运行态必须先显示“你最后说了什么”再显示当前情况，完成态则必须先显示提醒区、再显示直接内嵌的最终正文，而且不能再冒出独立的 `进度 / Ran N commands` 区块

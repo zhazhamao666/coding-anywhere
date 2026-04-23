@@ -26,7 +26,9 @@ import type {
   ProjectRecord,
   ReapableThread,
   RootProfile,
+  SessionMode,
   SessionSnapshot,
+  SurfaceInteractionStateRecord,
   ThreadBinding,
 } from "../types.js";
 
@@ -664,7 +666,7 @@ export class SessionStore {
       chatId: input.chatId ?? null,
       surfaceType: input.surfaceType ?? null,
       surfaceRef: input.surfaceRef ?? null,
-      surfaceKey: buildSurfacePreferenceKey(input),
+      surfaceKey: buildSurfaceScopedKey(input),
       updatedAt,
     });
   }
@@ -680,7 +682,7 @@ export class SessionStore {
       SELECT model, reasoning_effort, speed, updated_at
       FROM codex_surface_preferences
       WHERE surface_key = ?
-    `).get(buildSurfacePreferenceKey(input)) as CodexPreferenceRow | undefined;
+    `).get(buildSurfaceScopedKey(input)) as CodexPreferenceRow | undefined;
 
     return row ? rowToCodexPreference(row) : undefined;
   }
@@ -695,7 +697,91 @@ export class SessionStore {
     this.db.prepare(`
       DELETE FROM codex_surface_preferences
       WHERE surface_key = ?
-    `).run(buildSurfacePreferenceKey(input));
+    `).run(buildSurfaceScopedKey(input));
+  }
+
+  public upsertSurfaceInteractionState(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+    sessionMode: SessionMode;
+    diagnosticsOpen: boolean;
+  }): void {
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO codex_surface_interaction_state (
+        surface_key,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        session_mode,
+        diagnostics_open,
+        updated_at
+      ) VALUES (
+        @surfaceKey,
+        @channel,
+        @peerId,
+        @chatId,
+        @surfaceType,
+        @surfaceRef,
+        @sessionMode,
+        @diagnosticsOpen,
+        @updatedAt
+      )
+      ON CONFLICT(surface_key) DO UPDATE SET
+        session_mode = excluded.session_mode,
+        diagnostics_open = excluded.diagnostics_open,
+        updated_at = excluded.updated_at
+    `).run({
+      ...input,
+      chatId: input.chatId ?? null,
+      surfaceType: input.surfaceType ?? null,
+      surfaceRef: input.surfaceRef ?? null,
+      surfaceKey: buildSurfaceScopedKey(input),
+      diagnosticsOpen: input.diagnosticsOpen ? 1 : 0,
+      updatedAt,
+    });
+  }
+
+  public getSurfaceInteractionState(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+  }): SurfaceInteractionStateRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        session_mode,
+        diagnostics_open,
+        updated_at
+      FROM codex_surface_interaction_state
+      WHERE surface_key = ?
+    `).get(buildSurfaceScopedKey(input)) as SurfaceInteractionStateRow | undefined;
+
+    return row ? rowToSurfaceInteractionState(row) : undefined;
+  }
+
+  public deleteSurfaceInteractionState(input: {
+    channel: string;
+    peerId: string;
+    chatId?: string | null;
+    surfaceType?: "thread" | null;
+    surfaceRef?: string | null;
+  }): void {
+    this.db.prepare(`
+      DELETE FROM codex_surface_interaction_state
+      WHERE surface_key = ?
+    `).run(buildSurfaceScopedKey(input));
   }
 
   public createProject(input: ProjectRecord): void {
@@ -2542,6 +2628,18 @@ export class SessionStore {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS codex_surface_interaction_state (
+        surface_key TEXT PRIMARY KEY,
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        chat_id TEXT,
+        surface_type TEXT,
+        surface_ref TEXT,
+        session_mode TEXT NOT NULL,
+        diagnostics_open INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_observability_runs_updated_at
       ON observability_runs(updated_at DESC);
 
@@ -2574,6 +2672,9 @@ export class SessionStore {
 
       CREATE INDEX IF NOT EXISTS idx_codex_surface_preferences_lookup
       ON codex_surface_preferences(channel, peer_id, chat_id, surface_type, surface_ref);
+
+      CREATE INDEX IF NOT EXISTS idx_codex_surface_interaction_state_lookup
+      ON codex_surface_interaction_state(channel, peer_id, chat_id, surface_type, surface_ref);
 
     `);
 
@@ -2969,6 +3070,17 @@ interface CodexPreferenceRow {
   updated_at: string;
 }
 
+interface SurfaceInteractionStateRow {
+  channel: string;
+  peer_id: string;
+  chat_id: string | null;
+  surface_type: "thread" | null;
+  surface_ref: string | null;
+  session_mode: SessionMode;
+  diagnostics_open: number;
+  updated_at: string;
+}
+
 interface RunRow {
   run_id: string;
   channel: string;
@@ -3280,7 +3392,7 @@ function buildBridgeAssetId(input: {
   return `asset-${createHash("sha256").update(identity).digest("hex")}`;
 }
 
-function buildSurfacePreferenceKey(input: {
+function buildSurfaceScopedKey(input: {
   channel: string;
   peerId: string;
   chatId?: string | null;
@@ -3398,6 +3510,19 @@ function rowToCodexPreference(row: CodexPreferenceRow): CodexPreferenceRecord {
     model: row.model,
     reasoningEffort: row.reasoning_effort,
     speed: row.speed,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToSurfaceInteractionState(row: SurfaceInteractionStateRow): SurfaceInteractionStateRecord {
+  return {
+    channel: row.channel,
+    peerId: row.peer_id,
+    chatId: row.chat_id,
+    surfaceType: row.surface_type,
+    surfaceRef: row.surface_ref,
+    sessionMode: row.session_mode,
+    diagnosticsOpen: row.diagnostics_open === 1,
     updatedAt: row.updated_at,
   };
 }

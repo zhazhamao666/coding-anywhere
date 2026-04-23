@@ -247,11 +247,28 @@ describe("FeishuCardActionService", () => {
     expect(JSON.stringify(patchedCard)).toContain("\"command\":\"/ca\"");
   });
 
-  it("returns a raw JSON 2.0 plan form card when the plan-mode button is clicked", async () => {
+  it("inline-replaces the current session card when plan mode is toggled on", async () => {
+    const replyCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "当前会话已就绪",
+        },
+      },
+      body: {
+        elements: [{
+          tag: "markdown",
+          content: "**计划模式** [开]",
+        }],
+      },
+    };
     const bridgeService = {
       handleMessage: vi.fn(async () => []),
-      handlePlanChoice: vi.fn(async () => []),
-      getPendingPlanInteraction: vi.fn(() => undefined),
+      handleSessionCardUiAction: vi.fn(async () => ({
+        kind: "card",
+        card: replyCard,
+      })),
     };
 
     const service = new FeishuCardActionService({
@@ -265,7 +282,7 @@ describe("FeishuCardActionService", () => {
       action: {
         tag: "button",
         value: {
-          bridgeAction: "open_plan_form",
+          bridgeAction: "toggle_plan_mode",
           chatId: "oc_chat_current",
           surfaceType: "thread",
           surfaceRef: "omt_current",
@@ -273,21 +290,97 @@ describe("FeishuCardActionService", () => {
       },
     });
 
-    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+    expect(bridgeService.handleSessionCardUiAction).toHaveBeenCalledWith({
+      channel: "feishu",
+      peerId: "ou_demo",
+      action: "toggle_plan_mode",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    });
     expect(card).toMatchObject({
       card: {
         type: "raw",
-        data: {
+        data: replyCard,
+      },
+    });
+    expect(JSON.stringify(card)).toContain("[开]");
+  });
+
+  it("inline-replaces the current session card with diagnostics and supports close", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => []),
+      handleSessionCardUiAction: vi.fn(async (input: { action: string }) => ({
+        kind: "card",
+        card: {
           schema: "2.0",
           header: {
             title: {
-              content: "计划模式",
+              tag: "plain_text",
+              content: input.action === "open_diagnostics" ? "当前会话已就绪" : "当前会话已就绪",
             },
           },
+          body: {
+            elements: [{
+              tag: "markdown",
+              content: input.action === "open_diagnostics" ? "**上下文**" : "**计划模式** [关]",
+            }],
+          },
+        },
+      })),
+    };
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: createApiClientDouble() as any,
+    });
+
+    const diagnosticsCard = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_card_1",
+      action: {
+        tag: "button",
+        value: {
+          bridgeAction: "open_diagnostics",
+          chatId: "oc_chat_current",
+          surfaceType: "thread",
+          surfaceRef: "omt_current",
         },
       },
     });
-    expect(JSON.stringify(card)).toContain("\"bridgeAction\":\"submit_plan_form\"");
+
+    const sessionCard = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_card_1",
+      action: {
+        tag: "button",
+        value: {
+          bridgeAction: "close_diagnostics",
+          chatId: "oc_chat_current",
+          surfaceType: "thread",
+          surfaceRef: "omt_current",
+        },
+      },
+    });
+
+    expect(bridgeService.handleSessionCardUiAction).toHaveBeenNthCalledWith(1, {
+      channel: "feishu",
+      peerId: "ou_demo",
+      action: "open_diagnostics",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    });
+    expect(bridgeService.handleSessionCardUiAction).toHaveBeenNthCalledWith(2, {
+      channel: "feishu",
+      peerId: "ou_demo",
+      action: "close_diagnostics",
+      chatId: "oc_chat_current",
+      surfaceType: "thread",
+      surfaceRef: "omt_current",
+    });
+    expect(JSON.stringify(diagnosticsCard)).toContain("上下文");
+    expect(JSON.stringify(sessionCard)).toContain("[关]");
   });
 
   it("updates Codex model from a select_static callback and returns the refreshed session card", async () => {
