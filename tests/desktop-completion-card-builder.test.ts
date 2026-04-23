@@ -36,17 +36,7 @@ describe("desktop completion card builder", () => {
     expect(visibleText).not.toContain("Ran 3 commands");
     expect(visibleText).not.toContain("**进度**");
     expect(visibleText.indexOf("你最后说了什么")).toBeLessThan(visibleText.indexOf("当前情况"));
-    expect(buttons.map(button => button.label)).toEqual([
-      "查看线程记录",
-      "静音此线程",
-    ]);
-    expect(buttons).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          label: "在飞书继续",
-        }),
-      ]),
-    );
+    expect(buttons).toEqual([]);
   });
 
   it("builds a dm completion notification card with reminder before final result and no extra progress chrome", () => {
@@ -97,23 +87,22 @@ describe("desktop completion card builder", () => {
     expect(visibleText).not.toContain("导航");
     expect(visibleText).not.toContain("当前项目");
     expect(visibleText).not.toContain("thread_native_123");
-    expect(buttons.filter(button => button.type === "primary")).toEqual([
+    expect(buttons).toEqual([
       expect.objectContaining({
         label: "在飞书继续",
+        type: "primary",
         value: expect.objectContaining({
           bridgeAction: "continue_desktop_thread",
           threadId: "thread_native_123",
         }),
       }),
     ]);
-    expect(buttons.map(button => button.value)).toEqual(
-      expect.arrayContaining([
-        expect.not.objectContaining({
-          chatId: expect.anything(),
-          surfaceType: expect.anything(),
-          surfaceRef: expect.anything(),
-        }),
-      ]),
+    expect(buttons[0]?.value).toEqual(
+      expect.not.objectContaining({
+        chatId: expect.anything(),
+        surfaceType: expect.anything(),
+        surfaceRef: expect.anything(),
+      }),
     );
   });
 
@@ -133,7 +122,7 @@ describe("desktop completion card builder", () => {
     const buttons = collectButtons(card);
     const primaryButtons = buttons.filter(button => button.type === "primary");
 
-    expect(buttons).toHaveLength(3);
+    expect(buttons).toHaveLength(1);
     expect(primaryButtons).toEqual([
       expect.objectContaining({
         label: "在飞书继续",
@@ -143,18 +132,7 @@ describe("desktop completion card builder", () => {
         }),
       }),
     ]);
-    expect(buttons.map(button => button.value?.bridgeAction)).toEqual([
-      "continue_desktop_thread",
-      "view_desktop_thread_history",
-      "mute_desktop_thread",
-    ]);
     expect(buttons.map(button => button.value)).toEqual([
-      expect.objectContaining({
-        chatId: "oc_group_456",
-      }),
-      expect.objectContaining({
-        chatId: "oc_group_456",
-      }),
       expect.objectContaining({
         chatId: "oc_group_456",
       }),
@@ -178,9 +156,10 @@ describe("desktop completion card builder", () => {
     const card = buildDesktopCompletionCard(input);
     const buttons = collectButtons(card);
 
-    expect(buttons.filter(button => button.type === "primary")).toEqual([
+    expect(buttons).toEqual([
       expect.objectContaining({
         label: "在飞书继续",
+        type: "primary",
         value: expect.objectContaining({
           mode: "thread",
           threadId: "thread_native_topic_321",
@@ -188,23 +167,6 @@ describe("desktop completion card builder", () => {
           surfaceType: "thread",
           surfaceRef: "omt_topic_321",
         }),
-      }),
-    ]);
-    expect(buttons.map(button => button.value)).toEqual([
-      expect.objectContaining({
-        chatId: "oc_group_topic_321",
-        surfaceType: "thread",
-        surfaceRef: "omt_topic_321",
-      }),
-      expect.objectContaining({
-        chatId: "oc_group_topic_321",
-        surfaceType: "thread",
-        surfaceRef: "omt_topic_321",
-      }),
-      expect.objectContaining({
-        chatId: "oc_group_topic_321",
-        surfaceType: "thread",
-        surfaceRef: "omt_topic_321",
       }),
     ]);
   });

@@ -67,6 +67,7 @@ function buildCardPayload(input: {
   progressText: string;
 }): Record<string, unknown> {
   const status = input.input.status ?? "completed";
+  const actions = buildActions(input.input);
   const elements: Array<Record<string, unknown>> = [
     {
       tag: "markdown",
@@ -100,31 +101,33 @@ function buildCardPayload(input: {
     });
   }
 
-  elements.push({
-    tag: "hr",
-  });
-  elements.push({
-    tag: "column_set",
-    flex_mode: "flow",
-    background_style: "default",
-    columns: buildActions(input.input).map(action => ({
-      tag: "column",
-      width: "auto",
-      weight: 1,
-      vertical_align: "top",
-      elements: [
-        {
-          tag: "button",
-          text: {
-            tag: "plain_text",
-            content: action.label,
+  if (actions.length > 0) {
+    elements.push({
+      tag: "hr",
+    });
+    elements.push({
+      tag: "column_set",
+      flex_mode: "flow",
+      background_style: "default",
+      columns: actions.map(action => ({
+        tag: "column",
+        width: "auto",
+        weight: 1,
+        vertical_align: "top",
+        elements: [
+          {
+            tag: "button",
+            text: {
+              tag: "plain_text",
+              content: action.label,
+            },
+            type: action.type,
+            value: action.value,
           },
-          type: action.type,
-          value: action.value,
-        },
-      ],
-    })),
-  });
+        ],
+      })),
+    });
+  }
 
   return buildFeishuCardFrame({
     title: status === "running" ? "桌面任务进行中" : "桌面任务已完成",
@@ -186,32 +189,17 @@ function buildActions(input: DesktopCompletionCardInput): Array<{
   value: Record<string, unknown>;
 }> {
   const status = input.status ?? "completed";
-  const actions: Array<{
-    label: string;
-    type: "default" | "primary";
-    value: Record<string, unknown>;
-  }> = [];
+  if (status !== "completed") {
+    return [];
+  }
 
-  if (status === "completed") {
-    actions.push({
+  return [
+    {
       label: resolvePrimaryActionLabel(input.mode),
       type: "primary",
       value: buildActionValue("continue_desktop_thread", input),
-    });
-  }
-
-  actions.push({
-    label: "查看线程记录",
-    type: "default",
-    value: buildActionValue("view_desktop_thread_history", input),
-  });
-  actions.push({
-    label: "静音此线程",
-    type: "default",
-    value: buildActionValue("mute_desktop_thread", input),
-  });
-
-  return actions;
+    },
+  ];
 }
 
 function resolvePrimaryActionLabel(mode: DesktopCompletionCardInput["mode"]): string {

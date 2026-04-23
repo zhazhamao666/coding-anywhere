@@ -86,6 +86,8 @@ describe("DesktopCompletionNotifier", () => {
         }),
       }),
     );
+    const runningCard = harness.apiClient.sendInteractiveCard.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(collectButtons(runningCard)).toEqual([]);
     expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
     expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
       lastNotifiedCompletionKey: "thread-native-1:notified-old",
@@ -241,34 +243,10 @@ describe("DesktopCompletionNotifier", () => {
         }),
       }),
     );
-    expect(collectButtons(notificationCard)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          label: "在飞书继续",
-          value: expect.objectContaining({
-            chatId: "oc_group_1",
-            surfaceType: "thread",
-            surfaceRef: "omt_topic_1",
-          }),
-        }),
-      ]),
-    );
     expect(notificationButtons).toEqual([
       expect.objectContaining({
-        value: expect.objectContaining({
-          chatId: "oc_group_1",
-          surfaceType: "thread",
-          surfaceRef: "omt_topic_1",
-        }),
-      }),
-      expect.objectContaining({
-        value: expect.objectContaining({
-          chatId: "oc_group_1",
-          surfaceType: "thread",
-          surfaceRef: "omt_topic_1",
-        }),
-      }),
-      expect.objectContaining({
+        label: "在飞书继续",
+        type: "primary",
         value: expect.objectContaining({
           chatId: "oc_group_1",
           surfaceType: "thread",
@@ -318,16 +296,8 @@ describe("DesktopCompletionNotifier", () => {
     const notificationCard = harness.apiClient.sendInteractiveCardToChat.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(collectButtons(notificationCard)).toEqual([
       expect.objectContaining({
-        value: expect.objectContaining({
-          chatId: "oc_group_1",
-        }),
-      }),
-      expect.objectContaining({
-        value: expect.objectContaining({
-          chatId: "oc_group_1",
-        }),
-      }),
-      expect.objectContaining({
+        label: "在飞书继续",
+        type: "primary",
         value: expect.objectContaining({
           chatId: "oc_group_1",
         }),
