@@ -296,6 +296,138 @@ describe("feishu card builder", () => {
       },
     });
   });
+
+  it("renders stable cards with a plan-mode status item", () => {
+    const card = buildNavigationCard({
+      title: "当前会话",
+      summaryLines: ["**Root**：main", "**当前会话**：codex-main"],
+      sections: [],
+      actions: [],
+      stableMode: "session",
+      planModeState: {
+        enabled: true,
+        singleUse: true,
+      },
+      context: {
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+      },
+    } as any);
+
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain("计划模式");
+    expect(serialized).toContain("开");
+    expect(serialized).toContain("\"bridgeAction\":\"toggle_plan_mode\"");
+  });
+
+  it("orders completed card actions as 新会话 | 切换线程 | 更多信息", () => {
+    const card = buildNavigationCard({
+      title: "任务已完成",
+      summaryLines: ["**Root**：main", "**当前会话**：codex-main"],
+      sections: [],
+      stableMode: "completed",
+      context: {
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+      },
+      actions: [
+        {
+          id: "more_info",
+          label: "更多信息",
+          type: "default",
+        },
+        {
+          id: "switch_thread",
+          label: "切换线程",
+          type: "default",
+          value: {
+            command: "/ca thread list-current",
+          },
+        },
+        {
+          id: "new_session",
+          label: "新会话",
+          type: "primary",
+          value: {
+            command: "/ca new",
+          },
+        },
+      ],
+    } as any);
+
+    const serialized = JSON.stringify(card);
+    const newSessionIndex = serialized.indexOf("新会话");
+    const switchThreadIndex = serialized.indexOf("切换线程");
+    const moreInfoIndex = serialized.indexOf("更多信息");
+
+    expect(newSessionIndex).toBeGreaterThanOrEqual(0);
+    expect(switchThreadIndex).toBeGreaterThanOrEqual(0);
+    expect(moreInfoIndex).toBeGreaterThanOrEqual(0);
+    expect(newSessionIndex).toBeLessThan(switchThreadIndex);
+    expect(switchThreadIndex).toBeLessThan(moreInfoIndex);
+    expect(serialized).toContain("\"bridgeAction\":\"open_diagnostics\"");
+  });
+
+  it("builds diagnostics card as read-only and keeps 返回当前会话", () => {
+    const card = buildNavigationCard({
+      title: "诊断信息",
+      summaryLines: ["**视图**：诊断"],
+      sections: [],
+      stableMode: "session",
+      context: {
+        chatId: "oc_chat_current",
+        surfaceType: "thread",
+        surfaceRef: "omt_current",
+      },
+      diagnostics: {
+        contextRows: ["Root：main", "Session：codex-main"],
+        recentRunRows: ["run-1 · done · 4.2s"],
+        nextRunRows: ["下一步：-"],
+      },
+    } as any);
+
+    const serialized = JSON.stringify(card);
+    const buttons = serialized.match(/\"tag\":\"button\"/g) ?? [];
+
+    expect(serialized).toContain("返回当前会话");
+    expect(buttons).toHaveLength(1);
+    expect(serialized).toContain("\"bridgeAction\":\"close_diagnostics\"");
+    expect(serialized).not.toContain("\"bridgeAction\":\"open_diagnostics\"");
+    expect(serialized).not.toContain("\"bridgeAction\":\"toggle_plan_mode\"");
+  });
+
+  it("renders selection rows with only one primary action per row", () => {
+    const card = buildNavigationCard({
+      title: "项目列表",
+      summaryLines: ["**视图**：Codex 项目列表"],
+      sections: [],
+      rows: [{
+        title: "demo-project",
+        lines: ["路径：D:/demo"],
+        buttons: [
+          {
+            label: "查看线程",
+            value: {
+              command: "/ca project threads demo",
+            },
+          },
+          {
+            label: "切换项目",
+            type: "primary",
+            value: {
+              command: "/ca project switch demo",
+            },
+          },
+        ],
+      }],
+    });
+
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain("切换项目");
+    expect(serialized).not.toContain("查看线程");
+  });
 });
 
 function createState(overrides?: Partial<ProgressCardState>): ProgressCardState {

@@ -44,3 +44,11 @@ export function formatRuntimeStageLabel(stage: ProgressStage | null | undefined)
 
   return RUNTIME_STAGE_LABELS[stage] ?? stage;
 }
+
+export function formatPlanModeStateLabel(state: { enabled: boolean } | null | undefined): string {
+  if (!state) {
+    return "-";
+  }
+
+  return state.enabled ? "开" : "关";
+}

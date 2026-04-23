@@ -1,3 +1,36 @@
+export type StableCardMode = "session" | "completed" | "failed" | "stopped";
+
+export interface PlanModeState {
+  enabled: boolean;
+  singleUse: true;
+}
+
+export interface DiagnosticViewModel {
+  contextRows: string[];
+  recentRunRows: string[];
+  nextRunRows: string[];
+}
+
+export function buildFeishuCardElementsFromSections(
+  sections: Array<Array<Record<string, unknown>> | null | undefined>,
+): Array<Record<string, unknown>> {
+  const elements: Array<Record<string, unknown>> = [];
+
+  for (const section of sections) {
+    if (!section || section.length === 0) {
+      continue;
+    }
+
+    if (elements.length > 0) {
+      elements.push({ tag: "hr" });
+    }
+
+    elements.push(...section);
+  }
+
+  return elements;
+}
+
 export function buildFeishuCardFrame(input: {
   summary: string;
   elements: Array<Record<string, unknown>>;

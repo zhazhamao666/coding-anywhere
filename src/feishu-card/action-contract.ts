@@ -14,6 +14,11 @@ export type DesktopThreadBridgeAction =
   | "view_desktop_thread_history"
   | "mute_desktop_thread";
 
+export type StableCardBridgeAction =
+  | "toggle_plan_mode"
+  | "open_diagnostics"
+  | "close_diagnostics";
+
 export function buildCommandActionValue(input: {
   command: string;
   context: CardSurfaceContext;
@@ -41,6 +46,24 @@ export function buildPlanFormActionValue(context: CardSurfaceContext): Record<st
 export function buildPlanSubmitActionValue(context: CardSurfaceContext): Record<string, unknown> {
   return withSurfaceContext({
     bridgeAction: "submit_plan_form",
+  }, context);
+}
+
+export function buildPlanModeToggleActionValue(context: CardSurfaceContext): Record<string, unknown> {
+  return withSurfaceContext({
+    bridgeAction: "toggle_plan_mode",
+  }, context);
+}
+
+export function buildOpenDiagnosticsActionValue(context: CardSurfaceContext): Record<string, unknown> {
+  return withSurfaceContext({
+    bridgeAction: "open_diagnostics",
+  }, context);
+}
+
+export function buildCloseDiagnosticsActionValue(context: CardSurfaceContext): Record<string, unknown> {
+  return withSurfaceContext({
+    bridgeAction: "close_diagnostics",
   }, context);
 }
 
