@@ -16,6 +16,90 @@ describe("buildApp", () => {
   });
 
   it("serves backend observability JSON endpoints and local ops UI", async () => {
+    const listRunsMock = vi.fn(async filters => {
+      if (filters.status === "error") {
+        return [
+          {
+            runId: "run-error",
+            channel: "feishu",
+            peerId: "ou_error",
+            projectId: "proj-error",
+            threadId: "thread-error",
+            deliveryChatId: null,
+            deliverySurfaceType: "dm",
+            deliverySurfaceRef: "ou_error",
+            sessionName: "codex-error",
+            rootId: "main",
+            status: "error",
+            stage: "completed",
+            latestPreview: "任务失败：API 超时",
+            latestTool: "npm test",
+            errorText: "API timeout",
+            cancelRequestedAt: null,
+            cancelRequestedBy: null,
+            cancelSource: null,
+            startedAt: "2026-03-23T10:05:00.000Z",
+            updatedAt: "2026-03-23T10:06:00.000Z",
+            finishedAt: "2026-03-23T10:06:00.000Z",
+          },
+        ];
+      }
+
+      if (filters.status === "canceled") {
+        return [
+          {
+            runId: "run-canceled",
+            channel: "feishu",
+            peerId: "ou_cancel",
+            projectId: "proj-cancel",
+            threadId: "thread-cancel",
+            deliveryChatId: null,
+            deliverySurfaceType: "dm",
+            deliverySurfaceRef: "ou_cancel",
+            sessionName: "codex-cancel",
+            rootId: "main",
+            status: "canceled",
+            stage: "completed",
+            latestPreview: "任务已按请求停止",
+            latestTool: null,
+            errorText: null,
+            cancelRequestedAt: "2026-03-23T10:07:00.000Z",
+            cancelRequestedBy: "ops",
+            cancelSource: "ops-ui",
+            startedAt: "2026-03-23T10:06:00.000Z",
+            updatedAt: "2026-03-23T10:07:05.000Z",
+            finishedAt: "2026-03-23T10:07:05.000Z",
+          },
+        ];
+      }
+
+      return [
+        {
+          runId: "run-1",
+          channel: "feishu",
+          peerId: "ou_demo",
+          projectId: null,
+          threadId: null,
+          deliveryChatId: null,
+          deliverySurfaceType: null,
+          deliverySurfaceRef: null,
+          sessionName: "codex-main",
+          rootId: "main",
+          status: "running",
+          stage: "tool_call",
+          latestPreview: "[ca] tool_call: npm test",
+          latestTool: "npm test",
+          errorText: null,
+          cancelRequestedAt: null,
+          cancelRequestedBy: null,
+          cancelSource: null,
+          startedAt: "2026-03-23T10:00:00.000Z",
+          updatedAt: "2026-03-23T10:00:10.000Z",
+          finishedAt: null,
+        },
+      ];
+    });
+
     const app = buildApp({
       observability: {
         getOverview: async () => ({
@@ -31,40 +115,16 @@ describe("buildApp", () => {
           latestCancel: "ops @ 2026-03-23T10:00:05.000Z",
           updatedAt: "2026-03-23T10:00:00.000Z",
         }),
-        listRuns: async () => ([
-          {
-            runId: "run-1",
-            channel: "feishu",
-            peerId: "ou_demo",
-            projectId: null,
-            threadId: null,
-            deliveryChatId: null,
-            deliverySurfaceType: null,
-            deliverySurfaceRef: null,
-            sessionName: "codex-main",
-            rootId: "main",
-            status: "running",
-            stage: "tool_call",
-            latestPreview: "[ca] tool_call: npm test",
-            latestTool: "npm test",
-            errorText: null,
-            cancelRequestedAt: null,
-            cancelRequestedBy: null,
-            cancelSource: null,
-            startedAt: "2026-03-23T10:00:00.000Z",
-            updatedAt: "2026-03-23T10:00:10.000Z",
-            finishedAt: null,
-          },
-        ]),
+        listRuns: listRunsMock,
         getRun: async () => ({
           runId: "run-1",
           channel: "feishu",
           peerId: "ou_demo",
-          projectId: null,
-          threadId: null,
-          deliveryChatId: null,
-          deliverySurfaceType: null,
-          deliverySurfaceRef: null,
+          projectId: "proj-a",
+          threadId: "thread-a",
+          deliveryChatId: "oc_chat_a",
+          deliverySurfaceType: "thread",
+          deliverySurfaceRef: "omt_a",
           sessionName: "codex-main",
           rootId: "main",
           status: "running",
@@ -172,6 +232,8 @@ describe("buildApp", () => {
 
     const overview = await app.inject({ method: "GET", url: "/ops/overview" });
     const runs = await app.inject({ method: "GET", url: "/ops/runs?limit=10" });
+    const errorRuns = await app.inject({ method: "GET", url: "/ops/runs?status=error&limit=5" });
+    const canceledRuns = await app.inject({ method: "GET", url: "/ops/runs?status=canceled&limit=5" });
     const runDetail = await app.inject({ method: "GET", url: "/ops/runs/run-1" });
     const runtime = await app.inject({ method: "GET", url: "/ops/runtime" });
     const cancel = await app.inject({ method: "POST", url: "/ops/runs/run-1/cancel" });
@@ -189,6 +251,20 @@ describe("buildApp", () => {
       expect.objectContaining({
         runId: "run-1",
         latestTool: "npm test",
+      }),
+    ]);
+    expect(errorRuns.statusCode).toBe(200);
+    expect(errorRuns.json()).toEqual([
+      expect.objectContaining({
+        runId: "run-error",
+        status: "error",
+      }),
+    ]);
+    expect(canceledRuns.statusCode).toBe(200);
+    expect(canceledRuns.json()).toEqual([
+      expect.objectContaining({
+        runId: "run-canceled",
+        status: "canceled",
       }),
     ]);
     expect(runDetail.statusCode).toBe(200);
@@ -229,12 +305,22 @@ describe("buildApp", () => {
     expect(ui.headers["content-type"]).toContain("text/html");
     expect(ui.body).toContain("/ops/overview");
     expect(ui.body).toContain("/ops/runtime");
+    expect(ui.body).toContain("/ops/runs?status=error&limit=5");
+    expect(ui.body).toContain("/ops/runs?status=canceled&limit=5");
     expect(ui.body).toContain("取消");
     expect(ui.body).toContain("Backend Observability");
+    expect(ui.body).toContain("最近失败");
+    expect(ui.body).toContain("最近取消");
+    expect(ui.body).toContain("取消中");
+    expect(ui.body).toContain("开始时间");
+    expect(ui.body).toContain("最近公开进展");
+    expect(ui.body).toContain("会话快照（次级）");
     expect(ui.body).toContain('"running":"处理中"');
     expect(ui.body).toContain('"tool_call":"工具调用"');
     expect(ui.body).toContain('"queued":"已接收"');
     expect(ui.body).toContain('"received":"已接收"');
-    expect(ui.body).toContain("默认按最近更新时间倒序");
+    expect(ui.body).not.toContain("默认按最近更新时间倒序");
+    expect(ui.body.indexOf("<label>状态</label>")).toBeLessThan(ui.body.indexOf("<label>Root</label>"));
+    expect(ui.body.indexOf("<label>最近公开进展</label>")).toBeLessThan(ui.body.indexOf("<label>Root</label>"));
   });
 });

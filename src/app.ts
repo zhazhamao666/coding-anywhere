@@ -259,6 +259,7 @@ function buildOpsUiHtml(): string {
         padding: 12px;
       }
 
+      .stack,
       .runs {
         display: grid;
         gap: 10px;
@@ -269,16 +270,45 @@ function buildOpsUiHtml(): string {
         border-radius: 14px;
         padding: 14px;
         background: #f8faff;
+      }
+
+      .run.selectable {
         cursor: pointer;
       }
 
-      .run.active {
+      .run.selectable.active {
         border-color: var(--accent);
         background: var(--accent-soft);
       }
 
-      .run:hover {
+      .run.selectable:hover {
         border-color: #8fb6ff;
+      }
+
+      .section-block {
+        display: grid;
+        gap: 10px;
+        padding: 14px 12px;
+        border-radius: 16px;
+        background: rgba(248, 250, 255, 0.8);
+        border: 1px solid rgba(216, 222, 237, 0.8);
+      }
+
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .section-title {
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .section-note {
+        font-size: 12px;
+        color: var(--muted);
       }
 
       .run-top,
@@ -348,6 +378,10 @@ function buildOpsUiHtml(): string {
         gap: 10px;
       }
 
+      .detail-section {
+        margin-bottom: 16px;
+      }
+
       .event {
         padding: 12px;
         border-left: 3px solid #b7c8ea;
@@ -402,15 +436,15 @@ function buildOpsUiHtml(): string {
         <div class="panel">
           <header>
             <div>
-              <h2>运行中 / 排队任务</h2>
+              <h2>告警与任务队列</h2>
               <div class="subtle" id="runtime-meta">加载中...</div>
             </div>
             <button id="refresh" type="button">刷新</button>
           </header>
           <div class="panel-body">
-            <div class="runs" id="runtime"></div>
-            <div class="subtle" id="history-meta"></div>
-            <div class="runs" id="runs"></div>
+            <div class="stack" id="runtime"></div>
+            <div class="stack" id="incidents"></div>
+            <div class="stack" id="runs"></div>
             <div class="sessions" id="sessions"></div>
           </div>
         </div>
@@ -473,20 +507,42 @@ function buildOpsUiHtml(): string {
       }
 
       async function refreshDashboard() {
-        const [overview, runtime, runs, sessions] = await Promise.all([
+        const [overview, runtime, failedRuns, canceledRuns, runs, sessions] = await Promise.all([
           loadJson("/ops/overview"),
           loadJson("/ops/runtime"),
+          loadJson("/ops/runs?status=error&limit=5"),
+          loadJson("/ops/runs?status=canceled&limit=5"),
           loadJson("/ops/runs?limit=50"),
           loadJson("/ops/sessions"),
         ]);
+        const activeRuns = runtime.activeRuns.filter(run => run.status !== "canceling");
+        const cancelingRuns = runtime.activeRuns.filter(run => run.status === "canceling");
+        const visibleRunIds = new Set([
+          ...activeRuns.map(run => run.runId),
+          ...runtime.queuedRuns.map(run => run.runId),
+          ...cancelingRuns.map(run => run.runId),
+          ...failedRuns.map(run => run.runId),
+          ...canceledRuns.map(run => run.runId),
+        ]);
+        const historyRuns = runs.filter(run => !visibleRunIds.has(run.runId));
+        const selectionCandidates = [
+          ...activeRuns,
+          ...runtime.queuedRuns,
+          ...cancelingRuns,
+          ...failedRuns,
+          ...canceledRuns,
+          ...historyRuns,
+        ];
 
         renderOverview(overview);
         renderRuntime(runtime);
-        renderRuns(runs);
+        renderIncidents(failedRuns, canceledRuns);
+        renderRuns(historyRuns);
         renderSessions(sessions);
+        attachRunInteractions();
 
-        if (!state.selectedRunId && runs[0]) {
-          state.selectedRunId = runs[0].runId;
+        if (!state.selectedRunId && selectionCandidates[0]) {
+          state.selectedRunId = selectionCandidates[0].runId;
         }
 
         if (state.selectedRunId) {
@@ -501,14 +557,8 @@ function buildOpsUiHtml(): string {
           ["活跃任务", overview.activeRuns],
           ["排队任务", overview.queuedRuns],
           ["取消中", overview.cancelingRuns],
-          ["总任务数", overview.totalRuns],
-          ["24h 完成", overview.completedRuns24h],
-          ["24h 失败", overview.failedRuns24h],
-          ["最长活跃(ms)", overview.longestActiveMs],
-          ["最长排队(ms)", overview.longestQueuedMs],
-          ["最近错误", overview.latestError || "无"],
+          ["最近失败", overview.latestError || "无"],
           ["最近取消", overview.latestCancel || "无"],
-          ["最近更新", overview.updatedAt || "无"],
         ].map(([label, value]) => \`
           <article class="card">
             <span class="subtle">\${escapeHtml(label)}</span>
@@ -518,84 +568,37 @@ function buildOpsUiHtml(): string {
       }
 
       function renderRuntime(runtime) {
-        const activeMarkup = runtime.activeRuns.map(run => \`
-          <article class="run">
-            <div class="run-top">
-              <span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span>
-              <div>
-                <div><strong>\${escapeHtml(run.peerId)}</strong> <span class="subtle">via</span> <code>\${escapeHtml(run.sessionName)}</code></div>
-                <div class="muted-line">project=\${escapeHtml(run.projectId || "-")} | thread=\${escapeHtml(run.threadId || "-")}</div>
-                <div class="muted-line">\${escapeHtml(run.latestPreview)}</div>
-              </div>
-            </div>
-            <div class="muted-line">run=\${escapeHtml(run.runId)} | elapsed=\${escapeHtml(run.elapsedMs)}ms | wait=\${escapeHtml(run.waitMs)}ms</div>
-            <div class="muted-line">
-              \${run.cancelable ? \`<button type="button" class="cancel-run" data-run-id="\${escapeHtml(run.runId)}">取消</button>\` : '<span class="subtle">不可取消</span>'}
-            </div>
-          </article>
-        \`).join("");
-        const queuedMarkup = runtime.queuedRuns.map(run => \`
-          <article class="run">
-            <div class="run-top">
-              <span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span>
-              <div>
-                <div><strong>\${escapeHtml(run.peerId)}</strong> <span class="subtle">排队中</span> <code>\${escapeHtml(run.sessionName)}</code></div>
-                <div class="muted-line">project=\${escapeHtml(run.projectId || "-")} | thread=\${escapeHtml(run.threadId || "-")}</div>
-                <div class="muted-line">\${escapeHtml(run.latestPreview)}</div>
-              </div>
-            </div>
-            <div class="muted-line">run=\${escapeHtml(run.runId)} | wait=\${escapeHtml(run.waitMs)}ms</div>
-            <div class="muted-line">
-              \${run.cancelable ? \`<button type="button" class="cancel-run" data-run-id="\${escapeHtml(run.runId)}">取消</button>\` : '<span class="subtle">不可取消</span>'}
-            </div>
-          </article>
-        \`).join("");
+        const activeRuns = runtime.activeRuns.filter(run => run.status !== "canceling");
+        const cancelingRuns = runtime.activeRuns.filter(run => run.status === "canceling");
+        const activeMarkup = renderRunCards(activeRuns, { selectable: true, showCancel: true });
+        const cancelingMarkup = renderRunCards(cancelingRuns, { selectable: true, showCancel: false });
+        const queuedMarkup = renderRunCards(runtime.queuedRuns, { selectable: true, showCancel: true });
 
         document.getElementById("runtime-meta").textContent =
-          "活跃 " + runtime.activeCount + " / 排队 " + runtime.queuedCount + " / 锁 " + runtime.locks.length;
+          "活跃 " + runtime.activeCount + " / 排队 " + runtime.queuedCount + " / 取消中 " + runtime.cancelingCount + " / 锁 " + runtime.locks.length;
         document.getElementById("runtime").innerHTML =
-          '<h2>活跃任务</h2>' + (activeMarkup || '<p class="subtle">暂无活跃任务。</p>') +
-          '<h2>排队任务</h2>' + (queuedMarkup || '<p class="subtle">暂无排队任务。</p>');
+          buildSectionBlock("活跃任务", "优先处理正在消耗资源的任务", activeMarkup || '<p class="subtle">暂无活跃任务。</p>') +
+          buildSectionBlock("排队任务", "关注是否出现堆积", queuedMarkup || '<p class="subtle">暂无排队任务。</p>') +
+          buildSectionBlock("取消中", "确认停止请求是否正在收口", cancelingMarkup || '<p class="subtle">暂无取消中的任务。</p>');
+      }
 
-        for (const element of document.querySelectorAll(".cancel-run")) {
-          element.addEventListener("click", async event => {
-            event.stopPropagation();
-            const runId = element.getAttribute("data-run-id");
-            if (!runId) return;
-            await cancelRun(runId);
-          });
-        }
+      function renderIncidents(failedRuns, canceledRuns) {
+        const failedMarkup = renderRunCards(failedRuns, { selectable: true, showCancel: false });
+        const canceledMarkup = renderRunCards(canceledRuns, { selectable: true, showCancel: false });
+        document.getElementById("incidents").innerHTML =
+          buildSectionBlock("最近失败", "先看最近失败的 root cause", failedMarkup || '<p class="subtle">最近没有失败任务。</p>') +
+          buildSectionBlock("最近取消", "确认取消是否符合预期", canceledMarkup || '<p class="subtle">最近没有取消任务。</p>');
       }
 
       function renderRuns(runs) {
-        document.getElementById("history-meta").textContent = "历史任务共 " + runs.length + " 条，默认按最近更新时间倒序";
-        document.getElementById("runs").innerHTML = '<h2>历史任务</h2>' + runs.map(run => \`
-          <article class="run \${state.selectedRunId === run.runId ? "active" : ""}" data-run-id="\${escapeHtml(run.runId)}">
-            <div class="run-top">
-              <span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span>
-              <div>
-                <div><strong>\${escapeHtml(run.peerId)}</strong> <span class="subtle">via</span> <code>\${escapeHtml(run.sessionName)}</code></div>
-                <div class="muted-line">project=\${escapeHtml(run.projectId || "-")} | thread=\${escapeHtml(run.threadId || "-")}</div>
-                <div class="muted-line">\${escapeHtml(run.latestPreview)}</div>
-              </div>
-            </div>
-            <div class="muted-line">run=\${escapeHtml(run.runId)} | tool=\${escapeHtml(run.latestTool || "-")} | updated=\${escapeHtml(run.updatedAt)}</div>
-          </article>
-        \`).join("");
-
-        for (const element of document.querySelectorAll(".run")) {
-          element.addEventListener("click", async () => {
-            state.selectedRunId = element.getAttribute("data-run-id");
-            renderRuns(runs);
-            if (state.selectedRunId) {
-              await loadRunDetail(state.selectedRunId);
-            }
-          });
-        }
+        const historyMarkup = renderRunCards(runs, { selectable: true, showCancel: false });
+        document.getElementById("runs").innerHTML =
+          buildSectionBlock("其他历史任务（次级）", "保留次级历史入口，便于继续钻取详情", historyMarkup || '<p class="subtle">暂无其他历史任务。</p>');
       }
 
       function renderSessions(sessions) {
-        document.getElementById("sessions").innerHTML = '<h2>会话快照</h2>' + sessions.map(session => \`
+        document.getElementById("sessions").innerHTML =
+          buildSectionBlock("会话快照（次级）", "用于排障，不作为首屏主决策区", sessions.map(session => \`
           <div class="session-row">
             <div>
               <div><strong>\${escapeHtml(session.peerId)}</strong> <span class="subtle">/</span> <code>\${escapeHtml(session.sessionName)}</code></div>
@@ -603,7 +606,7 @@ function buildOpsUiHtml(): string {
             </div>
             <span class="\${statusBadgeClass(session.latestRunStatus || "queued")}">\${escapeHtml(formatStatusLabel(session.latestRunStatus || "idle"))}</span>
           </div>
-        \`).join("");
+        \`).join("") || '<p class="subtle">暂无会话快照。</p>');
       }
 
       async function loadRunDetail(runId) {
@@ -623,39 +626,103 @@ function buildOpsUiHtml(): string {
       }
 
       function renderRunDetail(run, events) {
-        document.getElementById("detail-meta").textContent = run.runId + " | " + run.updatedAt;
+        document.getElementById("detail-meta").textContent =
+          formatStatusLabel(run.status) + " / " + formatStageLabel(run.stage) + " | " + run.runId;
         document.getElementById("detail").innerHTML = \`
-          <div class="detail-grid">
-            <div class="kv"><label>Peer</label><div>\${escapeHtml(run.peerId)}</div></div>
-            <div class="kv"><label>Project</label><div><code>\${escapeHtml(run.projectId || "-")}</code></div></div>
-            <div class="kv"><label>Thread</label><div><code>\${escapeHtml(run.threadId || "-")}</code></div></div>
-            <div class="kv"><label>Session</label><div><code>\${escapeHtml(run.sessionName)}</code></div></div>
-            <div class="kv"><label>Root</label><div><code>\${escapeHtml(run.rootId)}</code></div></div>
-            <div class="kv"><label>状态</label><div><span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span></div></div>
-            <div class="kv"><label>最近工具</label><div><code>\${escapeHtml(run.latestTool || "-")}</code></div></div>
-            <div class="kv"><label>投递 Chat</label><div><code>\${escapeHtml(run.deliveryChatId || "-")}</code></div></div>
-            <div class="kv"><label>投递 Surface</label><div><code>\${escapeHtml(run.deliverySurfaceType || "-")} / \${escapeHtml(run.deliverySurfaceRef || "-")}</code></div></div>
-            <div class="kv"><label>取消请求</label><div>\${escapeHtml(run.cancelRequestedAt || "-")}</div></div>
-            <div class="kv"><label>取消来源</label><div><code>\${escapeHtml(run.cancelRequestedBy || run.cancelSource || "-")}</code></div></div>
-            <div class="kv"><label>结束时间</label><div>\${escapeHtml(run.finishedAt || "-")}</div></div>
+          <div class="detail-section">
+            <div class="detail-grid">
+              <div class="kv"><label>状态</label><div><span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span></div></div>
+              <div class="kv"><label>项目</label><div><code>\${escapeHtml(run.projectId || "-")}</code></div></div>
+              <div class="kv"><label>线程</label><div><code>\${escapeHtml(run.threadId || "-")}</code></div></div>
+              <div class="kv"><label>开始时间</label><div>\${escapeHtml(run.startedAt || "-")}</div></div>
+              <div class="kv"><label>更新时间</label><div>\${escapeHtml(run.updatedAt || "-")}</div></div>
+              <div class="kv"><label>结束时间</label><div>\${escapeHtml(run.finishedAt || "-")}</div></div>
+            </div>
           </div>
-          <div class="kv" style="margin-bottom: 16px;">
-            <label>最新预览</label>
-            <div>\${escapeHtml(run.latestPreview)}</div>
+          <div class="kv detail-section">
+            <label>最近公开进展</label>
+            <div>\${escapeHtml(run.latestPreview || "-")}</div>
           </div>
+          <div class="detail-section">
+            <h3 class="section-title" style="margin-bottom: 10px;">技术元数据</h3>
+            <div class="detail-grid">
+              <div class="kv"><label>会话</label><div><code>\${escapeHtml(run.sessionName)}</code></div></div>
+              <div class="kv"><label>Peer</label><div>\${escapeHtml(run.peerId)}</div></div>
+              <div class="kv"><label>Root</label><div><code>\${escapeHtml(run.rootId)}</code></div></div>
+              <div class="kv"><label>最近工具</label><div><code>\${escapeHtml(run.latestTool || "-")}</code></div></div>
+              <div class="kv"><label>投递 Chat</label><div><code>\${escapeHtml(run.deliveryChatId || "-")}</code></div></div>
+              <div class="kv"><label>投递 Surface</label><div><code>\${escapeHtml(run.deliverySurfaceType || "-")} / \${escapeHtml(run.deliverySurfaceRef || "-")}</code></div></div>
+              <div class="kv"><label>取消请求</label><div>\${escapeHtml(run.cancelRequestedAt || "-")}</div></div>
+              <div class="kv"><label>取消来源</label><div><code>\${escapeHtml(run.cancelRequestedBy || run.cancelSource || "-")}</code></div></div>
+            </div>
+          </div>
+          <div class="detail-section">
+            <h3 class="section-title" style="margin-bottom: 10px;">时间线</h3>
             <div class="timeline">
-              \${events.map(event => \`
-                <div class="event">
-                  <div class="event-top">
-                    <strong>\${escapeHtml(event.seq)}. \${escapeHtml(event.source)} / \${escapeHtml(formatStageLabel(event.stage))}</strong>
-                    <span class="\${statusBadgeClass(event.status)}">\${escapeHtml(formatStatusLabel(event.status))}</span>
-                  </div>
-                  <div class="muted-line">\${escapeHtml(event.createdAt)} | tool=\${escapeHtml(event.toolName || "-")}</div>
-                  <div>\${escapeHtml(event.preview)}</div>
+            \${events.map(event => \`
+              <div class="event">
+                <div class="event-top">
+                  <strong>\${escapeHtml(event.seq)}. \${escapeHtml(event.source)} / \${escapeHtml(formatStageLabel(event.stage))}</strong>
+                  <span class="\${statusBadgeClass(event.status)}">\${escapeHtml(formatStatusLabel(event.status))}</span>
+                </div>
+                <div class="muted-line">\${escapeHtml(event.createdAt)} | tool=\${escapeHtml(event.toolName || "-")}</div>
+                <div>\${escapeHtml(event.preview)}</div>
               </div>
             \`).join("")}
+            </div>
           </div>
         \`;
+      }
+
+      function buildSectionBlock(title, note, body) {
+        return \`
+          <section class="section-block">
+            <div class="section-header">
+              <div class="section-title">\${escapeHtml(title)}</div>
+              <div class="section-note">\${escapeHtml(note)}</div>
+            </div>
+            <div class="runs">\${body}</div>
+          </section>
+        \`;
+      }
+
+      function renderRunCards(runs, options) {
+        return runs.map(run => \`
+          <article class="run \${options.selectable ? "selectable" : ""} \${options.selectable && state.selectedRunId === run.runId ? "active" : ""}" \${options.selectable ? \`data-run-id="\${escapeHtml(run.runId)}"\` : ""}>
+            <div class="run-top">
+              <span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span>
+              <div>
+                <div><strong>\${escapeHtml(run.peerId)}</strong> <span class="subtle">via</span> <code>\${escapeHtml(run.sessionName)}</code></div>
+                <div class="muted-line">project=\${escapeHtml(run.projectId || "-")} | thread=\${escapeHtml(run.threadId || "-")}</div>
+                <div class="muted-line">\${escapeHtml(run.latestPreview)}</div>
+              </div>
+            </div>
+            <div class="muted-line">run=\${escapeHtml(run.runId)} | started=\${escapeHtml(run.startedAt || "-")} | updated=\${escapeHtml(run.updatedAt || "-")}\${Number.isFinite(run.waitMs) ? \` | wait=\${escapeHtml(run.waitMs)}ms\` : ""}</div>
+            \${options.showCancel ? \`
+              <div class="muted-line">
+                \${run.cancelable ? \`<button type="button" class="cancel-run" data-run-id="\${escapeHtml(run.runId)}">取消</button>\` : '<span class="subtle">不可取消</span>'}
+              </div>
+            \` : ""}
+          </article>
+        \`).join("");
+      }
+
+      function attachRunInteractions() {
+        for (const element of document.querySelectorAll(".run.selectable[data-run-id]")) {
+          element.addEventListener("click", async () => {
+            state.selectedRunId = element.getAttribute("data-run-id");
+            await refreshDashboard().catch(showError);
+          });
+        }
+
+        for (const element of document.querySelectorAll(".cancel-run")) {
+          element.addEventListener("click", async event => {
+            event.stopPropagation();
+            const runId = element.getAttribute("data-run-id");
+            if (!runId) return;
+            await cancelRun(runId).catch(showError);
+          });
+        }
       }
 
       document.getElementById("refresh").addEventListener("click", () => {
