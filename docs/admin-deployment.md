@@ -345,7 +345,7 @@ http://127.0.0.1:3000/ops/sessions
 
 建议使用方式：
 
-1. `/ops/ui` 看当前正在跑什么、排队了什么、最近失败了什么
+1. `/ops/ui` 看当前正在跑什么、排队了什么、正在取消什么、最近失败了什么、最近取消了什么
 2. `/ops/runtime` 看实时 active / queued / canceling / locks 快照
 3. `/ops/runs/:id` 看单条任务的完整时间线
 4. `/ops/sessions` 看当前 thread 到 session 的对应关系
@@ -426,7 +426,7 @@ test
 - `readyz` 正常
 - 飞书 `test` 不重复回复
 - `/ca status` 正常
-- `/ops/ui` 能看到最新任务和 live 状态
+- `/ops/ui` 能看到告警队列、最近失败/取消，以及任务详情
 - 当前只运行了一个实例
 - `config.toml` 没被误改
 
@@ -459,7 +459,7 @@ test
 - 重启后 `readyz` 正常
 - 飞书 `test` 只回复 1 次
 - `/ca status`、`/ca session`、`/ca new` 正常
-- `/ops/ui` 能看到 live run、排队任务和时间线
+- `/ops/ui` 能看到 `活跃任务 / 排队任务 / 取消中 / 最近失败 / 最近取消`，并能继续点开时间线详情
 - 至少有一个 root 可用
 - 管理员知道如何重启、升级、回滚
 
