@@ -1,3 +1,5 @@
+import { buildFeishuCardFrame } from "./frame-builder.js";
+
 export function buildBridgeHubCard(input: {
   title?: string;
   summaryLines: string[];
@@ -132,24 +134,10 @@ export function buildBridgeHubCard(input: {
     });
   }
 
-  return {
-    schema: "2.0",
-    config: {
-      wide_screen_mode: true,
-      update_multi: true,
-      summary: {
-        content: input.summaryLines.join(" ").slice(0, 120),
-      },
-    },
-    header: {
-      title: {
-        tag: "plain_text",
-        content: input.title ?? "CA Hub",
-      },
-      template: "blue",
-    },
-    body: {
-      elements,
-    },
-  };
+  return buildFeishuCardFrame({
+    title: input.title ?? "CA Hub",
+    template: "blue",
+    summary: input.summaryLines.join(" "),
+    elements,
+  });
 }

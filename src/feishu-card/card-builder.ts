@@ -4,6 +4,14 @@ import {
   getCodexSpeedLabel,
   getFallbackCodexPreferenceCatalog,
 } from "../codex-preferences.js";
+import { formatRuntimeStatusLabel as formatStatusLabel } from "../runtime-status-labels.js";
+import {
+  buildCommandActionValue,
+  buildPlanChoiceActionValue,
+  buildPlanSubmitActionValue,
+  buildPreferenceActionValue,
+} from "./action-contract.js";
+import { buildFeishuCardFrame } from "./frame-builder.js";
 import type { PlanTodoItem, ProgressCardState, ProgressStatus } from "../types.js";
 import { normalizeMarkdownToPlainText } from "../markdown-text.js";
 
@@ -11,28 +19,21 @@ export const STREAMING_ELEMENT_ID = "streaming_content";
 
 export function buildStreamingShellCard(state: ProgressCardState): Record<string, unknown> {
   const summaryText = buildStreamingCardMarkdown(state);
-  return {
-    schema: "2.0",
+  return buildFeishuCardFrame({
+    summary: summaryText,
     config: {
-      wide_screen_mode: true,
-      update_multi: true,
       streaming_mode: true,
-      summary: {
+    },
+    elements: [
+      {
+        tag: "markdown",
         content: summaryText,
+        element_id: STREAMING_ELEMENT_ID,
       },
-    },
-    body: {
-      elements: [
-        {
-          tag: "markdown",
-          content: summaryText,
-          element_id: STREAMING_ELEMENT_ID,
-        },
-        ...buildCodexPreferenceControlElements(state),
-        ...buildStopButtonElements(state),
-      ],
-    },
-  };
+      ...buildCodexPreferenceControlElements(state),
+      ...buildStopButtonElements(state),
+    ],
+  });
 }
 
 export function buildStreamingCardMarkdown(state: ProgressCardState): string {
@@ -109,12 +110,15 @@ export function buildBridgeCard(state: ProgressCardState): Record<string, unknow
               content: choice.label,
             },
             value: {
-              bridgeAction: "answer_plan_choice",
-              interactionId: state.planInteraction?.interactionId,
-              choiceId: choice.choiceId,
-              chatId: state.deliveryChatId ?? undefined,
-              surfaceType: state.deliverySurfaceType ?? undefined,
-              surfaceRef: state.deliverySurfaceRef ?? undefined,
+              ...buildPlanChoiceActionValue({
+                interactionId: state.planInteraction?.interactionId ?? "",
+                choiceId: choice.choiceId,
+                context: {
+                  chatId: state.deliveryChatId ?? undefined,
+                  surfaceType: state.deliverySurfaceType ?? undefined,
+                  surfaceRef: state.deliverySurfaceRef ?? undefined,
+                },
+              }),
             },
           },
           ...(choice.description
@@ -163,19 +167,10 @@ export function buildBridgeCard(state: ProgressCardState): Record<string, unknow
     });
   }
 
-  return {
-    schema: "2.0",
-    config: {
-      wide_screen_mode: true,
-      update_multi: true,
-      summary: {
-        content: buildCardSummary(state).slice(0, 120),
-      },
-    },
-    body: {
-      elements,
-    },
-  };
+  return buildFeishuCardFrame({
+    summary: buildCardSummary(state),
+    elements,
+  });
 }
 
 export function buildPlanModeFormCard(input: {
@@ -186,151 +181,109 @@ export function buildPlanModeFormCard(input: {
     surfaceRef?: string;
   };
 }): Record<string, unknown> {
-  return {
-    schema: "2.0",
-    config: {
-      wide_screen_mode: true,
-      update_multi: true,
-      summary: {
-        content: "计划模式",
+  return buildFeishuCardFrame({
+    title: input.title ?? "计划模式",
+    template: "blue",
+    summary: "计划模式",
+    elements: [
+      {
+        tag: "markdown",
+        content: [
+          "**计划模式**",
+          "描述你想先梳理的方案，我会把这次输入包装成 `/plan ...` 并发到当前 Codex 线程。",
+        ].join("\n"),
       },
-    },
-    header: {
-      title: {
-        tag: "plain_text",
-        content: input.title ?? "计划模式",
+      {
+        tag: "form",
+        name: "bridge_plan_form",
+        elements: [
+          {
+            tag: "input",
+            name: "plan_prompt",
+            required: true,
+            input_type: "multiline_text",
+            rows: 4,
+            auto_resize: true,
+            label: {
+              tag: "plain_text",
+              content: "计划请求",
+            },
+            placeholder: {
+              tag: "plain_text",
+              content: "例如：帮我先梳理这个仓库的改造方案，不要直接改代码",
+            },
+          },
+          {
+            tag: "column_set",
+            flex_mode: "flow",
+            background_style: "default",
+            columns: [
+              {
+                tag: "column",
+                width: "auto",
+                weight: 1,
+                vertical_align: "top",
+                elements: [{
+                  tag: "button",
+                  text: {
+                    tag: "plain_text",
+                    content: "提交",
+                  },
+                  type: "primary_filled",
+                  form_action_type: "submit",
+                  name: "bridge_plan_submit",
+                  value: buildPlanSubmitActionValue(input.context),
+                }],
+              },
+              {
+                tag: "column",
+                width: "auto",
+                weight: 1,
+                vertical_align: "top",
+                elements: [{
+                  tag: "button",
+                  text: {
+                    tag: "plain_text",
+                    content: "清空",
+                  },
+                  form_action_type: "reset",
+                  name: "bridge_plan_reset",
+                }],
+              },
+            ],
+          },
+        ],
       },
-      template: "blue",
-    },
-    body: {
-      elements: [
-        {
-          tag: "markdown",
-          content: [
-            "**计划模式**",
-            "描述你想先梳理的方案，我会把这次输入包装成 `/plan ...` 并发到当前 Codex 线程。",
-          ].join("\n"),
-        },
-        {
-          tag: "form",
-          name: "bridge_plan_form",
-          elements: [
-            {
-              tag: "input",
-              name: "plan_prompt",
-              required: true,
-              input_type: "multiline_text",
-              rows: 4,
-              auto_resize: true,
-              label: {
-                tag: "plain_text",
-                content: "计划请求",
-              },
-              placeholder: {
-                tag: "plain_text",
-                content: "例如：帮我先梳理这个仓库的改造方案，不要直接改代码",
-              },
+      {
+        tag: "column_set",
+        flex_mode: "flow",
+        background_style: "default",
+        columns: [{
+          tag: "column",
+          width: "auto",
+          weight: 1,
+          vertical_align: "top",
+          elements: [{
+            tag: "button",
+            text: {
+              tag: "plain_text",
+              content: "返回导航",
             },
-            {
-              tag: "column_set",
-              flex_mode: "flow",
-              background_style: "default",
-              columns: [
-                {
-                  tag: "column",
-                  width: "auto",
-                  weight: 1,
-                  vertical_align: "top",
-                  elements: [{
-                    tag: "button",
-                    text: {
-                      tag: "plain_text",
-                      content: "提交",
-                    },
-                    type: "primary_filled",
-                    form_action_type: "submit",
-                    name: "bridge_plan_submit",
-                    value: {
-                      bridgeAction: "submit_plan_form",
-                      chatId: input.context.chatId,
-                      surfaceType: input.context.surfaceType,
-                      surfaceRef: input.context.surfaceRef,
-                    },
-                  }],
-                },
-                {
-                  tag: "column",
-                  width: "auto",
-                  weight: 1,
-                  vertical_align: "top",
-                  elements: [{
-                    tag: "button",
-                    text: {
-                      tag: "plain_text",
-                      content: "清空",
-                    },
-                    form_action_type: "reset",
-                    name: "bridge_plan_reset",
-                  }],
-                },
-              ],
-            },
-          ],
-        },
-        {
-          tag: "column_set",
-          flex_mode: "flow",
-          background_style: "default",
-          columns: [{
-            tag: "column",
-            width: "auto",
-            weight: 1,
-            vertical_align: "top",
-            elements: [{
-              tag: "button",
-              text: {
-                tag: "plain_text",
-                content: "返回导航",
-              },
-              value: {
+            value: {
+              ...buildCommandActionValue({
                 command: "/ca",
-                chatId: input.context.chatId,
-                surfaceType: input.context.surfaceType,
-                surfaceRef: input.context.surfaceRef,
-              },
-            }],
+                context: input.context,
+              }),
+            },
           }],
-        },
-      ],
-    },
-  };
+        }],
+      },
+    ],
+  });
 }
 
 function isTerminalStatus(status: ProgressStatus): boolean {
   return status === "done" || status === "error" || status === "canceled";
-}
-
-function formatStatusLabel(status: ProgressStatus): string {
-  switch (status) {
-    case "queued":
-      return "已接收";
-    case "preparing":
-      return "准备中";
-    case "canceling":
-      return "停止中";
-    case "running":
-      return "处理中";
-    case "tool_active":
-      return "工具执行中";
-    case "waiting":
-      return "等待中";
-    case "done":
-      return "已完成";
-    case "error":
-      return "失败";
-    case "canceled":
-      return "已停止";
-  }
 }
 
 function formatElapsed(elapsedMs: number): string {
@@ -438,12 +391,14 @@ function buildStopButtonElements(state: ProgressCardState): Array<Record<string,
 }
 
 function buildStopActionValue(state: ProgressCardState): Record<string, unknown> {
-  return {
+  return buildCommandActionValue({
     command: "/ca stop",
-    chatId: state.deliveryChatId ?? undefined,
-    surfaceType: state.deliverySurfaceType ?? undefined,
-    surfaceRef: state.deliverySurfaceRef ?? undefined,
-  };
+    context: {
+      chatId: state.deliveryChatId ?? undefined,
+      surfaceType: state.deliverySurfaceType ?? undefined,
+      surfaceRef: state.deliverySurfaceRef ?? undefined,
+    },
+  });
 }
 
 function buildCodexPreferenceControlElements(state: ProgressCardState): Array<Record<string, unknown>> {
@@ -498,7 +453,7 @@ function buildCodexPreferenceControlElements(state: ProgressCardState): Array<Re
               })),
               behaviors: [{
                 type: "callback",
-                value: buildPreferenceActionValue(state, "set_codex_model"),
+                value: buildPreferenceActionValueForState(state, "set_codex_model"),
               }],
             },
           ],
@@ -529,7 +484,7 @@ function buildCodexPreferenceControlElements(state: ProgressCardState): Array<Re
               })),
               behaviors: [{
                 type: "callback",
-                value: buildPreferenceActionValue(state, "set_reasoning_effort"),
+                value: buildPreferenceActionValueForState(state, "set_reasoning_effort"),
               }],
             },
           ],
@@ -560,7 +515,7 @@ function buildCodexPreferenceControlElements(state: ProgressCardState): Array<Re
               })),
               behaviors: [{
                 type: "callback",
-                value: buildPreferenceActionValue(state, "set_codex_speed"),
+                value: buildPreferenceActionValueForState(state, "set_codex_speed"),
               }],
             },
           ],
@@ -570,14 +525,13 @@ function buildCodexPreferenceControlElements(state: ProgressCardState): Array<Re
   ];
 }
 
-function buildPreferenceActionValue(
+function buildPreferenceActionValueForState(
   state: ProgressCardState,
   bridgeAction: "set_codex_model" | "set_reasoning_effort" | "set_codex_speed",
 ): Record<string, unknown> {
-  return {
-    bridgeAction,
+  return buildPreferenceActionValue({
     chatId: state.deliveryChatId ?? undefined,
     surfaceType: state.deliverySurfaceType ?? undefined,
     surfaceRef: state.deliverySurfaceRef ?? undefined,
-  };
+  }, bridgeAction);
 }

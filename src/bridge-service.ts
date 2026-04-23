@@ -18,10 +18,19 @@ import {
 } from "./codex-preferences.js";
 import { parseCodexThreadSourceInfo } from "./codex-thread-source.js";
 import { buildFeishuVisibleAssistantText } from "./feishu-assistant-message.js";
+import {
+  buildCommandActionValue as buildSharedCommandActionValue,
+  buildPlanFormActionValue,
+  buildPreferenceActionValue as buildSharedPreferenceActionValue,
+} from "./feishu-card/action-contract.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import { normalizeMarkdownToPlainText } from "./markdown-text.js";
 import type { ProjectThreadService } from "./project-thread-service.js";
 import { createProgressCardState, reduceProgressEvent } from "./progress-relay.js";
+import {
+  formatRuntimeStageLabel,
+  formatRuntimeStatusLabel,
+} from "./runtime-status-labels.js";
 import { isRunCanceledError } from "./run-cancel-error.js";
 import type { RunControl, RunDescriptor } from "./run-worker-manager.js";
 import type {
@@ -3749,12 +3758,10 @@ export class BridgeService {
     },
     command: string,
   ): Record<string, unknown> {
-    return {
+    return buildSharedCommandActionValue({
       command,
-      chatId: context.chatId,
-      surfaceType: context.surfaceType,
-      surfaceRef: context.surfaceRef,
-    };
+      context,
+    });
   }
 
   private buildCodexPreferenceActionValue(
@@ -3765,12 +3772,7 @@ export class BridgeService {
     },
     bridgeAction: "set_codex_model" | "set_reasoning_effort" | "set_codex_speed",
   ): Record<string, unknown> {
-    return {
-      bridgeAction,
-      chatId: context.chatId,
-      surfaceType: context.surfaceType,
-      surfaceRef: context.surfaceRef,
-    };
+    return buildSharedPreferenceActionValue(context, bridgeAction);
   }
 
   private buildPlanActionValue(
@@ -3780,12 +3782,7 @@ export class BridgeService {
       surfaceRef?: string;
     },
   ): Record<string, unknown> {
-    return {
-      bridgeAction: "open_plan_form",
-      chatId: context.chatId,
-      surfaceType: context.surfaceType,
-      surfaceRef: context.surfaceRef,
-    };
+    return buildPlanFormActionValue(context);
   }
 }
 
@@ -4116,60 +4113,6 @@ function findFinalAssistantText(events: RunnerEvent[]): string {
 
 function isTerminalProgress(progress: ProgressCardState): boolean {
   return progress.status === "done" || progress.status === "error" || progress.status === "canceled";
-}
-
-function formatRuntimeStatusLabel(status: RuntimeRunSnapshot["status"]): string {
-  switch (status) {
-    case "queued":
-      return "已接收";
-    case "preparing":
-      return "准备中";
-    case "canceling":
-      return "停止中";
-    case "running":
-      return "处理中";
-    case "tool_active":
-      return "工具执行中";
-    case "waiting":
-      return "等待中";
-    case "done":
-      return "已完成";
-    case "error":
-      return "失败";
-    case "canceled":
-      return "已停止";
-  }
-}
-
-function formatRuntimeStageLabel(stage: RuntimeRunSnapshot["stage"]): string {
-  switch (stage) {
-    case "received":
-      return "已接收";
-    case "resolving_context":
-      return "解析上下文";
-    case "ensuring_session":
-      return "准备会话";
-    case "session_ready":
-      return "会话已就绪";
-    case "submitting_prompt":
-      return "提交请求";
-    case "waiting_first_event":
-      return "等待首个响应";
-    case "canceling":
-      return "停止中";
-    case "tool_call":
-      return "工具调用";
-    case "text":
-      return "文本响应";
-    case "waiting":
-      return "等待中";
-    case "done":
-      return "已完成";
-    case "error":
-      return "失败";
-    case "canceled":
-      return "已停止";
-  }
 }
 
 function formatRuntimeDuration(elapsedMs: number): string {

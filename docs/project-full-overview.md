@@ -89,7 +89,7 @@
 59. `/ca status` 现在会返回结构化“运行状态”卡：若当前 surface 有 live run，则展示 `runId`、状态/阶段、耗时、最近工具、最新摘要和投递上下文；若没有，则返回空闲态并保留当前上下文摘要
 60. `/ca` 导航卡与“当前会话”卡现在都补上了“运行状态”和“停止任务”按钮，继续复用同一条 `/ca` 卡片回调重放链路
 61. runtime 现在额外暴露 `/ops/runtime` 实时调度快照，以及 `/ops/runs/:id/cancel` 运行中/排队任务取消接口
-62. `/ops/ui` 已升级为“概览 + 活跃/排队任务面板 + 历史详情”的组合视图，支持直接取消 live run
+62. `/ops/ui` 已升级为“概览 + 活跃/排队任务面板 + 历史详情”的组合视图，支持直接取消 live run；运行状态与阶段标签会和飞书卡片共用同一套中文词汇，不再在后台裸露 `running / tool_call` 这类英文原值
 63. `observability_runs` 现在会额外记录 `cancel_requested_at`、`cancel_requested_by`、`cancel_source`，便于还原取消请求来源
 64. runtime 启动时会把上次异常退出后遗留的非终态 run 统一收口为 `error`，避免 `/ops` 长期挂着僵尸 `running`
 65. `/ops/runs` 历史列表改为按最近更新时间倒序展示，不再把更早的非终态 run 固定钉在顶部
@@ -363,6 +363,26 @@ bridge 图片指令解析与路径校验层。
 - 对 bridge 持久化的计划选择返回 toast，并在后台为当前 surface 新发进度卡消息继续同一 native thread
 - 对有界异步 `/ca` 命令优先返回 toast，再使用 callback `token` 调用延时更新接口回填终态卡；只有拿不到 `token` 时才回退到 `open_message_id` patch
 - 当后台异步 run 返回图片结果时，优先发送原生飞书图片消息；无法发图时退回明确的文本说明，不静默吞掉结果
+
+### 5.4.1 `src/feishu-card/action-contract.ts`
+
+飞书卡片动作 value 统一契约层。
+
+职责：
+
+- 统一编码 `/ca` 命令按钮、计划模式按钮、计划选择按钮、Codex 设置回调和桌面线程 handoff 按钮的 `value`
+- 统一补齐 `chatId`、`surfaceType`、`surfaceRef` 等 surface 上下文字段
+- 供 `BridgeService`、流式状态卡 builder、计划表单卡和桌面 completion 卡复用，避免多处手工拼接 callback payload
+
+### 5.4.2 `src/feishu-card/frame-builder.ts`
+
+飞书卡片共享外壳层。
+
+职责：
+
+- 统一产出 JSON 2.0 卡片的 `schema`、`config`、`header` 与 `body` 基础骨架
+- 集中维护 `wide_screen_mode`、`update_multi` 与 `summary` 默认值
+- 供导航卡、计划表单卡、流式状态卡和桌面 completion 卡复用，保证卡片基础结构一致
 
 ### 5.5 `src/run-worker-manager.ts`
 

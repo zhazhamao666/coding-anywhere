@@ -1,4 +1,6 @@
 import { normalizeMarkdownToPlainText } from "../markdown-text.js";
+import { buildDesktopThreadActionValue } from "./action-contract.js";
+import { buildFeishuCardFrame } from "./frame-builder.js";
 import type { DesktopCompletionCardInput, PlanTodoItem } from "../types.js";
 
 const MAX_CARD_PAYLOAD_BYTES = 30 * 1024;
@@ -124,26 +126,12 @@ function buildCardPayload(input: {
     })),
   });
 
-  return {
-    schema: "2.0",
-    config: {
-      wide_screen_mode: true,
-      update_multi: true,
-      summary: {
-        content: buildCardSummary(input.input, input.progressText).slice(0, 120),
-      },
-    },
-    header: {
-      title: {
-        tag: "plain_text",
-        content: status === "running" ? "桌面任务进行中" : "桌面任务已完成",
-      },
-      template: status === "running" ? "blue" : "green",
-    },
-    body: {
-      elements,
-    },
-  };
+  return buildFeishuCardFrame({
+    title: status === "running" ? "桌面任务进行中" : "桌面任务已完成",
+    template: status === "running" ? "blue" : "green",
+    summary: buildCardSummary(input.input, input.progressText),
+    elements,
+  });
 }
 
 function buildOverviewMarkdown(input: DesktopCompletionCardInput): string {
@@ -239,14 +227,7 @@ function buildActionValue(
   bridgeAction: "continue_desktop_thread" | "view_desktop_thread_history" | "mute_desktop_thread",
   input: Pick<DesktopCompletionCardInput, "threadId" | "mode" | "chatId" | "surfaceType" | "surfaceRef">,
 ): Record<string, unknown> {
-  return {
-    bridgeAction,
-    threadId: input.threadId,
-    mode: input.mode,
-    ...(input.chatId ? { chatId: input.chatId } : {}),
-    ...(input.surfaceType ? { surfaceType: input.surfaceType } : {}),
-    ...(input.surfaceRef ? { surfaceRef: input.surfaceRef } : {}),
-  };
+  return buildDesktopThreadActionValue(bridgeAction, input);
 }
 
 function normalizePlanTodos(items: PlanTodoItem[] | undefined): PlanTodoItem[] | undefined {

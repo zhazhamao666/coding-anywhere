@@ -231,5 +231,10 @@ describe("buildApp", () => {
     expect(ui.body).toContain("/ops/runtime");
     expect(ui.body).toContain("取消");
     expect(ui.body).toContain("Backend Observability");
+    expect(ui.body).toContain('"running":"处理中"');
+    expect(ui.body).toContain('"tool_call":"工具调用"');
+    expect(ui.body).toContain('"queued":"已接收"');
+    expect(ui.body).toContain('"received":"已接收"');
+    expect(ui.body).toContain("默认按最近更新时间倒序");
   });
 });

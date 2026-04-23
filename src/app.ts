@@ -1,6 +1,10 @@
 import Fastify from "fastify";
 
 import { createMetricsRegistry } from "./ops.js";
+import {
+  RUNTIME_STAGE_LABELS,
+  RUNTIME_STATUS_LABELS,
+} from "./runtime-status-labels.js";
 import type {
   ListRunsFilters,
   ObservabilityOverview,
@@ -157,6 +161,8 @@ export function buildApp(options?: {
 }
 
 function buildOpsUiHtml(): string {
+  const statusLabelsJson = JSON.stringify(RUNTIME_STATUS_LABELS);
+  const stageLabelsJson = JSON.stringify(RUNTIME_STAGE_LABELS);
   return `<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -425,12 +431,28 @@ function buildOpsUiHtml(): string {
 
     <script>
       const state = { selectedRunId: null };
+      const STATUS_LABELS = ${statusLabelsJson};
+      const STAGE_LABELS = ${stageLabelsJson};
 
       function statusBadgeClass(status) {
         if (status === "error") return "badge error";
         if (status === "tool_active") return "badge tool_active";
         if (status === "canceling") return "badge canceling";
         return "badge";
+      }
+
+      function formatStatusLabel(status) {
+        if (!status) return "-";
+        return STATUS_LABELS[status] || status;
+      }
+
+      function formatStageLabel(stage) {
+        if (!stage) return "-";
+        return STAGE_LABELS[stage] || stage;
+      }
+
+      function renderStatusPair(status, stage) {
+        return escapeHtml(formatStatusLabel(status)) + " / " + escapeHtml(formatStageLabel(stage));
       }
 
       function escapeHtml(value) {
@@ -499,7 +521,7 @@ function buildOpsUiHtml(): string {
         const activeMarkup = runtime.activeRuns.map(run => \`
           <article class="run">
             <div class="run-top">
-              <span class="\${statusBadgeClass(run.status)}">\${escapeHtml(run.status)} / \${escapeHtml(run.stage)}</span>
+              <span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span>
               <div>
                 <div><strong>\${escapeHtml(run.peerId)}</strong> <span class="subtle">via</span> <code>\${escapeHtml(run.sessionName)}</code></div>
                 <div class="muted-line">project=\${escapeHtml(run.projectId || "-")} | thread=\${escapeHtml(run.threadId || "-")}</div>
@@ -515,9 +537,9 @@ function buildOpsUiHtml(): string {
         const queuedMarkup = runtime.queuedRuns.map(run => \`
           <article class="run">
             <div class="run-top">
-              <span class="\${statusBadgeClass(run.status)}">\${escapeHtml(run.status)} / \${escapeHtml(run.stage)}</span>
+              <span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span>
               <div>
-                <div><strong>\${escapeHtml(run.peerId)}</strong> <span class="subtle">queued</span> <code>\${escapeHtml(run.sessionName)}</code></div>
+                <div><strong>\${escapeHtml(run.peerId)}</strong> <span class="subtle">排队中</span> <code>\${escapeHtml(run.sessionName)}</code></div>
                 <div class="muted-line">project=\${escapeHtml(run.projectId || "-")} | thread=\${escapeHtml(run.threadId || "-")}</div>
                 <div class="muted-line">\${escapeHtml(run.latestPreview)}</div>
               </div>
@@ -546,11 +568,11 @@ function buildOpsUiHtml(): string {
       }
 
       function renderRuns(runs) {
-        document.getElementById("history-meta").textContent = "历史任务共 " + runs.length + " 条，默认按活跃优先";
+        document.getElementById("history-meta").textContent = "历史任务共 " + runs.length + " 条，默认按最近更新时间倒序";
         document.getElementById("runs").innerHTML = '<h2>历史任务</h2>' + runs.map(run => \`
           <article class="run \${state.selectedRunId === run.runId ? "active" : ""}" data-run-id="\${escapeHtml(run.runId)}">
             <div class="run-top">
-              <span class="\${statusBadgeClass(run.status)}">\${escapeHtml(run.status)} / \${escapeHtml(run.stage)}</span>
+              <span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span>
               <div>
                 <div><strong>\${escapeHtml(run.peerId)}</strong> <span class="subtle">via</span> <code>\${escapeHtml(run.sessionName)}</code></div>
                 <div class="muted-line">project=\${escapeHtml(run.projectId || "-")} | thread=\${escapeHtml(run.threadId || "-")}</div>
@@ -577,9 +599,9 @@ function buildOpsUiHtml(): string {
           <div class="session-row">
             <div>
               <div><strong>\${escapeHtml(session.peerId)}</strong> <span class="subtle">/</span> <code>\${escapeHtml(session.sessionName)}</code></div>
-              <div class="muted-line">latest=\${escapeHtml(session.latestRunId || "-")} | stage=\${escapeHtml(session.latestRunStage || "-")}</div>
+              <div class="muted-line">latest=\${escapeHtml(session.latestRunId || "-")} | stage=\${escapeHtml(formatStageLabel(session.latestRunStage))}</div>
             </div>
-            <span class="\${statusBadgeClass(session.latestRunStatus || "queued")}">\${escapeHtml(session.latestRunStatus || "idle")}</span>
+            <span class="\${statusBadgeClass(session.latestRunStatus || "queued")}">\${escapeHtml(formatStatusLabel(session.latestRunStatus || "idle"))}</span>
           </div>
         \`).join("");
       }
@@ -609,7 +631,7 @@ function buildOpsUiHtml(): string {
             <div class="kv"><label>Thread</label><div><code>\${escapeHtml(run.threadId || "-")}</code></div></div>
             <div class="kv"><label>Session</label><div><code>\${escapeHtml(run.sessionName)}</code></div></div>
             <div class="kv"><label>Root</label><div><code>\${escapeHtml(run.rootId)}</code></div></div>
-            <div class="kv"><label>状态</label><div><span class="\${statusBadgeClass(run.status)}">\${escapeHtml(run.status)} / \${escapeHtml(run.stage)}</span></div></div>
+            <div class="kv"><label>状态</label><div><span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span></div></div>
             <div class="kv"><label>最近工具</label><div><code>\${escapeHtml(run.latestTool || "-")}</code></div></div>
             <div class="kv"><label>投递 Chat</label><div><code>\${escapeHtml(run.deliveryChatId || "-")}</code></div></div>
             <div class="kv"><label>投递 Surface</label><div><code>\${escapeHtml(run.deliverySurfaceType || "-")} / \${escapeHtml(run.deliverySurfaceRef || "-")}</code></div></div>
@@ -621,15 +643,15 @@ function buildOpsUiHtml(): string {
             <label>最新预览</label>
             <div>\${escapeHtml(run.latestPreview)}</div>
           </div>
-          <div class="timeline">
-            \${events.map(event => \`
-              <div class="event">
-                <div class="event-top">
-                  <strong>\${escapeHtml(event.seq)}. \${escapeHtml(event.source)} / \${escapeHtml(event.stage)}</strong>
-                  <span class="\${statusBadgeClass(event.status)}">\${escapeHtml(event.status)}</span>
-                </div>
-                <div class="muted-line">\${escapeHtml(event.createdAt)} | tool=\${escapeHtml(event.toolName || "-")}</div>
-                <div>\${escapeHtml(event.preview)}</div>
+            <div class="timeline">
+              \${events.map(event => \`
+                <div class="event">
+                  <div class="event-top">
+                    <strong>\${escapeHtml(event.seq)}. \${escapeHtml(event.source)} / \${escapeHtml(formatStageLabel(event.stage))}</strong>
+                    <span class="\${statusBadgeClass(event.status)}">\${escapeHtml(formatStatusLabel(event.status))}</span>
+                  </div>
+                  <div class="muted-line">\${escapeHtml(event.createdAt)} | tool=\${escapeHtml(event.toolName || "-")}</div>
+                  <div>\${escapeHtml(event.preview)}</div>
               </div>
             \`).join("")}
           </div>
