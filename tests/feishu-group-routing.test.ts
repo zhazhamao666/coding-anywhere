@@ -20,6 +20,7 @@ describe("FeishuAdapter group thread routing", () => {
             channel: string;
             peerId?: string;
             chatId?: string;
+            chatType?: string;
             surfaceType?: string;
             surfaceRef?: string;
             text: string;
@@ -57,6 +58,7 @@ describe("FeishuAdapter group thread routing", () => {
         channel: "feishu",
         peerId: "ou_user",
         chatId: "oc_chat_1",
+        chatType: "group",
         surfaceType: "thread",
         surfaceRef: "omt_thread_1",
         text: "@bot continue",
@@ -100,6 +102,7 @@ describe("FeishuAdapter group thread routing", () => {
         channel: "feishu",
         peerId: "ou_user",
         chatId: "oc_chat_1",
+        chatType: "group",
         text: "/ca project bind-current proj-a coding-anywhere Demo Project",
       },
       {

@@ -18,23 +18,25 @@ const DEFAULT_REASONING_OPTIONS: CodexReasoningEffort[] = [
 ];
 const DEFAULT_SPEED_OPTIONS: CodexSpeed[] = ["standard", "fast"];
 const COMMON_MODEL_OPTIONS = [
+  "gpt-5.5",
   "gpt-5.4",
-  "gpt-5.2-codex",
-  "gpt-5.1-codex-max",
   "gpt-5.4-mini",
   "gpt-5.3-codex",
   "gpt-5.3-codex-spark",
+  "gpt-5.2-codex",
   "gpt-5.2",
+  "gpt-5.1-codex-max",
   "gpt-5.1-codex-mini",
 ];
 const MODEL_LABELS: Record<string, string> = {
+  "gpt-5.5": "GPT-5.5",
   "gpt-5.4": "GPT-5.4",
-  "gpt-5.2-codex": "GPT-5.2-Codex",
-  "gpt-5.1-codex-max": "GPT-5.1-Codex-Max",
   "gpt-5.4-mini": "GPT-5.4-Mini",
   "gpt-5.3-codex": "GPT-5.3-Codex",
   "gpt-5.3-codex-spark": "GPT-5.3-Codex-Spark",
+  "gpt-5.2-codex": "GPT-5.2-Codex",
   "gpt-5.2": "GPT-5.2",
+  "gpt-5.1-codex-max": "GPT-5.1-Codex-Max",
   "gpt-5.1-codex-mini": "GPT-5.1-Codex-Mini",
 };
 const REASONING_LABELS: Record<CodexReasoningEffort, string> = {
@@ -74,7 +76,7 @@ export function resolveCodexPreferenceCatalog(
 ): CodexPreferenceCatalog {
   const discovered = loadGlobalCodexPreferenceHints(options?.codexHomePath);
   const defaultModel =
-    normalizeString(codexConfig.defaultModel) ??
+    normalizeCodexModel(codexConfig.defaultModel) ??
     discovered.defaultModel ??
     DEFAULT_MODEL;
   const defaultReasoningEffort =
@@ -140,11 +142,11 @@ function loadGlobalCodexPreferenceHints(codexHomePath = resolveCodexHomePath()):
       const parsed = parse(readFileSync(configPath, "utf8")) as RawCodexConfig;
       const profiles = Object.values(parsed.profiles ?? {});
       discoveredFromConfig = {
-        defaultModel: normalizeString(parsed.model),
+        defaultModel: normalizeCodexModel(parsed.model),
         defaultReasoningEffort: normalizeReasoningEffort(parsed.model_reasoning_effort),
         defaultSpeed: normalizeCodexCliServiceTier(parsed.service_tier),
         modelOptions: profiles
-          .map(profile => normalizeString(profile.model))
+          .map(profile => normalizeCodexModel(profile.model))
           .filter((value): value is string => Boolean(value)),
         reasoningEffortOptions: profiles
           .map(profile => normalizeReasoningEffort(profile.model_reasoning_effort))
@@ -188,7 +190,14 @@ function normalizeString(value: unknown): string | undefined {
 }
 
 export function normalizeCodexModel(value: unknown): string | undefined {
-  return normalizeString(value);
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized.toLowerCase().startsWith("gpt-")
+    ? normalized.toLowerCase()
+    : normalized;
 }
 
 export function normalizeReasoningEffort(value: unknown): CodexReasoningEffort | undefined {
@@ -218,7 +227,8 @@ export function normalizeCodexSpeed(value: unknown): CodexSpeed | undefined {
 }
 
 export function getCodexModelLabel(model: string): string {
-  return MODEL_LABELS[model] ?? model;
+  const normalized = normalizeCodexModel(model) ?? model;
+  return MODEL_LABELS[normalized] ?? formatCodexModelLabel(normalized);
 }
 
 export function getCodexReasoningLabel(reasoningEffort: CodexReasoningEffort): string {
@@ -234,7 +244,7 @@ export function getFallbackCodexPreferenceCatalog(): CodexPreferenceCatalog {
     defaultModel: DEFAULT_MODEL,
     defaultReasoningEffort: DEFAULT_REASONING_EFFORT,
     defaultSpeed: DEFAULT_SPEED,
-    modelOptions: [...COMMON_MODEL_OPTIONS],
+    modelOptions: orderCodexModels([...COMMON_MODEL_OPTIONS]),
     reasoningEffortOptions: [...DEFAULT_REASONING_OPTIONS],
     speedOptions: [...DEFAULT_SPEED_OPTIONS],
   };
@@ -244,7 +254,7 @@ function uniqueStrings(values: string[]): string[] {
   const seen = new Set<string>();
   const normalized: string[] = [];
   for (const value of values) {
-    const trimmed = value.trim();
+    const trimmed = normalizeCodexModel(value);
     if (!trimmed || seen.has(trimmed)) {
       continue;
     }
@@ -285,19 +295,128 @@ function uniqueCodexSpeeds(values: Array<CodexSpeed | string>): CodexSpeed[] {
 function orderCodexModels(values: string[]): string[] {
   const preferred = new Map(COMMON_MODEL_OPTIONS.map((value, index) => [value, index]));
   return [...values].sort((left, right) => {
-    const leftPreferred = preferred.get(left);
-    const rightPreferred = preferred.get(right);
-    if (leftPreferred !== undefined && rightPreferred !== undefined) {
+    const leftRank = getCodexModelSortRank(left);
+    const rightRank = getCodexModelSortRank(right);
+    if (leftRank.family !== rightRank.family) {
+      return leftRank.family - rightRank.family;
+    }
+
+    for (let index = 0; index < Math.max(leftRank.version.length, rightRank.version.length); index += 1) {
+      const leftPart = leftRank.version[index] ?? 0;
+      const rightPart = rightRank.version[index] ?? 0;
+      if (leftPart !== rightPart) {
+        return rightPart - leftPart;
+      }
+    }
+
+    if (leftRank.variant !== rightRank.variant) {
+      return leftRank.variant - rightRank.variant;
+    }
+
+    const leftPreferred = preferred.get(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightPreferred = preferred.get(right) ?? Number.MAX_SAFE_INTEGER;
+    if (leftPreferred !== rightPreferred) {
       return leftPreferred - rightPreferred;
     }
-    if (leftPreferred !== undefined) {
-      return -1;
-    }
-    if (rightPreferred !== undefined) {
-      return 1;
-    }
+
     return left.localeCompare(right);
   });
+}
+
+function getCodexModelSortRank(model: string): {
+  family: number;
+  version: number[];
+  variant: number;
+} {
+  const normalized = normalizeCodexModel(model) ?? model;
+  const gptMatch = /^gpt-(\d+(?:\.\d+)*)(?:-(.+))?$/i.exec(normalized);
+  if (gptMatch) {
+    return {
+      family: 0,
+      version: parseModelVersion(gptMatch[1]),
+      variant: getGptVariantRank(gptMatch[2]),
+    };
+  }
+
+  return {
+    family: normalized.toLowerCase().startsWith("codex-") ? 1 : 2,
+    version: [],
+    variant: 0,
+  };
+}
+
+function parseModelVersion(version: string | undefined): number[] {
+  return (version ?? "")
+    .split(".")
+    .map(part => Number.parseInt(part, 10))
+    .map(part => Number.isFinite(part) ? part : 0);
+}
+
+function getGptVariantRank(suffix: string | undefined): number {
+  const normalized = suffix?.toLowerCase() ?? "";
+  if (normalized === "codex-max") {
+    return 0;
+  }
+  if (normalized === "codex") {
+    return 1;
+  }
+  if (normalized === "" || normalized === "pro") {
+    return 2;
+  }
+  if (normalized.includes("spark")) {
+    return 3;
+  }
+  if (normalized.includes("mini") || normalized.includes("nano")) {
+    return 4;
+  }
+  return 10;
+}
+
+function formatCodexModelLabel(model: string): string {
+  const gptMatch = /^gpt-(\d+(?:\.\d+)*)(?:-(.+))?$/i.exec(model);
+  if (gptMatch) {
+    const suffix = gptMatch[2]
+      ? `-${formatModelSuffix(gptMatch[2])}`
+      : "";
+    return `GPT-${gptMatch[1]}${suffix}`;
+  }
+
+  const codexMatch = /^codex-(.+)$/i.exec(model);
+  if (codexMatch) {
+    return `Codex-${formatModelSuffix(codexMatch[1])}`;
+  }
+
+  return model;
+}
+
+function formatModelSuffix(suffix: string): string {
+  return suffix
+    .split("-")
+    .map(formatModelSuffixToken)
+    .join("-");
+}
+
+function formatModelSuffixToken(token: string): string {
+  const lower = token.toLowerCase();
+  const known: Record<string, string> = {
+    chat: "Chat",
+    codex: "Codex",
+    latest: "Latest",
+    max: "Max",
+    mini: "Mini",
+    minimax: "MiniMax",
+    nano: "Nano",
+    pro: "Pro",
+    spark: "Spark",
+  };
+
+  if (known[lower]) {
+    return known[lower];
+  }
+  if (/^[a-z]*\d/i.test(token)) {
+    return token.toUpperCase();
+  }
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
 function orderReasoningEfforts(values: CodexReasoningEffort[]): CodexReasoningEffort[] {

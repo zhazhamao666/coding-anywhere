@@ -123,6 +123,7 @@
 93. `feishu.allowlist` 现在已经改成可选配置：缺省或空数组时不做用户白名单校验；只有显式配置了非空 `open_id` 列表后，飞书消息入口才会按用户放行，`doctor` 也只会在列表里仍残留 `ou_xxx` 这类占位值时给出阻塞提示
 94. 飞书卡片按钮现在会显式携带 surface 的 `chatType` 上下文；DM 卡片即使在回调 payload 里带了 `open_chat_id` / `chatId`，bridge 也仍会把它识别成 DM，而不是误判成项目群主时间线
 95. 因此，DM 中的 `/ca`、`/ca help`、未知子命令回退、`项目列表`、`计划模式`、模型/推理/速度下拉，以及 `在飞书继续` 后的新稳定态卡，都会继续沿用 DM 的会话语义：不会再冒出“当前群”“绑定到本群”这类群聊专用文案，也不会把 DM 的 surface 交互状态和设置偏好错误写成群聊键
+96. Codex 模型下拉现在不再依赖脆弱的手工白名单顺序：GPT 家族模型会被归一化为小写 CLI ID、在飞书里统一显示为 `GPT-*`，并按数值版本倒序排列；同版本再按 Codex / Base / Spark / Mini 等变体排序，非 GPT 自定义模型保留原始 ID 并排在 GPT 家族之后
 
 ### 2.3 当前仍未打通的部分
 
@@ -875,7 +876,8 @@ channel + peer_id -> codex_thread_id
 - `codex.defaultSpeed`
   - 飞书侧在没有线程级 / surface 级偏好时展示和回退使用的默认速度；当前 bridge 会使用 `standard | fast` 这组用户语义值
 - `codex.modelOptions`
-  - `/ca session`、`/ca status` 和具体对话卡模型下拉框的候选项；若未配置，会结合本机 `~/.codex/config.toml` 与内置常见模型做兜底，并按 Codex App 顺序展示
+  - `/ca session`、`/ca status` 和具体对话卡模型下拉框的候选项；若未配置，会结合本机 `~/.codex/config.toml` 与内置常见模型做兜底
+  - GPT 家族 ID 会大小写归一为 CLI 使用的小写形式，展示时统一格式化为 `GPT-*`，排序按数值版本倒序，同版本再按 Codex / Base / Spark / Mini 等变体稳定排列；非 GPT 自定义模型保留原始 ID 并排在 GPT 家族之后
 - `codex.reasoningEffortOptions`
   - `/ca session`、`/ca status` 和具体对话卡推理下拉框的候选项；若未配置，会结合本机 `~/.codex/config.toml` 与内置 `low ~ xhigh` 做兜底，并按 Codex App 文案展示
 - `codex.speedOptions`
@@ -1109,14 +1111,15 @@ channel + peer_id -> codex_thread_id
 11. `tests/codex-cli-runner.test.ts` 现在会直接回放 `plan-mode.jsonl` 与 `sub-agent.jsonl`，校验 native 计划事件和子代理生命周期事件是否被归一化成正确的 runner 事件
 12. `tests/bridge-real-codex.test.ts` 现在也会用同一批 fixture 校验 bridge 层的等待态、工具调用观测和最终回复，不要求额外真实 Codex 调用
 13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式单次开关、诊断卡切换、todo list 展示、待回答计划选择题，以及续跑同一 native thread 的桥接链路
-14. `tests/codex-desktop-completion-observer.test.ts` 与 `tests/codex-desktop-lifecycle-observer.test.ts` 会分别锁定 completion 兼容层和完整 lifecycle observer：既覆盖 offset 读取、`task_complete` 检测、最终 assistant 正文提取和稳定 `completionKey`，也覆盖 `task_started` / `agent_message` / `update_plan` / `shell_command` 组合下的公开进度快照、稳定 `runKey` 和跨轮询累计命令计数
-15. `tests/desktop-completion-routing.test.ts` 会用本地 SQLite store + 小型 catalog double 校验桌面 completion 的本地投递目标解析：同一 native thread 有多个话题绑定时会选择首选绑定；项目群 fallback 会先看精确 `projectKey`，再看唯一 cwd 命中；cwd 命中多个项目时不会猜测，而是退回 DM 或明确报出 DM owner 歧义错误
-16. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面生命周期卡在运行中 / 已完成两态下的字段顺序、按钮、计划清单和 payload 预算行为：运行态必须先显示“你最后说了什么”再显示当前情况，完成态则必须先显示提醒区、再显示直接内嵌的最终正文，而且不能再冒出独立的 `进度 / Ran N commands` 区块
-17. `tests/config.test.ts`、`tests/doctor.test.ts` 与 `tests/feishu-adapter.test.ts` 现在会额外锁定飞书 allowlist 的新语义：缺省 allowlist 会回退为空数组、`doctor` 不再把“未配置 allowlist”视为阻塞，而空 allowlist 下的消息也能正常进入 bridge
-17. `tests/desktop-completion-notifier.test.ts` 会校验桌面 lifecycle 投递器在 DM / 已绑定话题 / 项目群三种目标下的运行态卡创建、完成态原卡 patch、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及完成态正文直接内嵌在同一张卡里而不是额外补发第二条结果消息
-18. `tests/desktop-completion-dm-handoff.test.ts` 会用真实 `BridgeService` + `FeishuCardActionService` harness 校验 DM 通知卡主按钮 `continue_desktop_thread`：点击后会把 DM 绑定到目标 native thread、回调直接返回标准“当前会话”卡，且下一条普通 DM 文本会续跑同一线程
-19. `tests/runtime-desktop-completion-notifier.test.ts` 会校验 runtime 启动后真的开始轮询本地 rollout：首次 bootstrap watch state 时不会回放历史 run / completion，新的顶层 desktop run 会先创建一张运行态卡、在公开进展变化时 patch，并在真正 `task_complete` 后原地收口为完成态；如果旧 completion 之后又继续出现同一轮顶层公开进展，就必须优先维持进行中态；unchanged `completionKey` 不会重复推送，`sourceInfo.kind = subagent` 的子线程不会触发生命周期通知，近期飞书终态 run 对应的 desktop 回声也不会再额外发卡
-20. `tests/codex-app-directive.test.ts`、`tests/feishu-assistant-message.test.ts` 与 `tests/feishu-adapter.test.ts` 会共同锁定飞书 assistant 最终结果里的 Codex app git directive 渲染：顶层 `::git-*` 行必须被隐藏，Feishu-visible 结果应保留自然语言结论，并在可解析时补上一条 `N 个文件已更改` 的紧凑摘要，同时不暴露文件名或 `+/-` 统计
+14. `tests/codex-preferences.test.ts` 会锁定 Codex 模型候选项规则：GPT 家族按数值版本倒序、大小写统一显示为 `GPT-*`，并能把本机 Codex config / profile 中大小写混杂的模型 ID 去重归一
+15. `tests/codex-desktop-completion-observer.test.ts` 与 `tests/codex-desktop-lifecycle-observer.test.ts` 会分别锁定 completion 兼容层和完整 lifecycle observer：既覆盖 offset 读取、`task_complete` 检测、最终 assistant 正文提取和稳定 `completionKey`，也覆盖 `task_started` / `agent_message` / `update_plan` / `shell_command` 组合下的公开进度快照、稳定 `runKey` 和跨轮询累计命令计数
+16. `tests/desktop-completion-routing.test.ts` 会用本地 SQLite store + 小型 catalog double 校验桌面 completion 的本地投递目标解析：同一 native thread 有多个话题绑定时会选择首选绑定；项目群 fallback 会先看精确 `projectKey`，再看唯一 cwd 命中；cwd 命中多个项目时不会猜测，而是退回 DM 或明确报出 DM owner 歧义错误
+17. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面生命周期卡在运行中 / 已完成两态下的字段顺序、按钮、计划清单和 payload 预算行为：运行态必须先显示“你最后说了什么”再显示当前情况，完成态则必须先显示提醒区、再显示直接内嵌的最终正文，而且不能再冒出独立的 `进度 / Ran N commands` 区块
+18. `tests/config.test.ts`、`tests/doctor.test.ts` 与 `tests/feishu-adapter.test.ts` 现在会额外锁定飞书 allowlist 的新语义：缺省 allowlist 会回退为空数组、`doctor` 不再把“未配置 allowlist”视为阻塞，而空 allowlist 下的消息也能正常进入 bridge
+19. `tests/desktop-completion-notifier.test.ts` 会校验桌面 lifecycle 投递器在 DM / 已绑定话题 / 项目群三种目标下的运行态卡创建、完成态原卡 patch、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及完成态正文直接内嵌在同一张卡里而不是额外补发第二条结果消息
+20. `tests/desktop-completion-dm-handoff.test.ts` 会用真实 `BridgeService` + `FeishuCardActionService` harness 校验 DM 通知卡主按钮 `continue_desktop_thread`：点击后会把 DM 绑定到目标 native thread、回调直接返回标准“当前会话”卡，且下一条普通 DM 文本会续跑同一线程
+21. `tests/runtime-desktop-completion-notifier.test.ts` 会校验 runtime 启动后真的开始轮询本地 rollout：首次 bootstrap watch state 时不会回放历史 run / completion，新的顶层 desktop run 会先创建一张运行态卡、在公开进展变化时 patch，并在真正 `task_complete` 后原地收口为完成态；如果旧 completion 之后又继续出现同一轮顶层公开进展，就必须优先维持进行中态；unchanged `completionKey` 不会重复推送，`sourceInfo.kind = subagent` 的子线程不会触发生命周期通知，近期飞书终态 run 对应的 desktop 回声也不会再额外发卡
+22. `tests/codex-app-directive.test.ts`、`tests/feishu-assistant-message.test.ts` 与 `tests/feishu-adapter.test.ts` 会共同锁定飞书 assistant 最终结果里的 Codex app git directive 渲染：顶层 `::git-*` 行必须被隐藏，Feishu-visible 结果应保留自然语言结论，并在可解析时补上一条 `N 个文件已更改` 的紧凑摘要，同时不暴露文件名或 `+/-` 统计
 
 这组测试默认会跳过真实 Codex 调用，并通过临时工作区自动清理现场。
 

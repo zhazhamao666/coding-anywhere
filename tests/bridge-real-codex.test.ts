@@ -421,17 +421,18 @@ describe("BridgeService real runner bridge coverage", () => {
       status: "done",
       stage: "done",
     });
-    expect(observabilityStore.listRunEvents(runs[0].runId)).toEqual(
+    const runEvents = observabilityStore.listRunEvents(runs[0].runId);
+    expect(runEvents).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           stage: "tool_call",
-          toolName: "spawn_agent",
-          preview: "[ca] tool_call: spawn_agent",
+          toolName: "command_execution",
+          preview: "Ran 1 command",
         }),
         expect.objectContaining({
           stage: "tool_call",
-          toolName: "wait",
-          preview: "[ca] tool_call: wait",
+          toolName: "collab_tool_call",
+          preview: "Ran 2 commands",
         }),
         expect.objectContaining({
           stage: "done",
@@ -439,6 +440,8 @@ describe("BridgeService real runner bridge coverage", () => {
         }),
       ]),
     );
+    expect(JSON.stringify(runEvents)).not.toContain("[ca] tool_call: spawn_agent");
+    expect(JSON.stringify(runEvents)).not.toContain("[ca] tool_call: wait");
   });
 });
 

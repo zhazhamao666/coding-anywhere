@@ -50,11 +50,10 @@ describe("DM Codex browser", () => {
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({ kind: "card" });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("项目列表");
+    expect(cardText).toContain("选择项目");
     expect(cardText).toContain("Alpha");
-    expect(cardText).toContain("/ca project threads project-alpha");
     expect(cardText).toContain("/ca project switch project-alpha");
-    expect(cardText).toContain("切换项目");
+    expect(cardText).toContain("进入项目");
   });
 
   it("switches the current DM project without immediately binding a thread", async () => {
@@ -177,7 +176,7 @@ describe("DM Codex browser", () => {
       text: "/ca thread list-current",
     });
     const threadCardText = JSON.stringify((threadReplies[0] as { card: Record<string, unknown> }).card);
-    expect(threadCardText).toContain("线程列表");
+    expect(threadCardText).toContain("选择线程");
     expect(threadCardText).toContain("Alpha follow-up");
     expect(threadCardText).toContain("thread-alpha-1");
   });
@@ -240,9 +239,10 @@ describe("DM Codex browser", () => {
     expect(switchReplies).toHaveLength(1);
     expect(switchReplies[0]).toMatchObject({ kind: "card" });
     const switchCardText = JSON.stringify((switchReplies[0] as { card: Record<string, unknown> }).card);
-    expect(switchCardText).toContain("线程已切换");
-    expect(switchCardText).toContain("thread-alpha-2");
-    expect(switchCardText).toContain("最近对话");
+    expect(switchCardText).toContain("当前会话已就绪");
+    expect(switchCardText).toContain("Alpha follow-up");
+    expect(switchCardText).toContain("最近上下文");
+    expect(switchCardText).not.toContain("thread-alpha-2");
     expect(switchCardText).toContain("最后一条用户消息，包含完整的长文本，不应该被截断。最后一条用户消息，包含完整的长文本，不应该被截断。最后一条用户消息，包含完整的长文本，不应该被截断。");
     expect(switchCardText).toContain("第二条应展示的助手回复");
     expect(switchCardText).toContain("第三条应展示的助手回复");
@@ -306,7 +306,7 @@ describe("DM Codex browser", () => {
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({ kind: "card" });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("线程列表");
+    expect(cardText).toContain("选择线程");
     expect(cardText).toContain("Alpha follow-up");
     expect(cardText).toContain("thread-alpha-1");
     expect(cardText).toContain("/ca thread switch thread-alpha-1");
@@ -334,10 +334,10 @@ describe("DM Codex browser", () => {
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({ kind: "card" });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("当前会话");
-    expect(cardText).toContain("thread-alpha-2");
+    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).not.toContain("thread-alpha-2");
     expect(cardText).toContain("Alpha follow-up");
-    expect(cardText).toContain("最近对话");
+    expect(cardText).toContain("最近上下文");
     expect(cardText).toContain("最后一条用户消息，包含完整的长文本，不应该被截断。最后一条用户消息，包含完整的长文本，不应该被截断。最后一条用户消息，包含完整的长文本，不应该被截断。");
     expect(cardText).toContain("第二条应展示的助手回复");
     expect(cardText).toContain("第三条应展示的助手回复");
