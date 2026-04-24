@@ -568,6 +568,105 @@ describe("CodexCliRunner", () => {
     )).rejects.toThrow("fatal: model profile missing");
   });
 
+  it("parses current codex event_msg output into assistant text and done events", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
+    const child = createChildFromLines([
+      { type: "event_msg", payload: { type: "task_started", turn_id: "turn-demo" } },
+      {
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "shell_command",
+          call_id: "call-demo",
+        },
+      },
+      {
+        type: "event_msg",
+        payload: {
+          type: "agent_message",
+          message: "新版 JSONL 输出已完成。",
+          phase: "final_answer",
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "新版 JSONL 输出已完成。" }],
+        },
+      },
+      {
+        type: "event_msg",
+        payload: {
+          type: "task_complete",
+          turn_id: "turn-demo",
+          last_agent_message: "新版 JSONL 输出已完成。",
+        },
+      },
+    ], 0);
+    execaMock.mockReturnValue(child);
+
+    const runner = new CodexCliRunner("codex");
+    const seenEvents: unknown[] = [];
+
+    const outcome = await runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "test",
+      event => {
+        seenEvents.push(event);
+      },
+    );
+
+    expect(seenEvents).toEqual([
+      { type: "tool_call", toolName: "shell_command", content: "shell_command" },
+      { type: "text", content: "新版 JSONL 输出已完成。", planInteraction: undefined },
+      { type: "done", content: "新版 JSONL 输出已完成。" },
+    ]);
+    expect(outcome.events).toEqual(seenEvents);
+  });
+
+  it("reports current codex task_complete without assistant output instead of RUN_STREAM_FAILED", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "D:/repo",
+      stderr: "",
+    });
+    const child = createChildFromLines([
+      { type: "event_msg", payload: { type: "task_started", turn_id: "turn-demo" } },
+      {
+        type: "event_msg",
+        payload: {
+          type: "task_complete",
+          turn_id: "turn-demo",
+          last_agent_message: null,
+        },
+      },
+    ], 1);
+    execaMock.mockReturnValue(child);
+
+    const runner = new CodexCliRunner("codex");
+
+    await expect(runner.submitVerbatim(
+      {
+        targetKind: "codex_thread",
+        threadId: "thread-demo",
+        sessionName: "thread-demo",
+        cwd: "D:/repo",
+      },
+      "test",
+    )).rejects.toThrow("CODEX_RUN_NO_ASSISTANT_OUTPUT");
+  });
+
   it("surfaces native plan-mode todo items as waiting progress and still completes", async () => {
     execaMock.mockResolvedValueOnce({
       exitCode: 0,
@@ -759,6 +858,18 @@ function createChildFromFixture(fileName: string, exitCode: number) {
     }),
     {
       stdout: Readable.from(lines),
+    },
+  );
+}
+
+function createChildFromLines(lines: unknown[], exitCode: number) {
+  return Object.assign(
+    Promise.resolve({
+      exitCode,
+      stderr: "",
+    }),
+    {
+      stdout: Readable.from(lines.map(line => `${JSON.stringify(line)}\n`)),
     },
   );
 }

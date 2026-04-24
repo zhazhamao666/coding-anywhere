@@ -124,6 +124,7 @@
 94. 飞书卡片按钮现在会显式携带 surface 的 `chatType` 上下文；DM 卡片即使在回调 payload 里带了 `open_chat_id` / `chatId`，bridge 也仍会把它识别成 DM，而不是误判成项目群主时间线
 95. 因此，DM 中的 `/ca`、`/ca help`、未知子命令回退、`项目列表`、`计划模式`、模型/推理/速度下拉，以及 `在飞书继续` 后的新稳定态卡，都会继续沿用 DM 的会话语义：不会再冒出“当前群”“绑定到本群”这类群聊专用文案，也不会把 DM 的 surface 交互状态和设置偏好错误写成群聊键
 96. Codex 模型下拉现在不再依赖脆弱的手工白名单顺序：GPT 家族模型会被归一化为小写 CLI ID、在飞书里统一显示为 `GPT-*`，并按数值版本倒序排列；同版本再按 Codex / Base / Spark / Mini 等变体排序，非 GPT 自定义模型保留原始 ID 并排在 GPT 家族之后
+97. `CodexCliRunner` 现在同时兼容旧版 `item.*` JSONL 和新版 `event_msg` / `response_item` JSONL：可以从 `agent_message`、assistant `message` 和 `task_complete.last_agent_message` 提取最终正文，识别 `function_call` / `exec_command_end` 进度；当 Codex 进程非 0 退出且只留下 `task_complete(last_agent_message:null)` 时，会返回明确的 `CODEX_RUN_NO_ASSISTANT_OUTPUT`，不再把这类新版协议空输出误报成笼统的 `RUN_STREAM_FAILED`
 
 ### 2.3 当前仍未打通的部分
 
@@ -1108,7 +1109,7 @@ channel + peer_id -> codex_thread_id
 8. 桥级集成验证现在覆盖了 `tests/bridge-real-codex.test.ts`，默认通过真实 `BridgeService` + `CodexCliRunner` 配合 transcript 夹具回放，不依赖真实 Feishu 或真实 Codex 调用
 9. `npm run doctor` 现在还会提示真实 Codex smoke 的前提条件，包括 `~/.codex/auth.json` 认证状态，以及这类测试默认是显式 opt-in、带真实调用成本的
 10. 针对 Codex 原生计划行为和子代理行为的扩展测试，会优先使用一次性真实 JSONL 录制生成的 fixture，再回到默认的 transcript 驱动回归，不把这类高成本调用放进常规测试路径
-11. `tests/codex-cli-runner.test.ts` 现在会直接回放 `plan-mode.jsonl` 与 `sub-agent.jsonl`，校验 native 计划事件和子代理生命周期事件是否被归一化成正确的 runner 事件
+11. `tests/codex-cli-runner.test.ts` 现在会直接回放 `plan-mode.jsonl` 与 `sub-agent.jsonl`，校验 native 计划事件和子代理生命周期事件是否被归一化成正确的 runner 事件；同时覆盖新版 `event_msg` / `response_item` JSONL、重复 assistant 文本去重，以及 `task_complete(last_agent_message:null)` 非 0 退出时的明确错误诊断
 12. `tests/bridge-real-codex.test.ts` 现在也会用同一批 fixture 校验 bridge 层的等待态、工具调用观测和最终回复，不要求额外真实 Codex 调用
 13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式单次开关、诊断卡切换、todo list 展示、待回答计划选择题，以及续跑同一 native thread 的桥接链路
 14. `tests/codex-preferences.test.ts` 会锁定 Codex 模型候选项规则：GPT 家族按数值版本倒序、大小写统一显示为 `GPT-*`，并能把本机 Codex config / profile 中大小写混杂的模型 ID 去重归一

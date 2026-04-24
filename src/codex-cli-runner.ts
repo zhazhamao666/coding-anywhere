@@ -197,7 +197,11 @@ export class CodexCliRunner {
         throw new RunCanceledError();
       }
       if (result.exitCode !== 0 && !events.some(event => event.type === "error")) {
-        throw new Error(extractCodexExecFailure(result.stderr) ?? "RUN_STREAM_FAILED");
+        throw new Error(
+          extractCodexExecFailure(result.stderr) ??
+          extractCodexExecEventFailure(events, result.exitCode) ??
+          "RUN_STREAM_FAILED",
+        );
       }
 
       return {
@@ -357,8 +361,10 @@ async function flushCodexExecBuffer(input: {
     if (parsed.event) {
       const coalesced = coalesceCodexExecEvent(parsed.event, nextAssistantText);
       nextAssistantText = coalesced.assistantText;
-      input.events.push(coalesced.event);
-      await onRunnerEvent(input.onEvent, coalesced.event);
+      if (shouldEmitCodexEvent(input.events, coalesced.event)) {
+        input.events.push(coalesced.event);
+        await onRunnerEvent(input.onEvent, coalesced.event);
+      }
     }
   }
 
@@ -371,8 +377,10 @@ async function flushCodexExecBuffer(input: {
         if (parsed.event) {
           const coalesced = coalesceCodexExecEvent(parsed.event, nextAssistantText);
           nextAssistantText = coalesced.assistantText;
-          input.events.push(coalesced.event);
-          await onRunnerEvent(input.onEvent, coalesced.event);
+          if (shouldEmitCodexEvent(input.events, coalesced.event)) {
+            input.events.push(coalesced.event);
+            await onRunnerEvent(input.onEvent, coalesced.event);
+          }
         }
       }
       remainingBuffer = "";
@@ -398,6 +406,14 @@ function parseCodexExecLine(line: string): { event?: RunnerEvent; threadId?: str
     return {
       threadId: parsed.thread_id,
     };
+  }
+
+  if (parsed?.type === "event_msg") {
+    return parseCodexEventMessage(parsed.payload);
+  }
+
+  if (parsed?.type === "response_item") {
+    return parseCodexResponseItem(parsed.payload);
   }
 
   switch (parsed?.type) {
@@ -461,6 +477,106 @@ function parseCodexExecLine(line: string): { event?: RunnerEvent; threadId?: str
     default:
       return undefined;
   }
+}
+
+function parseCodexEventMessage(payload: any): { event?: RunnerEvent; threadId?: string } | undefined {
+  switch (payload?.type) {
+    case "agent_message":
+      return parseAssistantTextEvent(payload.message);
+    case "task_complete":
+      return {
+        event: {
+          type: "done",
+          content: normalizeOptionalText(payload.last_agent_message),
+        },
+      };
+    case "exec_command_end":
+      if (typeof payload.exit_code === "number" && payload.exit_code !== 0) {
+        return {
+          event: {
+            type: "error",
+            content: normalizeOptionalText(payload.aggregated_output) ??
+              normalizeOptionalText(payload.stderr) ??
+              "command_execution failed",
+          },
+        };
+      }
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
+function parseCodexResponseItem(payload: any): { event?: RunnerEvent; threadId?: string } | undefined {
+  if (payload?.type === "function_call") {
+    const toolName = normalizeOptionalText(payload.name) ?? "function_call";
+    return {
+      event: {
+        type: "tool_call",
+        toolName,
+        content: toolName,
+      },
+    };
+  }
+
+  if (payload?.type === "message" && payload.role === "assistant") {
+    return parseAssistantTextEvent(extractResponseMessageText(payload.content));
+  }
+
+  return undefined;
+}
+
+function parseAssistantTextEvent(text: unknown): { event?: RunnerEvent; threadId?: string } | undefined {
+  const content = normalizeOptionalText(text);
+  if (!content) {
+    return undefined;
+  }
+
+  const extracted = extractBridgePlanInteraction(content);
+  return {
+    event: {
+      type: "text",
+      content: extracted.content || extracted.planInteraction?.question || "",
+      planInteraction: extracted.planInteraction,
+    },
+  };
+}
+
+function extractResponseMessageText(content: unknown): string | undefined {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+
+  const parts = content
+    .map(part => {
+      if (typeof part?.text === "string") {
+        return part.text;
+      }
+      if (typeof part?.content === "string") {
+        return part.content;
+      }
+      return "";
+    })
+    .filter(part => part.length > 0);
+
+  return parts.length > 0 ? parts.join("") : undefined;
+}
+
+function normalizeOptionalText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function shouldEmitCodexEvent(events: RunnerEvent[], event: RunnerEvent): boolean {
+  if (event.type !== "text") {
+    return true;
+  }
+
+  const previousText = [...events].reverse().find(existing => existing.type === "text");
+  return previousText?.content !== event.content;
 }
 
 function formatTodoList(items: any): string | undefined {
@@ -598,6 +714,26 @@ function extractCodexExecFailure(stderr: unknown): string | undefined {
     .filter(line => line.length > 0);
 
   return normalized[0];
+}
+
+function extractCodexExecEventFailure(events: RunnerEvent[], exitCode: number | undefined): string | undefined {
+  if (events.length === 0) {
+    return undefined;
+  }
+
+  const hasAssistantOutput = events.some(event =>
+    (event.type === "text" || event.type === "done") &&
+    typeof event.content === "string" &&
+    event.content.trim().length > 0,
+  );
+  const hasTaskCompletion = events.some(event => event.type === "done");
+  const resolvedExitCode = typeof exitCode === "number" ? exitCode : "unknown";
+
+  if (hasTaskCompletion && !hasAssistantOutput) {
+    return `CODEX_RUN_NO_ASSISTANT_OUTPUT: Codex exited without an assistant message (exit code ${resolvedExitCode})`;
+  }
+
+  return `CODEX_RUN_EXITED_${resolvedExitCode}`;
 }
 
 function extractGitRepositoryError(stderr: unknown): string | undefined {
