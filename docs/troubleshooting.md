@@ -226,6 +226,56 @@ http://127.0.0.1:3000/ops/threads/<thread-id>
 - 保持飞书后台与 `config.toml` 的加密配置一致
 - 修改后重启服务，再重新发送 `/ca`
 
+## 现象 12：飞书里回复 `[ca] error: RUN_STREAM_FAILED`
+
+最可能原因：
+
+- Codex CLI 子进程非 0 退出，但 stderr 没有给出可读错误
+- bridge 版本太旧，未识别当前 Codex CLI 的新版 `event_msg` / `response_item` JSONL 输出
+- 桌面端创建 thread 的 Codex 版本和部署机全局 `codex` CLI 版本差距过大
+
+检查方法：
+
+- 先看 `/ops/runs/<run-id>` 中的 `error_text`、`latest_preview` 和事件时间线
+- 查对应 native thread 的 rollout，确认是否有 `task_complete`、`last_agent_message`、`agent_message` 或 `response_item`
+- 在部署机执行：
+
+```bash
+codex --version
+```
+
+处理动作：
+
+- 先升级到包含新版 JSONL 解析的 bridge 版本
+- 尽量让桌面端 Codex 与部署机全局 `codex` CLI 版本保持接近
+- 如果升级后错误变成 `CODEX_RUN_NO_ASSISTANT_OUTPUT`，说明 bridge 已经正确识别到 Codex turn 结束但没有 assistant 输出，继续按“现象 13”排查
+
+## 现象 13：飞书里回复 `CODEX_RUN_NO_ASSISTANT_OUTPUT`
+
+最可能原因：
+
+- Codex CLI 确实启动并结束了 native turn，但 `task_complete.last_agent_message` 为空
+- 本轮模型调用没有产出 assistant 正文，或被上游限制、超时、版本兼容问题提前收口
+
+检查方法：
+
+- 查看 `/ops/runs/<run-id>`，确认 run 是否进入 `error`
+- 查对应 rollout 中最后一段事件，重点看：
+
+```text
+event_msg.task_started
+event_msg.token_count
+event_msg.task_complete(last_agent_message:null)
+```
+
+- 查看 token/rate limit 信息，确认是否出现额度或模型切换异常
+
+处理动作：
+
+- 先重试同一条消息；如果偶发恢复，按上游空输出处理
+- 若稳定复现，升级全局 `codex` CLI 并重启 bridge
+- 如果只在桌面端接管后的 thread 上复现，优先检查桌面端 Codex 与全局 `codex` CLI 的版本差距
+
 ## 常用排查入口
 
 ```bash

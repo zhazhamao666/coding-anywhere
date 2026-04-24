@@ -64,6 +64,7 @@
 - Node.js 已安装
 - `npm install` 能正常完成
 - 本机可运行 `codex`
+- 部署机全局 `codex` CLI 版本与日常使用的 Codex 桌面端版本尽量接近；如果两边版本差距过大，桌面端创建的 native thread 在 bridge 里续跑时更容易遇到 JSONL 协议或空输出诊断问题
 - 飞书应用已配置好机器人与长连接事件
 - 至少有一个可访问的本地 root 目录
 
@@ -213,6 +214,7 @@ http://127.0.0.1:3000/ops/ui
 建议：
 
 - 默认保持 `command = "codex"`
+- 升级或排障后执行 `codex --version`，确认当前服务实际调用的是哪个 CLI；Windows 上还可以用 `where codex` 检查 PATH 中是否同时存在 npm 安装版和 Codex 桌面端自带版
 
 ### `[feishu]`
 
@@ -389,6 +391,7 @@ npm install
 npm run build
 npm test
 npm run doctor
+codex --version
 ```
 
 5. 停掉旧实例

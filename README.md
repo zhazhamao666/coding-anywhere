@@ -85,6 +85,7 @@
 - 线程列表会按父线程分组展示子 agent，并显示 agent 名称、角色、父线程和层级
 - 单个线程串行执行，多个线程可并发执行
 - 线程内支持状态回推和最终结果回复
+- 兼容 Codex CLI 旧版 `item.*` JSONL 和新版 `event_msg` / `response_item` JSONL 输出；当新版续跑只产生 `task_complete(last_agent_message:null)` 时，会给出明确诊断，而不是只显示笼统的 `RUN_STREAM_FAILED`
 - 提供本地 Feishu live auth / live smoke 脚本，能用真实网页链路验证按钮卡和命令 smoke
 - 提供 `/ops/runtime` 实时调度快照、`/ops/runs/:id/cancel` 取消接口，以及可直接取消 live run 的 `ops/ui`
 - Windows 下额外提供 `start-coding-anywhere.cmd` / `stop-coding-anywhere.cmd` 一键启停脚本
@@ -138,6 +139,12 @@ stop-coding-anywhere.cmd
 - 正确的 `appId`、`appSecret`
 - `config.toml` 里的允许用户列表和 root 配置
 - 本机可用的 Codex CLI 环境
+
+如果你同时使用 Codex 桌面端和全局 `codex` CLI，建议升级或固定到尽量接近的版本。桌面端创建的 thread 会被 bridge 通过 `codex exec resume --json <thread_id>` 续跑；如果两边 CLI 协议差距过大，最常见的症状是飞书里只看到运行失败。当前 runner 已兼容新版 JSONL，但仍建议用下面命令确认部署机上的实际 CLI 版本：
+
+```bash
+codex --version
+```
 
 补充说明：
 
