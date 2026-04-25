@@ -10,6 +10,7 @@ export function createProgressCardState(input: {
   modelOptions?: ProgressCardState["modelOptions"];
   reasoningEffortOptions?: ProgressCardState["reasoningEffortOptions"];
   speedOptions?: ProgressCardState["speedOptions"];
+  deliveryChatType?: ProgressCardState["deliveryChatType"];
   deliveryChatId?: string | null;
   deliverySurfaceType?: "thread" | null;
   deliverySurfaceRef?: string | null;
@@ -24,6 +25,7 @@ export function createProgressCardState(input: {
     modelOptions: input.modelOptions,
     reasoningEffortOptions: input.reasoningEffortOptions,
     speedOptions: input.speedOptions,
+    deliveryChatType: input.deliveryChatType ?? (input.deliveryChatId ? "group" : "p2p"),
     deliveryChatId: input.deliveryChatId ?? null,
     deliverySurfaceType: input.deliverySurfaceType ?? null,
     deliverySurfaceRef: input.deliverySurfaceRef ?? null,

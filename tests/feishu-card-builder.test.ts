@@ -54,8 +54,26 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("停止任务");
     expect(serialized).toContain("\"command\":\"/ca stop\"");
     expect(serialized).toContain("\"chatId\":\"oc_chat_current\"");
+    expect(serialized).toContain("\"chatType\":\"group\"");
     expect(serialized).toContain("\"surfaceType\":\"thread\"");
     expect(serialized).toContain("\"surfaceRef\":\"omt_current\"");
+  });
+
+  it("marks DM streaming card callbacks as p2p even when Feishu later provides open_chat_id", () => {
+    const card = buildStreamingShellCard(createState({
+      status: "running",
+      stage: "text",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      speed: "fast",
+      preview: "仍在处理",
+    }));
+
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain("\"command\":\"/ca stop\"");
+    expect(serialized).toContain("\"bridgeAction\":\"set_codex_model\"");
+    expect(serialized).toContain("\"chatType\":\"p2p\"");
+    expect(serialized).not.toContain("\"chatId\"");
   });
 
   it("builds a streaming shell card with the CardKit streaming element id and a stop button", () => {

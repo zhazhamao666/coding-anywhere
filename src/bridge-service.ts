@@ -58,6 +58,10 @@ import type {
 } from "./types.js";
 import { SessionStore } from "./workspace/session-store.js";
 
+const MAX_CODEX_THREAD_SELECTION_ROWS = 12;
+const MAX_CODEX_THREAD_LIST_TITLE_CHARS = 80;
+const MAX_CODEX_THREAD_LIST_LINE_CHARS = 96;
+
 interface BridgeRunner {
   createThread(
     input: {
@@ -503,6 +507,7 @@ export class BridgeService {
       modelOptions: this.getCodexPreferenceCatalog().modelOptions,
       reasoningEffortOptions: this.getCodexPreferenceCatalog().reasoningEffortOptions,
       speedOptions: this.getCodexPreferenceCatalog().speedOptions,
+      deliveryChatType: input.chatType ?? (resolved.deliveryChatId ? "group" : "p2p"),
       deliveryChatId: resolved.deliveryChatId,
       deliverySurfaceType: resolved.deliverySurfaceType,
       deliverySurfaceRef: resolved.deliverySurfaceRef,
@@ -2237,6 +2242,8 @@ export class BridgeService {
   ): BridgeReply {
     const displayThreads = orderCodexThreadsForParentChildDisplay(threads);
     const threadById = new Map(threads.map(thread => [thread.threadId, thread]));
+    const visibleThreads = displayThreads.slice(0, MAX_CODEX_THREAD_SELECTION_ROWS);
+    const isTruncated = visibleThreads.length < displayThreads.length;
 
     return {
       kind: "card",
@@ -2245,6 +2252,7 @@ export class BridgeService {
         summaryLines: [
           `**项目**：${project.displayName}`,
           `**线程总数**：${threads.length}`,
+          ...(isTruncated ? [`**已显示**：${visibleThreads.length} / ${threads.length}`] : []),
         ],
         sections: threads.length > 0
           ? []
@@ -2254,7 +2262,7 @@ export class BridgeService {
                 items: ["当前项目下没有可切换的 Codex 线程。"],
               },
             ],
-        rows: displayThreads.map(thread => ({
+        rows: visibleThreads.map(thread => ({
           title: formatCodexThreadListTitle(thread),
           lines: formatCodexThreadListLines(thread, threadById),
           buttonLabel: "切换到此线程",
@@ -3967,7 +3975,8 @@ function latestCodexThreadGroupUpdatedAt(
 
 function formatCodexThreadListTitle(thread: CodexCatalogThread): string {
   const sourceInfo = getCodexThreadSourceInfo(thread);
-  return sourceInfo.kind === "subagent" ? `└ ${thread.title}` : thread.title;
+  const title = truncateCardLineText(normalizeCardLineText(thread.title), MAX_CODEX_THREAD_LIST_TITLE_CHARS);
+  return sourceInfo.kind === "subagent" ? `└ ${title}` : title;
 }
 
 function formatCodexThreadListLines(
@@ -3978,9 +3987,12 @@ function formatCodexThreadListLines(
 
   if (sourceInfo.kind === "subagent") {
     return [
-      `子 agent · 父线程：${formatParentThreadLabel(sourceInfo.parentThreadId, threadById)}${formatSubagentDepth(sourceInfo)}`,
+      truncateCardLineText(
+        `子 agent · 父线程：${formatParentThreadLabel(sourceInfo.parentThreadId, threadById)}${formatSubagentDepth(sourceInfo)}`,
+        MAX_CODEX_THREAD_LIST_LINE_CHARS,
+      ),
       ...(formatSubagentIdentity(sourceInfo) !== "未命名"
-        ? [`身份：${formatSubagentIdentity(sourceInfo)}`]
+        ? [truncateCardLineText(`身份：${normalizeCardLineText(formatSubagentIdentity(sourceInfo))}`, MAX_CODEX_THREAD_LIST_LINE_CHARS)]
         : []),
       `最近更新：${thread.updatedAt}`,
     ];
@@ -4017,7 +4029,7 @@ function formatParentThreadLabel(
     return `${formatThreadIdReference(parentThreadId)}（不在当前列表）`;
   }
 
-  return `${truncateCardLineText(parent.title, 32)}（${formatThreadIdReference(parent.threadId)}）`;
+  return `${truncateCardLineText(normalizeCardLineText(parent.title), 32)}（${formatThreadIdReference(parent.threadId)}）`;
 }
 
 function formatSubagentDepth(sourceInfo: CodexCatalogThreadSourceInfo): string {
@@ -4030,6 +4042,10 @@ function formatThreadIdReference(threadId: string): string {
 
 function truncateCardLineText(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+}
+
+function normalizeCardLineText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function selectSwitchCardConversation(

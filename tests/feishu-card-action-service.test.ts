@@ -196,6 +196,45 @@ describe("FeishuCardActionService", () => {
     });
   });
 
+  it("does not treat Feishu open_chat_id as a group context for p2p command callbacks", async () => {
+    const deferred = createDeferred<BridgeReply[]>();
+    const bridgeService = {
+      handleMessage: vi.fn(() => deferred.promise),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    await service.handleAction({
+      open_id: "ou_demo",
+      open_chat_id: "oc_callback_dm_chat",
+      open_message_id: "om_callback_1",
+      token: "c-token-demo",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca thread list-current",
+          chatType: "p2p",
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatType: "p2p",
+      text: "/ca thread list-current",
+    });
+
+    deferred.resolve([]);
+    await vi.waitFor(() => {
+      expect(apiClient.delayUpdateInteractiveCard).toHaveBeenCalled();
+    });
+  });
+
   it("wraps system replies in a fallback patched result card when no interaction token is available", async () => {
     const deferred = createDeferred<BridgeReply[]>();
     const bridgeService = {

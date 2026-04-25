@@ -112,11 +112,7 @@ export function buildBridgeCard(state: ProgressCardState): Record<string, unknow
               ...buildPlanChoiceActionValue({
                 interactionId: state.planInteraction?.interactionId ?? "",
                 choiceId: choice.choiceId,
-                context: {
-                  chatId: state.deliveryChatId ?? undefined,
-                  surfaceType: state.deliverySurfaceType ?? undefined,
-                  surfaceRef: state.deliverySurfaceRef ?? undefined,
-                },
+                context: buildProgressCardSurfaceContext(state),
               }),
             },
           },
@@ -411,11 +407,7 @@ function buildStopButtonElements(state: ProgressCardState): Array<Record<string,
 function buildStopActionValue(state: ProgressCardState): Record<string, unknown> {
   return buildCommandActionValue({
     command: "/ca stop",
-    context: {
-      chatId: state.deliveryChatId ?? undefined,
-      surfaceType: state.deliverySurfaceType ?? undefined,
-      surfaceRef: state.deliverySurfaceRef ?? undefined,
-    },
+    context: buildProgressCardSurfaceContext(state),
   });
 }
 
@@ -545,18 +537,12 @@ function buildPreferenceActionValueForState(
   bridgeAction: "set_codex_model" | "set_reasoning_effort" | "set_codex_speed",
 ): Record<string, unknown> {
   return buildPreferenceActionValue({
-    chatId: state.deliveryChatId ?? undefined,
-    surfaceType: state.deliverySurfaceType ?? undefined,
-    surfaceRef: state.deliverySurfaceRef ?? undefined,
+    ...buildProgressCardSurfaceContext(state),
   }, bridgeAction);
 }
 
 function buildTerminalActionElements(state: ProgressCardState): Array<Record<string, unknown>> {
-  const context = {
-    chatId: state.deliveryChatId ?? undefined,
-    surfaceType: state.deliverySurfaceType ?? undefined,
-    surfaceRef: state.deliverySurfaceRef ?? undefined,
-  };
+  const context = buildProgressCardSurfaceContext(state);
 
   return [
     {
@@ -619,4 +605,19 @@ function buildTerminalActionElements(state: ProgressCardState): Array<Record<str
       ],
     },
   ];
+}
+
+function buildProgressCardSurfaceContext(state: ProgressCardState): {
+  chatType?: "p2p" | "group";
+  chatId?: string;
+  surfaceType?: "thread";
+  surfaceRef?: string;
+} {
+  const chatType = state.deliveryChatType ?? (state.deliveryChatId ? "group" : "p2p");
+  return {
+    chatType,
+    ...(chatType === "group" && state.deliveryChatId ? { chatId: state.deliveryChatId } : {}),
+    surfaceType: state.deliverySurfaceType ?? undefined,
+    surfaceRef: state.deliverySurfaceRef ?? undefined,
+  };
 }

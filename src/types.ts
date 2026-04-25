@@ -388,6 +388,7 @@ export interface ProgressCardState {
   modelOptions?: string[];
   reasoningEffortOptions?: CodexReasoningEffort[];
   speedOptions?: CodexSpeed[];
+  deliveryChatType?: "p2p" | "group" | null;
   deliveryChatId?: string | null;
   deliverySurfaceType?: "thread" | null;
   deliverySurfaceRef?: string | null;

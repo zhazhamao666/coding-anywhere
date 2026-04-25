@@ -2515,6 +2515,91 @@ describe("BridgeService", () => {
     );
   });
 
+  it("keeps large Codex thread selection cards within Feishu's delay-update budget", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.upsertProjectChat({
+      projectId: "proj-current",
+      chatId: "oc_chat_current",
+      groupMessageType: "thread",
+      title: "Codex | Current Project",
+    });
+
+    const veryLongTitle = [
+      "Spec-review the DM desktop completion handoff slice in worktree",
+      path.join(bridgeRootCwd, "coding-anywhere", ".worktrees", "desktop-handoff"),
+      "with exhaustive notes about Feishu callbacks, token update limits, and native thread routing.",
+    ].join(" ").repeat(8);
+    const catalogThreads: CodexCatalogThread[] = Array.from({ length: 80 }, (_unused, index) => ({
+      threadId: `thread-native-${index.toString().padStart(2, "0")}`,
+      projectKey: "proj-native",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      displayName: "coding-anywhere",
+      title: `${veryLongTitle} #${index}`,
+      source: "vscode",
+      sourceInfo: {
+        kind: "normal",
+        label: "VS Code",
+      },
+      archived: false,
+      updatedAt: `2026-04-13T00:${index.toString().padStart(2, "0")}:00.000Z`,
+      createdAt: "2026-04-13T00:00:00.000Z",
+      gitBranch: "main",
+      cliVersion: "0.116.0",
+      rolloutPath: `D:/rollout-${index}`,
+    }));
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: {
+        listProjects: vi.fn(() => [{
+          projectKey: "proj-native",
+          cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+          displayName: "coding-anywhere",
+          threadCount: catalogThreads.length,
+          activeThreadCount: catalogThreads.length,
+          lastUpdatedAt: "2026-04-13T00:00:00.000Z",
+          gitBranch: "main",
+        }]),
+        getProject: vi.fn((projectKey: string) => projectKey === "proj-native"
+          ? {
+              projectKey: "proj-native",
+              cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+              displayName: "coding-anywhere",
+              threadCount: catalogThreads.length,
+              activeThreadCount: catalogThreads.length,
+              lastUpdatedAt: "2026-04-13T00:00:00.000Z",
+              gitBranch: "main",
+            }
+          : undefined),
+        listThreads: vi.fn(() => catalogThreads),
+        getThread: vi.fn(),
+        listRecentConversation: vi.fn(() => []),
+      },
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca thread list-current",
+    });
+
+    const card = (replies[0] as { card: Record<string, unknown> }).card;
+    const cardText = JSON.stringify(card);
+    const bodyElements = (card.body as { elements?: unknown[] }).elements ?? [];
+    expect(Buffer.byteLength(cardText, "utf8")).toBeLessThanOrEqual(30_000);
+    expect(bodyElements.length).toBeLessThanOrEqual(16);
+    expect(cardText).toContain("**已显示**：12 / 80");
+    expect(cardText).toContain("/ca thread switch thread-native-79");
+    expect(cardText).not.toContain("/ca thread switch thread-native-00");
+    expect(cardText).not.toContain(veryLongTitle);
+  });
+
   it("rebinds a registered Feishu thread to a selected native thread", async () => {
     store.createProject({
       projectId: "proj-current",

@@ -136,7 +136,9 @@ export class FeishuCardActionService {
     const bridgeAction = actionValue?.bridgeAction;
     const patchTargetCardId = actionValue?.cardId;
     const patchTargetMessageId = actionValue?.messageId ?? event.open_message_id;
-    const effectiveChatId = actionValue?.chatId ?? event.open_chat_id;
+    const effectiveChatId = actionValue?.chatId ?? (
+      actionValue?.chatType === "p2p" ? undefined : event.open_chat_id
+    );
 
     if (
       bridgeAction === "set_codex_model" ||
