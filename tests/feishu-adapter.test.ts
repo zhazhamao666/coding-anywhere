@@ -382,6 +382,93 @@ describe("FeishuAdapter", () => {
     }
   });
 
+  it("preserves api client method context when downloading inbound images", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-image-bound-"));
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+      };
+      const downloadState = {
+        calls: [] as Array<{
+          messageId: string;
+          fileKey: string;
+          type: "image";
+          downloadDir: string;
+          preferredFileName?: string;
+        }>,
+      };
+      const apiClient = {
+        ...createApiClientDouble(),
+        downloadState,
+        async downloadMessageResource(input: {
+          messageId: string;
+          fileKey: string;
+          type: "image";
+          downloadDir: string;
+          preferredFileName?: string;
+        }) {
+          this.downloadState.calls.push(input);
+          return {
+            resourceKey: input.fileKey,
+            localPath: path.join(rootDir, `${input.fileKey}.png`),
+            fileName: `${input.fileKey}.png`,
+            mimeType: "image/png",
+            fileSize: 1024,
+          };
+        },
+      };
+      const pendingAssetStore = createPendingAssetStoreDouble();
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+        pendingAssetStore,
+        inboundAssetRootDir: rootDir,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-image-bound-1",
+        },
+        event: {
+          message: {
+            message_id: "om_image_bound_1",
+            chat_type: "p2p",
+            message_type: "image",
+            content: JSON.stringify({ image_key: "img_bound_1" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(apiClient.downloadState.calls).toEqual([
+        expect.objectContaining({
+          messageId: "om_image_bound_1",
+          fileKey: "img_bound_1",
+          type: "image",
+        }),
+      ]);
+      expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+        "ou_demo",
+        "[ca] 已收到图片，请继续发送文字说明。",
+      );
+      expect(pendingAssetStore.savePendingBridgeAsset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resourceKey: "img_bound_1",
+          fileName: "img_bound_1.png",
+        }),
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("replies with an explicit CA error when inbound image download fails", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),

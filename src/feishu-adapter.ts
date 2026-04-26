@@ -504,7 +504,7 @@ export class FeishuAdapter {
     }
 
     return {
-      downloadMessageResource: this.dependencies.apiClient.downloadMessageResource,
+      downloadMessageResource: this.dependencies.apiClient.downloadMessageResource.bind(this.dependencies.apiClient),
     };
   }
 }
