@@ -70,6 +70,43 @@ describe("SessionStore", () => {
     expect(store.getCodexProjectSelection("feishu", "ou_demo")).toBeUndefined();
   });
 
+  it("tracks known DM peers for desktop notification fallback", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    store.recordDmPeer({
+      channel: "feishu",
+      peerId: "ou_demo",
+      updatedAt: "2026-04-20T10:00:00.000Z",
+    });
+
+    expect(store.getUniqueDmPeer("feishu")).toBe("ou_demo");
+
+    store.recordDmPeer({
+      channel: "feishu",
+      peerId: "ou_other",
+      updatedAt: "2026-04-20T11:00:00.000Z",
+    });
+
+    expect(store.getUniqueDmPeer("feishu")).toBeUndefined();
+  });
+
+  it("finds the preferred DM binding for a native Codex thread", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-native-1",
+    });
+
+    expect(store.getPreferredCodexWindowBindingForThread("feishu", "thread-native-1")).toMatchObject({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-native-1",
+    });
+    expect(store.getPreferredCodexWindowBindingForThread("feishu", "thread-native-missing")).toBeUndefined();
+  });
+
   it("persists surface interaction state independently from Codex preferences", () => {
     store = new SessionStore(path.join(rootDir, "bridge.db"));
 

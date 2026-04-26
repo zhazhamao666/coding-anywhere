@@ -248,6 +248,7 @@ export class BridgeService {
     routeValidator?: (target: DesktopCompletionRouteTarget) => boolean;
   }): DesktopCompletionRouteTarget {
     const validateTarget = input.routeValidator ?? (() => true);
+    const inferredDmPeerId = this.resolveDesktopCompletionDmPeer(input.threadId);
     const existingSurface = this.dependencies.store.getPreferredCodexThreadBinding(input.threadId);
     if (existingSurface?.chatId && existingSurface.feishuThreadId && existingSurface.anchorMessageId) {
       const threadTarget: DesktopCompletionRouteTarget = {
@@ -260,7 +261,10 @@ export class BridgeService {
         return threadTarget;
       }
 
-      return buildDesktopCompletionDmTarget(input);
+      return buildDesktopCompletionDmTarget({
+        ...input,
+        inferredDmPeerId,
+      });
     }
 
     const groupTarget = this.resolveDesktopCompletionProjectGroupRoute(input.threadId);
@@ -269,10 +273,16 @@ export class BridgeService {
         return groupTarget;
       }
 
-      return buildDesktopCompletionDmTarget(input);
+      return buildDesktopCompletionDmTarget({
+        ...input,
+        inferredDmPeerId,
+      });
     }
 
-    return buildDesktopCompletionDmTarget(input);
+    return buildDesktopCompletionDmTarget({
+      ...input,
+      inferredDmPeerId,
+    });
   }
 
   public async continueDesktopThread(input: {
@@ -3577,6 +3587,11 @@ export class BridgeService {
     };
   }
 
+  private resolveDesktopCompletionDmPeer(threadId: string): string | undefined {
+    return this.dependencies.store.getPreferredCodexWindowBindingForThread("feishu", threadId)?.peerId
+      ?? this.dependencies.store.getUniqueDmPeer("feishu");
+  }
+
   private listCatalogProjectChatBindings(): CatalogProjectChatBinding[] {
     return this.dependencies.store.listProjects()
       .map(project => {
@@ -4095,6 +4110,7 @@ function normalizePathKey(value: string): string {
 function buildDesktopCompletionDmTarget(input: {
   allowlist: string[];
   desktopOwnerOpenId?: string;
+  inferredDmPeerId?: string;
 }): DesktopCompletionRouteTarget {
   const explicitOwnerOpenId = input.desktopOwnerOpenId?.trim();
   if (explicitOwnerOpenId) {
@@ -4108,6 +4124,14 @@ function buildDesktopCompletionDmTarget(input: {
     return {
       mode: "dm",
       peerId: input.allowlist[0],
+    };
+  }
+
+  const inferredDmPeerId = input.inferredDmPeerId?.trim();
+  if (inferredDmPeerId) {
+    return {
+      mode: "dm",
+      peerId: inferredDmPeerId,
     };
   }
 

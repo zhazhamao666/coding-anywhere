@@ -157,6 +157,84 @@ export class SessionStore {
     `).run(channel, peerId);
   }
 
+  public getPreferredCodexWindowBindingForThread(
+    channel: string,
+    codexThreadId: string,
+  ): CodexWindowBinding | undefined {
+    const row = this.db.prepare(`
+      SELECT channel, peer_id, codex_thread_id, updated_at
+      FROM codex_window_bindings
+      WHERE channel = ? AND codex_thread_id = ?
+      ORDER BY updated_at DESC, peer_id ASC
+      LIMIT 1
+    `).get(channel, codexThreadId) as CodexWindowBindingRow | undefined;
+
+    return row ? rowToCodexWindowBinding(row) : undefined;
+  }
+
+  public recordDmPeer(input: {
+    channel: string;
+    peerId: string;
+    updatedAt?: string;
+  }): void {
+    const updatedAt = input.updatedAt ?? new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO dm_peers (
+        channel, peer_id, updated_at
+      ) VALUES (
+        @channel, @peerId, @updatedAt
+      )
+      ON CONFLICT(channel, peer_id) DO UPDATE SET
+        updated_at = excluded.updated_at
+    `).run({
+      channel: input.channel,
+      peerId: input.peerId,
+      updatedAt,
+    });
+  }
+
+  public getUniqueDmPeer(channel: string): string | undefined {
+    const rows = this.db.prepare(`
+      SELECT peer_id
+      FROM (
+        SELECT peer_id, updated_at
+        FROM dm_peers
+        WHERE channel = @channel
+
+        UNION ALL
+
+        SELECT peer_id, updated_at
+        FROM codex_window_bindings
+        WHERE channel = @channel
+
+        UNION ALL
+
+        SELECT peer_id, updated_at
+        FROM codex_project_selections
+        WHERE channel = @channel
+
+        UNION ALL
+
+        SELECT peer_id, updated_at
+        FROM thread_bindings
+        WHERE channel = @channel
+
+        UNION ALL
+
+        SELECT peer_id, updated_at
+        FROM observability_runs
+        WHERE channel = @channel
+          AND delivery_chat_id IS NULL
+          AND delivery_surface_type IS NULL
+      )
+      GROUP BY peer_id
+      ORDER BY MAX(updated_at) DESC, peer_id ASC
+      LIMIT 2
+    `).all({ channel }) as Array<Pick<DmPeerRow, "peer_id">>;
+
+    return rows.length === 1 ? rows[0].peer_id : undefined;
+  }
+
   public bindCodexChat(input: {
     channel: string;
     chatId: string;
@@ -2640,6 +2718,13 @@ export class SessionStore {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS dm_peers (
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (channel, peer_id)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_observability_runs_updated_at
       ON observability_runs(updated_at DESC);
 
@@ -2675,6 +2760,9 @@ export class SessionStore {
 
       CREATE INDEX IF NOT EXISTS idx_codex_surface_interaction_state_lookup
       ON codex_surface_interaction_state(channel, peer_id, chat_id, surface_type, surface_ref);
+
+      CREATE INDEX IF NOT EXISTS idx_dm_peers_updated_at
+      ON dm_peers(channel, updated_at DESC);
 
     `);
 
@@ -3022,6 +3110,12 @@ interface CodexChatBindingRow {
   channel: string;
   chat_id: string;
   codex_thread_id: string;
+  updated_at: string;
+}
+
+interface DmPeerRow {
+  channel: string;
+  peer_id: string;
   updated_at: string;
 }
 
