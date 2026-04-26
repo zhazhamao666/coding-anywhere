@@ -620,7 +620,7 @@ describe("BridgeService", () => {
     ]);
   });
 
-  it("returns the stable current-session card for the current project chat", async () => {
+  it("returns a project-binding entry card for a bound group chat that has not selected a thread yet", async () => {
     store.createProject({
       projectId: "proj-current",
       name: "Current Project",
@@ -663,17 +663,19 @@ describe("BridgeService", () => {
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).toContain("当前群已绑定项目");
     expect(cardText).toContain("\"tag\":\"button\"");
     expect(cardText).toContain("Current Project");
     expect(cardText).toContain("未绑定");
+    expect(cardText).toContain("查看项目");
     expect(cardText).toContain("切换线程");
-    expect(cardText).toContain("更多信息");
-    expect(cardText).not.toContain("当前项目线程");
-    expect(cardText).not.toContain("当前项目群快捷命令");
+    expect(cardText).toContain("新会话");
+    expect(cardText).not.toContain("更多信息");
+    expect(cardText).not.toContain("下次任务设置");
+    expect(cardText).not.toContain("计划模式");
   });
 
-  it("returns the stable current-session card in DM instead of the old project-summary hub", async () => {
+  it("returns a project-selection entry card in DM when no project has been selected yet", async () => {
     store.createProject({
       projectId: "proj-alpha",
       name: "Alpha",
@@ -709,15 +711,43 @@ describe("BridgeService", () => {
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).toContain("开始使用");
     expect(cardText).toContain("未选择");
-    expect(cardText).toContain("切换线程");
-    expect(cardText).toContain("更多信息");
+    expect(cardText).toContain("查看项目");
+    expect(cardText).toContain("/ca project list");
     expect(cardText).not.toContain("停止任务");
-    expect(cardText).toContain("计划模式");
-    expect(cardText).not.toContain("项目概览");
-    expect(cardText).not.toContain("proj-alpha");
-    expect(cardText).not.toContain("proj-beta");
+    expect(cardText).not.toContain("计划模式");
+    expect(cardText).not.toContain("下次任务设置");
+    expect(cardText).not.toContain("切换线程");
+  });
+
+  it("returns a project-selection entry card in a new group chat before any project is bound", async () => {
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_fresh",
+      chatType: "group",
+      text: "/ca",
+    });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      kind: "card",
+    });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("当前群未绑定项目");
+    expect(cardText).toContain("查看项目");
+    expect(cardText).toContain("/ca project list");
+    expect(cardText).not.toContain("当前会话已就绪");
+    expect(cardText).not.toContain("切换线程");
+    expect(cardText).not.toContain("新会话");
+    expect(cardText).not.toContain("计划模式");
+    expect(cardText).not.toContain("下次任务设置");
   });
 
   it("shows only the thread title in the DM current-session card when the session id already points at the same native thread", async () => {
@@ -839,10 +869,55 @@ describe("BridgeService", () => {
   });
 
   it("keeps DM session-card state on the same surface even when DM callbacks carry chatId", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "alpha");
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-alpha-current",
+    });
+
     const service = new BridgeService({
       store,
       runner: createRunnerDouble(),
-    });
+      codexCatalog: {
+        listProjects: vi.fn(() => [{
+          projectKey: "project-alpha",
+          cwd: projectCwd,
+          displayName: "Alpha",
+          threadCount: 1,
+          activeThreadCount: 1,
+          lastUpdatedAt: "2026-04-26T00:00:00.000Z",
+          gitBranch: "main",
+        }]),
+        getProject: vi.fn(() => ({
+          projectKey: "project-alpha",
+          cwd: projectCwd,
+          displayName: "Alpha",
+          threadCount: 1,
+          activeThreadCount: 1,
+          lastUpdatedAt: "2026-04-26T00:00:00.000Z",
+          gitBranch: "main",
+        })),
+        listThreads: vi.fn(() => []),
+        getThread: vi.fn((threadId: string) => threadId === "thread-alpha-current"
+          ? {
+              threadId: "thread-alpha-current",
+              projectKey: "project-alpha",
+              cwd: projectCwd,
+              displayName: "Alpha",
+              title: "Alpha follow-up",
+              source: "vscode",
+              archived: false,
+              updatedAt: "2026-04-26T00:00:00.000Z",
+              createdAt: "2026-04-25T00:00:00.000Z",
+              gitBranch: "main",
+              cliVersion: "0.116.0",
+              rolloutPath: "D:/rollout",
+            }
+          : undefined),
+        listRecentConversation: vi.fn(() => []),
+      },
+    } as any);
 
     const toggled = await service.handleSessionCardUiAction({
       channel: "feishu",
@@ -861,6 +936,7 @@ describe("BridgeService", () => {
     });
 
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("当前会话已就绪");
     expect(cardText).toContain("计划模式 [开]");
     expect(cardText).not.toContain("当前群");
   });
@@ -1514,7 +1590,7 @@ describe("BridgeService", () => {
     expect(snapshots.filter(snapshot => snapshot.stage === "text")).toHaveLength(3);
   });
 
-  it("routes CA help and unknown subcommands to the stable current-session card", async () => {
+  it("routes CA help and unknown subcommands to the correct entry card for the current surface state", async () => {
     const service = new BridgeService({
       store,
       runner: createRunnerDouble(),
@@ -1531,10 +1607,10 @@ describe("BridgeService", () => {
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).toContain("开始使用");
     expect(cardText).not.toContain("CA Hub");
-    expect(cardText).toContain("切换线程");
-    expect(cardText).toContain("更多信息");
+    expect(cardText).toContain("查看项目");
+    expect(cardText).not.toContain("切换线程");
   });
 
   it("creates and rebinds a fresh native thread when /ca new is used inside a feishu thread", async () => {

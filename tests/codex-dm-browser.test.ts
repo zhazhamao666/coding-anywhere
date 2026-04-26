@@ -181,6 +181,39 @@ describe("DM Codex browser", () => {
     expect(threadCardText).toContain("thread-alpha-1");
   });
 
+  it("returns a project-scoped entry card from /ca after a DM project is selected but before a thread is bound", async () => {
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: createCatalogDouble(),
+    } as any);
+
+    await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project switch project-alpha",
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca",
+    });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ kind: "card" });
+    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    expect(cardText).toContain("当前项目已选择");
+    expect(cardText).toContain("Alpha");
+    expect(cardText).toContain("未选择");
+    expect(cardText).toContain("查看项目");
+    expect(cardText).toContain("切换线程");
+    expect(cardText).toContain("新会话");
+    expect(cardText).not.toContain("当前会话已就绪");
+    expect(cardText).not.toContain("计划模式");
+    expect(cardText).not.toContain("下次任务设置");
+  });
+
   it("creates the next fresh DM thread under the selected project path", async () => {
     const runner = createRunnerDouble([
       { type: "text", content: "已经在选中的项目下开始处理" },

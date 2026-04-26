@@ -1178,6 +1178,28 @@ export class BridgeService {
       ];
     }
 
+    if (this.isDmContext(input)) {
+      const selectedProject = this.lookupDmSelectedProject(input);
+      if (selectedProject) {
+        return [this.buildProjectScopedEntryCardReply(input, selectedProject.displayName)];
+      }
+
+      return [this.buildProjectSelectionEntryCardReply(input)];
+    }
+
+    if (this.isGroupMainlineContext(input) && input.chatId) {
+      const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
+      if (!projectChat) {
+        return [this.buildProjectSelectionEntryCardReply(input)];
+      }
+
+      const groupBinding = this.dependencies.store.getCodexChatBinding(input.channel, input.chatId);
+      if (!groupBinding) {
+        const project = this.dependencies.store.getProject(projectChat.projectId);
+        return [this.buildProjectScopedEntryCardReply(input, project?.name ?? projectChat.projectId)];
+      }
+    }
+
     const resolved = this.resolveContext(input);
     return [this.buildResolvedSessionCardReply(input, resolved)];
   }
@@ -2498,6 +2520,77 @@ export class BridgeService {
     };
   }
 
+  private buildProjectSelectionEntryCardReply(input: BridgeMessageInput): BridgeReply {
+    const isGroup = this.isGroupMainlineContext(input);
+    const actionContext = this.buildCardActionContext(input);
+    const threadLabel = isGroup ? "未绑定" : "未选择";
+    const scopeLabel = isGroup ? "当前群会话入口" : "当前会话入口";
+
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: isGroup ? "当前群未绑定项目" : "开始使用",
+        summaryLines: [
+          "**项目**：未选择",
+          `**线程**：${threadLabel}`,
+          "**状态**：空闲",
+          `**作用范围**：${scopeLabel}`,
+        ],
+        sections: [{
+          title: "下一步",
+          items: [isGroup ? "先查看项目，再把当前群绑定到一个项目。" : "先查看项目，再开始任务。"],
+        }],
+        actions: [{
+          label: "查看项目",
+          type: "primary",
+          value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
+        }],
+      }),
+    };
+  }
+
+  private buildProjectScopedEntryCardReply(
+    input: BridgeMessageInput,
+    projectLabel: string,
+  ): BridgeReply {
+    const isGroup = this.isGroupMainlineContext(input);
+    const actionContext = this.buildCardActionContext(input);
+    const threadLabel = isGroup ? "未绑定" : "未选择";
+    const scopeLabel = isGroup ? "当前群会话入口" : "当前会话入口";
+
+    return {
+      kind: "card",
+      card: buildBridgeHubCard({
+        title: isGroup ? "当前群已绑定项目" : "当前项目已选择",
+        summaryLines: [
+          `**项目**：${projectLabel}`,
+          `**线程**：${threadLabel}`,
+          "**状态**：空闲",
+          `**作用范围**：${scopeLabel}`,
+        ],
+        sections: [{
+          title: "下一步",
+          items: ["选择已有线程，或直接发送消息创建新会话"],
+        }],
+        actions: [
+          {
+            label: "切换线程",
+            type: "primary",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
+          },
+          {
+            label: "新会话",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} new`),
+          },
+          {
+            label: "查看项目",
+            value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
+          },
+        ],
+      }),
+    };
+  }
+
   private buildResolvedSessionCardReply(
     input: BridgeMessageInput,
     resolved: ResolvedContext,
@@ -3221,11 +3314,25 @@ export class BridgeService {
     value: Record<string, unknown>;
     type?: "default" | "primary" | "danger";
   }> {
+    const projectChat = input.chatId
+      ? this.dependencies.store.getProjectChatByChatId(input.chatId)
+      : undefined;
     const hasCurrentSession = this.isDmContext(input)
       ? Boolean(this.lookupDmCodexSelection(input) || this.lookupDmSelectedProject(input))
-      : Boolean(input.chatId || input.surfaceType === "thread");
+      : input.surfaceType === "thread"
+        ? true
+        : Boolean(projectChat);
+    const canStartNewSession = this.isDmContext(input)
+      ? true
+      : input.surfaceType === "thread"
+        ? true
+        : Boolean(projectChat);
 
-    return [
+    const actions: Array<{
+      label: string;
+      value: Record<string, unknown>;
+      type?: "default" | "primary" | "danger";
+    }> = [
       {
         label: hasCurrentSession ? "返回当前会话" : "返回导航",
         value: this.buildCardActionValue(
@@ -3233,11 +3340,16 @@ export class BridgeService {
           hasCurrentSession ? `${BRIDGE_COMMAND_PREFIX} session` : BRIDGE_COMMAND_PREFIX,
         ),
       },
-      {
+    ];
+
+    if (canStartNewSession) {
+      actions.push({
         label: "新会话",
         value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} new`),
-      },
-    ];
+      });
+    }
+
+    return actions;
   }
 
   private buildCurrentRunItems(
