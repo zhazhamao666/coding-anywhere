@@ -15,7 +15,9 @@
     "test:codex:real": "vitest run tests/codex-real-smoke.test.ts",
     "test:codex:resume": "vitest run tests/codex-real-resume.test.ts",
     "test:feishu:auth": "tsx src/feishu-live-auth-cli.ts",
-    "test:feishu:live": "playwright test -c playwright.config.ts --project=feishu-live",
+    "test:feishu:live": "node scripts/feishu-live.mjs dm",
+    "test:feishu:live:dm": "node scripts/feishu-live.mjs dm",
+    "test:feishu:live:group": "node scripts/feishu-live.mjs group",
     "test:watch": "vitest"
   },
   "keywords": [],

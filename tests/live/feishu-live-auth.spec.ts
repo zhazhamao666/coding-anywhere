@@ -16,7 +16,7 @@ test("reuses the persistent feishu profile without returning to the login screen
 
   try {
     const page = context.pages()[0] ?? await context.newPage();
-    await page.goto(settings.dmUrl ?? "https://feishu.cn/messages/", {
+    await page.goto(settings.targetUrl ?? "https://feishu.cn/messages/", {
       waitUntil: "domcontentloaded",
     });
 

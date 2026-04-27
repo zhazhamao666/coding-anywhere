@@ -4,14 +4,15 @@ import {
   assertFeishuLiveAuthReady,
   createFeishuLiveBrowserLaunchOptions,
 } from "../../src/feishu-live-auth.js";
-import { assertFeishuLiveDmConfigured, loadFeishuLiveTestSettings } from "../../src/feishu-live-test-settings.js";
+import { assertFeishuLiveTargetConfigured, loadFeishuLiveTestSettings } from "../../src/feishu-live-test-settings.js";
 
 test("opens the bot DM and sends a minimal /ca smoke command", async () => {
   const auth = assertFeishuLiveAuthReady();
-  const settings = assertFeishuLiveDmConfigured();
+  const settings = assertFeishuLiveTargetConfigured();
   const smokeText = process.env.FEISHU_LIVE_SMOKE_TEXT ?? "/ca";
-  const expectedText = process.env.FEISHU_LIVE_EXPECT_TEXT ?? "导航";
-  const conversationName = process.env.FEISHU_LIVE_CONVERSATION_NAME;
+  const expectedText = process.env.FEISHU_LIVE_EXPECT_TEXT
+    ?? (settings.surface === "group" ? "当前群已绑定项目" : "当前项目已选择");
+  const conversationName = settings.conversationName;
   const composerSelector = process.env.FEISHU_LIVE_COMPOSER_SELECTOR ?? "textarea, [contenteditable='true']";
   const context = await chromium.launchPersistentContext(
     auth.profileDir,
@@ -20,7 +21,7 @@ test("opens the bot DM and sends a minimal /ca smoke command", async () => {
 
   try {
     const page = context.pages()[0] ?? await context.newPage();
-    await page.goto(settings.dmUrl, {
+    await page.goto(settings.targetUrl, {
       waitUntil: "domcontentloaded",
     });
     await expect(page).not.toHaveURL(/login|passport/i);
@@ -40,9 +41,17 @@ test("opens the bot DM and sends a minimal /ca smoke command", async () => {
       await page.keyboard.press("Enter");
     };
 
-    if (settings.projectKey) {
+    if (settings.surface === "dm") {
       await sendComposerText(`/ca project switch ${settings.projectKey}`);
       await expect(page.getByText("当前项目已切换", { exact: false }).first()).toBeVisible({
+        timeout: 45_000,
+      });
+    } else {
+      await sendComposerText("/ca project current");
+      await expect(page.getByText("当前项目", { exact: false }).first()).toBeVisible({
+        timeout: 45_000,
+      });
+      await expect(page.getByText(settings.projectKey, { exact: false }).first()).toBeVisible({
         timeout: 45_000,
       });
     }

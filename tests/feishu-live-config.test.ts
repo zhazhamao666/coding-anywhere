@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  assertFeishuLiveDmConfigured,
+  assertFeishuLiveTargetConfigured,
   loadFeishuLiveTestSettings,
 } from "../src/feishu-live-test-settings.js";
 
@@ -17,13 +17,15 @@ describe("feishu live repository config", () => {
     expect(gitignore).toContain(".auth/");
   });
 
-  it("exposes auth bootstrap and live smoke scripts", () => {
+  it("exposes auth bootstrap and explicit dm/group live smoke scripts", () => {
     const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
     };
 
     expect(pkg.scripts?.["test:feishu:auth"]).toBeTruthy();
     expect(pkg.scripts?.["test:feishu:live"]).toBeTruthy();
+    expect(pkg.scripts?.["test:feishu:live:dm"]).toBeTruthy();
+    expect(pkg.scripts?.["test:feishu:live:group"]).toBeTruthy();
   });
 
   it("ships a live auth cli entrypoint", () => {
@@ -46,7 +48,7 @@ describe("feishu live repository config", () => {
 });
 
 describe("feishu live test settings", () => {
-  it("derives the ops base url from config.toml when no override is provided", () => {
+  it("defaults to the autotest project and dm surface", () => {
     const settings = loadFeishuLiveTestSettings(
       {
         cwd: "D:\\repo\\coding-anywhere",
@@ -63,16 +65,20 @@ describe("feishu live test settings", () => {
     );
 
     expect(settings.opsBaseUrl).toBe("http://127.0.0.1:8787");
+    expect(settings.projectKey).toBe("coding-anywhere-autotest");
+    expect(settings.surface).toBe("dm");
+    expect(settings.allowNonAutotest).toBe(false);
   });
 
-  it("uses explicit environment overrides for dm and ops targets", () => {
+  it("uses explicit environment overrides for target, ops, surface, and project", () => {
     const settings = loadFeishuLiveTestSettings(
       {
         cwd: "D:\\repo\\coding-anywhere",
         env: {
-          FEISHU_LIVE_DM_URL: "https://feishu.cn/messages/abc",
+          FEISHU_LIVE_TARGET_URL: "https://feishu.cn/messages/abc",
           FEISHU_LIVE_OPS_BASE_URL: "http://localhost:3000",
           FEISHU_LIVE_PROJECT_KEY: "coding-anywhere-autotest",
+          FEISHU_LIVE_SURFACE: "group",
         },
       },
       {
@@ -85,14 +91,37 @@ describe("feishu live test settings", () => {
       },
     );
 
-    expect(settings.dmUrl).toBe("https://feishu.cn/messages/abc");
+    expect(settings.targetUrl).toBe("https://feishu.cn/messages/abc");
     expect(settings.opsBaseUrl).toBe("http://localhost:3000");
-    expect((settings as { projectKey?: string }).projectKey).toBe("coding-anywhere-autotest");
+    expect(settings.projectKey).toBe("coding-anywhere-autotest");
+    expect(settings.surface).toBe("group");
+    expect(settings.conversationName).toBe("coding-anywhere-autotest");
   });
 
-  it("throws a clear error when the dm target is not configured", () => {
+  it("still accepts the legacy dm url variable as the target url", () => {
+    const settings = loadFeishuLiveTestSettings(
+      {
+        cwd: "D:\\repo\\coding-anywhere",
+        env: {
+          FEISHU_LIVE_DM_URL: "https://feishu.cn/messages/legacy",
+        },
+      },
+      {
+        loadConfig: () => ({
+          server: {
+            host: "127.0.0.1",
+            port: 8787,
+          },
+        }),
+      },
+    );
+
+    expect(settings.targetUrl).toBe("https://feishu.cn/messages/legacy");
+  });
+
+  it("throws a clear error when the live target url is not configured", () => {
     expect(() =>
-      assertFeishuLiveDmConfigured(
+      assertFeishuLiveTargetConfigured(
         {
           cwd: "D:\\repo\\coding-anywhere",
           env: {},
@@ -107,7 +136,106 @@ describe("feishu live test settings", () => {
         },
       ),
     ).toThrowError(
-      "[ca] Feishu live DM target is not configured. Set `FEISHU_LIVE_DM_URL` to the bot DM web URL before running the live smoke.",
+      "[ca] Feishu live target URL is not configured. Set `FEISHU_LIVE_TARGET_URL` (or legacy `FEISHU_LIVE_DM_URL`) before running the live smoke.",
     );
+  });
+
+  it("rejects non-autotest project keys unless the danger override is explicit", () => {
+    expect(() =>
+      assertFeishuLiveTargetConfigured(
+        {
+          cwd: "D:\\repo\\coding-anywhere",
+          env: {
+            FEISHU_LIVE_TARGET_URL: "https://feishu.cn/messages/abc",
+            FEISHU_LIVE_PROJECT_KEY: "coding-anywhere",
+          },
+        },
+        {
+          loadConfig: () => ({
+            server: {
+              host: "127.0.0.1",
+              port: 8787,
+            },
+          }),
+        },
+      ),
+    ).toThrowError(
+      "[ca] Feishu live smoke is locked to `coding-anywhere-autotest`. Set `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1` only if you intentionally need a non-test project.",
+    );
+  });
+
+  it("rejects non-autotest group fixtures unless the danger override is explicit", () => {
+    expect(() =>
+      assertFeishuLiveTargetConfigured(
+        {
+          cwd: "D:\\repo\\coding-anywhere",
+          env: {
+            FEISHU_LIVE_TARGET_URL: "https://feishu.cn/messages/group",
+            FEISHU_LIVE_SURFACE: "group",
+            FEISHU_LIVE_CONVERSATION_NAME: "coding-anywhere",
+          },
+        },
+        {
+          loadConfig: () => ({
+            server: {
+              host: "127.0.0.1",
+              port: 8787,
+            },
+          }),
+        },
+      ),
+    ).toThrowError(
+      "[ca] Feishu group live smoke is locked to the test group `coding-anywhere-autotest`. Set `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1` only if you intentionally need a different group fixture.",
+    );
+  });
+
+  it("allows an explicit non-autotest override only behind the danger switch", () => {
+    const settings = assertFeishuLiveTargetConfigured(
+      {
+        cwd: "D:\\repo\\coding-anywhere",
+        env: {
+          FEISHU_LIVE_TARGET_URL: "https://feishu.cn/messages/abc",
+          FEISHU_LIVE_PROJECT_KEY: "coding-anywhere",
+          FEISHU_LIVE_ALLOW_NON_AUTOTEST: "1",
+        },
+      },
+      {
+        loadConfig: () => ({
+          server: {
+            host: "127.0.0.1",
+            port: 8787,
+          },
+        }),
+      },
+    );
+
+    expect(settings.projectKey).toBe("coding-anywhere");
+    expect(settings.allowNonAutotest).toBe(true);
+  });
+
+  it("allows a non-default group fixture only behind the danger switch", () => {
+    const settings = assertFeishuLiveTargetConfigured(
+      {
+        cwd: "D:\\repo\\coding-anywhere",
+        env: {
+          FEISHU_LIVE_TARGET_URL: "https://feishu.cn/messages/group",
+          FEISHU_LIVE_SURFACE: "group",
+          FEISHU_LIVE_CONVERSATION_NAME: "coding-anywhere",
+          FEISHU_LIVE_ALLOW_NON_AUTOTEST: "1",
+        },
+      },
+      {
+        loadConfig: () => ({
+          server: {
+            host: "127.0.0.1",
+            port: 8787,
+          },
+        }),
+      },
+    );
+
+    expect(settings.surface).toBe("group");
+    expect(settings.conversationName).toBe("coding-anywhere");
+    expect(settings.allowNonAutotest).toBe(true);
   });
 });
