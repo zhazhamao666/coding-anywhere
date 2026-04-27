@@ -102,8 +102,14 @@
 npm install
 npm run init:config
 npm run doctor
+npm run build
 npm run start
 ```
+
+说明：
+
+- `npm run start` 会直接启动 `dist/src/index.js`，所以新环境或拉取最新代码后，建议先执行一次 `npm run build`
+- Windows 下的 `start-coding-anywhere.cmd` 会先自动执行 `npm run build`，再启动服务
 
 Windows 上如果你更想用一键脚本，也可以直接运行：
 
