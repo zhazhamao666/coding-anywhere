@@ -1912,6 +1912,10 @@ export class BridgeService {
     projects: CodexCatalogProject[],
   ): BridgeReply {
     const bindings = this.listCatalogProjectChatBindings();
+    const currentProjectChat = input.chatId
+      ? this.dependencies.store.getProjectChatByChatId(input.chatId)
+      : undefined;
+    const actionContext = this.buildCardActionContext(input);
     return {
       kind: "card",
       card: buildBridgeHubCard({
@@ -1919,7 +1923,7 @@ export class BridgeService {
         summaryLines: [
           "**视图**：Codex 项目列表",
           `**项目数**：${projects.length}`,
-          `**当前群**：${input.chatId ?? "unknown"}`,
+          `**当前群**：${currentProjectChat ? "已绑定项目" : "未绑定项目"}`,
         ],
         sections: projects.length > 0
           ? []
@@ -1947,7 +1951,6 @@ export class BridgeService {
           return {
             title: project.displayName,
             lines: [
-              `路径：${project.cwd}`,
               `线程：${project.activeThreadCount}/${project.threadCount}`,
               `最近更新：${project.lastUpdatedAt}`,
               `绑定：${formatGroupProjectBinding(binding)}`,
@@ -1955,23 +1958,29 @@ export class BridgeService {
             buttons,
           };
         }),
-        actions: [
-          {
-            label: "导航",
-            type: "primary",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} hub`),
-          },
-          {
-            label: "项目列表",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project list`),
-          },
-          ...(input.chatId
-            ? [{
+        actions: currentProjectChat
+          ? [
+              {
+                label: "导航",
+                type: "primary",
+                value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} hub`),
+              },
+              {
+                label: "项目列表",
+                value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project list`),
+              },
+              {
                 label: "当前项目",
-                value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
-              }]
-            : []),
-        ],
+                value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} project current`),
+              },
+            ]
+          : [
+              {
+                label: "返回导航",
+                type: "primary",
+                value: this.buildCardActionValue(actionContext, BRIDGE_COMMAND_PREFIX),
+              },
+            ],
       }),
     };
   }
@@ -3948,7 +3957,7 @@ function formatGroupProjectBinding(input: {
     return "已绑定当前群";
   }
   if (input.state === "other") {
-    return `已绑定其他群（${input.chatId ?? "unknown"}）`;
+    return "已绑定其他群";
   }
   return "未绑定";
 }

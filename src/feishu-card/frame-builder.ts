@@ -41,7 +41,7 @@ export function buildFeishuCardFrame(input: {
   const card: Record<string, unknown> = {
     schema: "2.0",
     config: {
-      wide_screen_mode: true,
+      width_mode: "fill",
       update_multi: true,
       ...input.config,
       summary: {

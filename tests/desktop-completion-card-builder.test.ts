@@ -66,10 +66,11 @@ describe("desktop completion card builder", () => {
     expect(card).toMatchObject({
       schema: "2.0",
       config: expect.objectContaining({
-        wide_screen_mode: true,
+        width_mode: "fill",
         update_multi: true,
       }),
     });
+    expect(JSON.stringify(card)).not.toContain("wide_screen_mode");
     expect(visibleText).toContain("桌面任务已完成");
     expect(visibleText).toContain("Alpha Project");
     expect(visibleText).toContain("修复桌面完成通知");

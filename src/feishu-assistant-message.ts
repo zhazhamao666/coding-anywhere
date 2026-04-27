@@ -59,7 +59,7 @@ export function buildAssistantMarkdownCard(text: string): Record<string, unknown
   const card = {
     schema: "2.0",
     config: {
-      wide_screen_mode: true,
+      width_mode: "fill",
       update_multi: true,
       summary: {
         content: buildAssistantSummary(normalized),

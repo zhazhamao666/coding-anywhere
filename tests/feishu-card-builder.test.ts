@@ -28,10 +28,11 @@ describe("feishu card builder", () => {
     expect(card).toMatchObject({
       schema: "2.0",
       config: expect.objectContaining({
-        wide_screen_mode: true,
+        width_mode: "fill",
         update_multi: true,
       }),
     });
+    expect(JSON.stringify(card)).not.toContain("wide_screen_mode");
     expect(JSON.stringify(card)).toContain("准备中");
     expect(JSON.stringify(card)).toContain("codex-main");
     expect(JSON.stringify(card)).toContain("main");
@@ -303,13 +304,14 @@ describe("feishu card builder", () => {
     expect(card).toMatchObject({
       schema: "2.0",
       config: expect.objectContaining({
-        wide_screen_mode: true,
+        width_mode: "fill",
         update_multi: true,
       }),
       body: expect.objectContaining({
         elements: expect.any(Array),
       }),
     });
+    expect(JSON.stringify(card)).not.toContain("wide_screen_mode");
     expect(card).toMatchObject({
       header: {
         title: {

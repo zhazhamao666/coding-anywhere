@@ -1945,7 +1945,9 @@ describe("BridgeService", () => {
     expect(catalog.listProjects).toHaveBeenCalled();
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({ kind: "card" });
-    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
+    const card = (replies[0] as { card: Record<string, unknown> }).card;
+    const cardText = JSON.stringify(card);
+    const visibleMarkdown = readCardAllMarkdown(card);
     expect(cardText).toContain("Codex 项目列表");
     expect(cardText).toContain("Current Project");
     expect(cardText).toContain("已绑定当前群");
@@ -1954,8 +1956,57 @@ describe("BridgeService", () => {
     expect(cardText).toContain("/ca project bind-current project-unbound");
     expect(cardText).toContain("Other Project");
     expect(cardText).toContain("已绑定其他群");
+    expect(cardText).not.toContain("路径：");
+    expect(visibleMarkdown).not.toContain(currentCwd);
+    expect(visibleMarkdown).not.toContain(otherCwd);
+    expect(visibleMarkdown).not.toContain("oc_chat_current");
+    expect(visibleMarkdown).not.toContain("oc_chat_other");
+    expect(cardText).not.toContain("oc_chat_other");
     expect(cardText).not.toContain("/ca project bind-current project-other");
     expect(cardText).not.toContain("切换项目");
+  });
+
+  it("keeps unbound group project list footer to return-only actions", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "unbound");
+    const catalog = {
+      listProjects: vi.fn(() => [{
+        projectKey: "project-unbound",
+        cwd: projectCwd,
+        displayName: "Unbound Project",
+        threadCount: 0,
+        activeThreadCount: 0,
+        lastUpdatedAt: "2026-04-02T00:00:00.000Z",
+        gitBranch: "main",
+      }]),
+      getProject: vi.fn(),
+      listThreads: vi.fn(() => []),
+      getThread: vi.fn(),
+      listRecentConversation: vi.fn(() => []),
+    };
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: catalog,
+    } as any);
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_fresh",
+      chatType: "group",
+      text: "/ca project list",
+    });
+
+    const card = (replies[0] as { card: Record<string, unknown> }).card;
+    const cardText = JSON.stringify(card);
+    const visibleMarkdown = readCardAllMarkdown(card);
+    expect(cardText).toContain("Unbound Project");
+    expect(cardText).toContain("/ca project bind-current project-unbound");
+    expect(visibleMarkdown).toContain("当前群**：未绑定项目");
+    expect(visibleMarkdown).not.toContain("oc_chat_fresh");
+    expect(cardText).not.toContain("/ca project current");
+    expect(cardText).not.toContain("/ca new");
+    expect(cardText).not.toContain("\"command\":\"/ca project list\"");
   });
 
   it("binds the current group chat to a Codex catalog project by project key", async () => {

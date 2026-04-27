@@ -5,7 +5,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { resolveFeishuAssistantMessageDelivery } from "../src/feishu-assistant-message.js";
+import {
+  buildAssistantMarkdownCard,
+  resolveFeishuAssistantMessageDelivery,
+} from "../src/feishu-assistant-message.js";
 
 describe("Feishu assistant message delivery", () => {
   const tempDirs: string[] = [];
@@ -57,6 +60,19 @@ describe("Feishu assistant message delivery", () => {
     expect(visible).not.toContain("gamma.txt");
     expect(visible).not.toContain("::git-stage");
     expect(visible).not.toContain("D:/not-a-real-repo");
+  });
+
+  it("uses JSON 2.0 width_mode instead of legacy wide_screen_mode for markdown cards", () => {
+    const card = buildAssistantMarkdownCard("## 结果\n\n- 已完成修复");
+
+    expect(card).toMatchObject({
+      schema: "2.0",
+      config: expect.objectContaining({
+        width_mode: "fill",
+        update_multi: true,
+      }),
+    });
+    expect(JSON.stringify(card)).not.toContain("wide_screen_mode");
   });
 });
 

@@ -286,18 +286,20 @@ export class FeishuCardActionService {
         ], actionValue));
       }
 
-      this.launchInteractiveRun({
-        peerId: event.open_id,
-        anchorMessageId: patchTargetMessageId,
-        execute: options => this.dependencies.bridgeService.handleMessage({
-          channel: "feishu",
+      this.deferAfterCallbackResponse(() => {
+        this.launchInteractiveRun({
           peerId: event.open_id,
-          chatType: actionValue?.chatType,
-          chatId: effectiveChatId,
-          surfaceType: actionValue?.surfaceType,
-          surfaceRef: actionValue?.surfaceRef,
-          text: `/plan ${planPrompt}`,
-        }, options),
+          anchorMessageId: patchTargetMessageId,
+          execute: options => this.dependencies.bridgeService.handleMessage({
+            channel: "feishu",
+            peerId: event.open_id,
+            chatType: actionValue?.chatType,
+            chatId: effectiveChatId,
+            surfaceType: actionValue?.surfaceType,
+            surfaceRef: actionValue?.surfaceRef,
+            text: `/plan ${planPrompt}`,
+          }, options),
+        });
       });
 
       return this.buildToastResponse("计划请求已提交，正在启动计划模式。");
@@ -320,19 +322,21 @@ export class FeishuCardActionService {
         ], actionValue));
       }
 
-      this.launchInteractiveRun({
-        peerId: event.open_id,
-        anchorMessageId: patchTargetMessageId,
-        execute: options => this.dependencies.bridgeService.handlePlanChoice?.({
-          channel: "feishu",
+      this.deferAfterCallbackResponse(() => {
+        this.launchInteractiveRun({
           peerId: event.open_id,
-          chatType: actionValue?.chatType,
-          chatId: effectiveChatId,
-          surfaceType: actionValue?.surfaceType,
-          surfaceRef: actionValue?.surfaceRef,
-          interactionId,
-          choiceId,
-        }, options) ?? Promise.resolve([]),
+          anchorMessageId: patchTargetMessageId,
+          execute: options => this.dependencies.bridgeService.handlePlanChoice?.({
+            channel: "feishu",
+            peerId: event.open_id,
+            chatType: actionValue?.chatType,
+            chatId: effectiveChatId,
+            surfaceType: actionValue?.surfaceType,
+            surfaceRef: actionValue?.surfaceRef,
+            interactionId,
+            choiceId,
+          }, options) ?? Promise.resolve([]),
+        });
       });
 
       return this.buildToastResponse("计划选项已提交，正在继续当前计划线程。");
@@ -366,28 +370,45 @@ export class FeishuCardActionService {
       "feishu card action queued async command",
     );
 
-    this.launchCommandAction({
-      peerId: event.open_id,
-      command,
-      actionValue,
-      interactionToken: event.token,
-      existingMessageId: patchTargetMessageId,
-      chatType: actionValue?.chatType,
-      chatId: effectiveChatId,
-      surfaceType: actionValue?.surfaceType,
-      surfaceRef: actionValue?.surfaceRef,
-      execute: () => this.dependencies.bridgeService.handleMessage({
-        channel: "feishu",
+    this.deferAfterCallbackResponse(() => {
+      this.launchCommandAction({
         peerId: event.open_id,
+        command,
+        actionValue,
+        interactionToken: event.token,
+        existingMessageId: patchTargetMessageId,
         chatType: actionValue?.chatType,
         chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
-        text: command,
-      }),
+        execute: () => this.dependencies.bridgeService.handleMessage({
+          channel: "feishu",
+          peerId: event.open_id,
+          chatType: actionValue?.chatType,
+          chatId: effectiveChatId,
+          surfaceType: actionValue?.surfaceType,
+          surfaceRef: actionValue?.surfaceRef,
+          text: command,
+        }),
+      });
     });
 
     return this.buildToastResponse(`命令已提交：${command}`);
+  }
+
+  private deferAfterCallbackResponse(task: () => void): void {
+    setTimeout(() => {
+      try {
+        task();
+      } catch (error) {
+        this.dependencies.logger?.error?.(
+          {
+            error: normalizeActionError(error),
+          },
+          "feishu deferred card action failed before launch",
+        );
+      }
+    }, 0);
   }
 
   private buildInfoCard(

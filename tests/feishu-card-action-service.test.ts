@@ -64,18 +64,22 @@ describe("FeishuCardActionService", () => {
       },
     });
 
-    expect(bridgeService.handleMessage).toHaveBeenCalledWith({
-      channel: "feishu",
-      peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      text: "/ca project current",
-    });
-    expect(apiClient.updateCardKitCard).not.toHaveBeenCalled();
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       toast: {
         type: "info",
       },
     });
+
+    await vi.waitFor(() => {
+      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        text: "/ca project current",
+      }));
+    });
+    expect(apiClient.updateCardKitCard).not.toHaveBeenCalled();
 
     deferred.resolve([
       { kind: "card", card: replyCard } as unknown as BridgeReply,
@@ -88,6 +92,47 @@ describe("FeishuCardActionService", () => {
       });
     });
     expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
+  });
+
+  it("does not start async command work before the toast response is returned", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const result = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_card_deferred",
+      token: "c-token-deferred",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca session",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      toast: {
+        type: "info",
+      },
+    });
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        text: "/ca session",
+      }));
+    });
   });
 
   it("falls back to open_message_id patching when no interaction token is available", async () => {
@@ -115,8 +160,8 @@ describe("FeishuCardActionService", () => {
     });
 
     const result = await service.handleAction({
-      open_id: "ou_demo",
       open_message_id: "om_callback_1",
+      open_id: "ou_demo",
       action: {
         tag: "button",
         value: {
@@ -130,6 +175,16 @@ describe("FeishuCardActionService", () => {
       toast: {
         type: "info",
       },
+    });
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        text: "/ca project current",
+      }));
     });
 
     deferred.resolve([
@@ -166,16 +221,20 @@ describe("FeishuCardActionService", () => {
       },
     });
 
-    expect(bridgeService.handleMessage).toHaveBeenCalledWith({
-      channel: "feishu",
-      peerId: "ou_demo",
-      chatId: "oc_group_fallback",
-      text: "/ca project current",
-    });
     expect(result).toMatchObject({
       toast: {
         type: "info",
       },
+    });
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_group_fallback",
+        text: "/ca project current",
+      }));
     });
 
     deferred.resolve([
@@ -222,11 +281,15 @@ describe("FeishuCardActionService", () => {
       },
     });
 
-    expect(bridgeService.handleMessage).toHaveBeenCalledWith({
-      channel: "feishu",
-      peerId: "ou_demo",
-      chatType: "p2p",
-      text: "/ca thread list-current",
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatType: "p2p",
+        text: "/ca thread list-current",
+      }));
     });
 
     deferred.resolve([]);
@@ -713,23 +776,27 @@ describe("FeishuCardActionService", () => {
       },
     });
 
-    expect(bridgeService.handleMessage).toHaveBeenCalledWith(
-      {
-        channel: "feishu",
-        peerId: "ou_demo",
-        chatId: "oc_chat_current",
-        surfaceType: "thread",
-        surfaceRef: "omt_current",
-        text: "/plan 帮我先梳理这个仓库的改造方案，不要直接改代码",
-      },
-      expect.objectContaining({
-        onProgress: expect.any(Function),
-      }),
-    );
     expect(result).toMatchObject({
       toast: {
         type: "info",
       },
+    });
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(bridgeService.handleMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: "feishu",
+          peerId: "ou_demo",
+          chatId: "oc_chat_current",
+          surfaceType: "thread",
+          surfaceRef: "omt_current",
+          text: "/plan 帮我先梳理这个仓库的改造方案，不要直接改代码",
+        }),
+        expect.objectContaining({
+          onProgress: expect.any(Function),
+        }),
+      );
     });
     await vi.waitFor(() => {
       expect(apiClient.replyInteractiveCard).toHaveBeenCalledWith(
@@ -905,17 +972,21 @@ describe("FeishuCardActionService", () => {
       },
     });
 
-    expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
-      channel: "feishu",
-      peerId: "ou_demo",
-      chatId: "oc_dm_card",
-      chatType: "p2p",
-      text: "/ca project list",
-    }));
     expect(result).toMatchObject({
       toast: {
         type: "info",
       },
+    });
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_dm_card",
+        chatType: "p2p",
+        text: "/ca project list",
+      }));
     });
 
     deferred.resolve([
@@ -973,16 +1044,20 @@ describe("FeishuCardActionService", () => {
       },
     });
 
-    expect(bridgeService.handleMessage).toHaveBeenCalledWith({
-      channel: "feishu",
-      peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      text: "/ca project bind-current project-alpha",
-    });
     expect(result).toMatchObject({
       toast: {
         type: "info",
       },
+    });
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        text: "/ca project bind-current project-alpha",
+      }));
     });
 
     deferred.resolve([
@@ -1052,24 +1127,28 @@ describe("FeishuCardActionService", () => {
     });
 
     expect(bridgeService.getPendingPlanInteraction).toHaveBeenCalledWith("plan-1");
-    expect(bridgeService.handlePlanChoice).toHaveBeenCalledWith(
-      {
-        channel: "feishu",
-        peerId: "ou_demo",
-        chatId: "oc_chat_current",
-        surfaceType: "thread",
-        surfaceRef: "omt_current",
-        interactionId: "plan-1",
-        choiceId: "tests",
-      },
-      expect.objectContaining({
-        onProgress: expect.any(Function),
-      }),
-    );
     expect(result).toMatchObject({
       toast: {
         type: "info",
       },
+    });
+    expect(bridgeService.handlePlanChoice).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(bridgeService.handlePlanChoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: "feishu",
+          peerId: "ou_demo",
+          chatId: "oc_chat_current",
+          surfaceType: "thread",
+          surfaceRef: "omt_current",
+          interactionId: "plan-1",
+          choiceId: "tests",
+        }),
+        expect.objectContaining({
+          onProgress: expect.any(Function),
+        }),
+      );
     });
     await vi.waitFor(() => {
       expect(apiClient.replyInteractiveCard).toHaveBeenCalledWith(
