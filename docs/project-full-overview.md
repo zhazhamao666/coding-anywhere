@@ -127,6 +127,8 @@
 97. 因此，DM 中的 `/ca`、`/ca help`、未知子命令回退、`项目列表`、计划模式开关、模型/推理/速度下拉，以及 `在飞书继续` 后的新稳定态卡，都会继续沿用 DM 的会话语义：不会再冒出“当前群”“绑定到本群”这类群聊专用文案，也不会把 DM 的 surface 交互状态和设置偏好错误写成群聊键
 98. Codex 模型下拉现在不再依赖脆弱的手工白名单顺序：GPT 家族模型会被归一化为小写 CLI ID、在飞书里统一显示为 `GPT-*`，并按数值版本倒序排列；同版本再按 Codex / Base / Spark / Mini 等变体排序，非 GPT 自定义模型保留原始 ID 并排在 GPT 家族之后
 99. `CodexCliRunner` 现在同时兼容旧版 `item.*` JSONL 和新版 `event_msg` / `response_item` JSONL：可以从 `agent_message`、assistant `message` 和 `task_complete.last_agent_message` 提取最终正文，识别 `function_call` / `exec_command_end` 进度；当 Codex 进程非 0 退出且只留下 `task_complete(last_agent_message:null)` 时，会返回明确的 `CODEX_RUN_NO_ASSISTANT_OUTPUT`，不再把这类新版协议空输出误报成笼统的 `RUN_STREAM_FAILED`
+100. 群聊文本入口现在会按飞书官方 `message.mentions` 字段识别 mention；当用户通过 `@机器人 /ca ...` 或 `@机器人 继续处理...` 触发应用时，bridge 会先移除开头的机器人 mention 占位符，再进行 `/ca` 命令识别或 prompt 投递，避免仅开通群 @ 消息权限时群命令被静默过滤
+101. 桌面 completion 的 DM fallback 现在不再强制要求配置 `feishu.desktopOwnerOpenId`：bridge 会优先使用目标 native thread 已绑定的 DM 用户，其次使用单人 `allowlist`，最后使用本地唯一已见 DM 用户；只有出现多个 DM 候选且无法从线程绑定判断时才继续要求显式配置
 
 ### 2.3 当前仍未打通的部分
 
@@ -490,6 +492,7 @@ SQLite 持久化层。
 - root 配置
 - DM 旧会话快照绑定
 - DM Codex 原生线程绑定
+- 已见 DM 用户记录，用于桌面 completion 在未显式配置 owner 时安全推断单用户 fallback
 - 项目群主时间线 Codex 原生线程绑定
 - projects
 - project_chats
@@ -580,15 +583,21 @@ Feishu DM / Group Thread image
 
 ## 6.3 群主时间线
 
-当前实现不会把普通群主时间线消息直接送入 Codex。
+群消息入口统一来自飞书 `im.message.receive_v1` 事件，但是否能收到群消息首先取决于飞书开发者后台的事件订阅和消息权限：
 
-只有满足下面条件时才会进入 Codex：
+- 只有群 @ 机器人权限时，飞书只会推送 @ 当前机器人的群消息；普通未 @ 的群消息不会到达本服务
+- 若需要已绑定项目群主时间线里的普通消息不带 @ 也进入 Codex，需要申请并发布“获取群组中所有消息”相关权限
+- 长连接订阅方式仍需在开发者后台“事件与回调”里保存为“使用长连接接收事件”
 
-- 是群消息
-- 是原生话题线程内消息
-- 能解析出 `chat_id + thread_id`
-- 该线程已经在本地 SQLite 注册
-- 若开启 `feishu.requireGroupMention`，则消息内容中还必须带 mention
+本地收到群消息后，只有满足下面任一条件才会进入 Codex：
+
+- 是原生话题线程内消息，且能解析出 `chat_id + thread_id`
+- 是群主时间线里的 `/ca` 命令
+- 是已注册项目群主时间线里的普通文本消息
+
+当群消息以 `@机器人` 开头时，飞书事件正文中的文本通常包含 `@_user_n` 这类 mention 占位符。bridge 会使用官方 `message.mentions` 字段识别机器人 mention，并在路由前剥离开头的机器人 mention，因此 `@机器人 /ca project bind-current ...` 会按 `/ca project bind-current ...` 处理，`@机器人 继续处理` 会按 `继续处理` 投递给当前 surface。
+
+若开启 `feishu.requireGroupMention`，则已注册群线程消息必须带 mention 才会进入 Codex；该开关不会让飞书主动推送普通群消息，推送范围仍由飞书后台权限决定。
 
 ## 6.4 `/ca` 命令
 
@@ -893,10 +902,13 @@ channel + peer_id -> codex_thread_id
   - 配置了非空列表后，只有命中的用户消息才会进入 bridge
 - `feishu.requireGroupMention`
   - 群线程兜底模式
-  - 为 `true` 时，只有带 mention 的线程消息才会进入 Codex
+  - 为 `true` 时，只有带 mention 的线程消息才会进入 Codex；mention 依据飞书官方 `message.mentions` 字段识别
+  - 该配置只控制本地过滤，不替代飞书后台权限；若应用只有群 @ 机器人消息权限，未 @ 的普通群消息不会被飞书推送到长连接
 - `feishu.desktopOwnerOpenId`
-  - 桌面 completion 通知在无法路由到已有话题或项目群时，用于显式指定 DM fallback 的目标 open_id
-  - 当 `feishu.allowlist` 只有 1 个 open_id 时可省略；若 allowlist 为空或有多个候选，则 DM fallback 需要依赖该字段才能安全选人
+  - 桌面 completion 通知在无法路由到已有话题或项目群时，用于显式指定 DM fallback 的目标用户 `open_id`
+  - 这是“接收通知的人”的 `open_id`，不是机器人自身的 App ID 或机器人 ID
+  - 可省略场景：目标 native thread 已经绑定过某个 DM、`feishu.allowlist` 只有 1 个 open_id，或本地数据库里只有一个已见 DM 用户
+  - 若存在多个 DM 候选且无法通过线程绑定消歧，则仍应配置该字段，避免桌面任务结果发错人
 - `feishu.encryptKey`
   - 飞书长连接消息或回调启用加密推送时使用的解密密钥
 - `feishu.reconnectCount`
@@ -1048,7 +1060,7 @@ channel + peer_id -> codex_thread_id
 - 或者在已绑定项目群主时间线直接执行 `/ca thread create-current`
 
 1. 在已注册的飞书话题里发普通文本
-2. 若开启 `feishu.requireGroupMention`，则带上 mention
+2. 若开启 `feishu.requireGroupMention`，或应用只开通了群 @ 机器人消息权限，则带上 `@机器人`；bridge 应移除开头 mention 后再把正文送入 Codex
 3. 观察线程内状态更新与最终结果，确认终态卡会展示 `Codex 最终返回了什么` 的收敛正文，而完整 assistant 正文仍以下方线程内单独回复为准
 4. 检查 `/ops/projects`、`/ops/projects/:id/threads`、`/ops/threads/:id/runs`
 
@@ -1057,9 +1069,9 @@ channel + peer_id -> codex_thread_id
 - 数据库中已经存在对应的 `project_chats` 记录
 - 如需直接续跑已有 native thread，再额外准备一条 `codex_chat_bindings`
 
-1. 在已绑定项目群主时间线里发送普通文本
+1. 在已绑定项目群主时间线里发送普通文本；若应用没有“获取群组中所有消息”权限，则使用 `@机器人 普通文本`
 2. 观察状态更新与最终结果，确认普通群消息会继续进入当前绑定的 native `thread_id`
-3. 在同一群执行 `/ca thread switch <threadId>`，确认回执为“当前会话已就绪”卡，而不是新话题提示
+3. 在同一群执行 `/ca thread switch <threadId>`；若只开通群 @ 权限，则使用 `@机器人 /ca thread switch <threadId>`，确认回执为“当前会话已就绪”卡，而不是新话题提示
 4. 再发送一条普通文本，确认实际续跑的是刚切换的 thread
 
 ### 15.2.2 图片链路回归

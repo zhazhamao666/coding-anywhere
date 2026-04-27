@@ -163,12 +163,89 @@ describe("desktop completion routing", () => {
     });
   });
 
+  it("falls back to the only known DM peer when owner config and allowlist are empty", () => {
+    const harness = createRoutingHarness(harnesses, {
+      catalogThread: {
+        threadId: "thread-native-1",
+        projectKey: "project-key-1",
+        cwd: "D:/repo-one",
+      },
+    });
+    harness.store.recordDmPeer({
+      channel: "feishu",
+      peerId: "ou_seen_dm_user",
+      updatedAt: "2026-04-20T12:00:00.000Z",
+    });
+
+    const target = harness.bridge.resolveDesktopCompletionRoute({
+      threadId: "thread-native-1",
+      allowlist: [],
+    });
+
+    expect(target).toEqual({
+      mode: "dm",
+      peerId: "ou_seen_dm_user",
+    });
+  });
+
+  it("uses the DM binding for the native thread when multiple DM peers are known", () => {
+    const harness = createRoutingHarness(harnesses, {
+      catalogThread: {
+        threadId: "thread-native-1",
+        projectKey: "project-key-1",
+        cwd: "D:/repo-one",
+      },
+    });
+    harness.store.recordDmPeer({
+      channel: "feishu",
+      peerId: "ou_first",
+      updatedAt: "2026-04-20T11:00:00.000Z",
+    });
+    harness.store.recordDmPeer({
+      channel: "feishu",
+      peerId: "ou_second",
+      updatedAt: "2026-04-20T12:00:00.000Z",
+    });
+    harness.store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_first",
+      codexThreadId: "thread-native-1",
+    });
+
+    const target = harness.bridge.resolveDesktopCompletionRoute({
+      threadId: "thread-native-1",
+      allowlist: [],
+    });
+
+    expect(target).toEqual({
+      mode: "dm",
+      peerId: "ou_first",
+    });
+  });
+
   it("throws an explicit error when DM fallback is ambiguous", () => {
     const harness = createRoutingHarness(harnesses);
 
     expect(() => harness.bridge.resolveDesktopCompletionRoute({
       threadId: "thread-native-1",
       allowlist: ["ou_first", "ou_second"],
+    })).toThrowError("FEISHU_DESKTOP_OWNER_OPEN_ID_REQUIRED_FOR_DM_FALLBACK");
+  });
+
+  it("throws when multiple DM peers are known and no owner can be inferred", () => {
+    const harness = createRoutingHarness(harnesses);
+    harness.store.recordDmPeer({
+      channel: "feishu",
+      peerId: "ou_first",
+    });
+    harness.store.recordDmPeer({
+      channel: "feishu",
+      peerId: "ou_second",
+    });
+
+    expect(() => harness.bridge.resolveDesktopCompletionRoute({
+      threadId: "thread-native-1",
+      allowlist: [],
     })).toThrowError("FEISHU_DESKTOP_OWNER_OPEN_ID_REQUIRED_FOR_DM_FALLBACK");
   });
 

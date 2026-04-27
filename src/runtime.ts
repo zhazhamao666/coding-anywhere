@@ -111,6 +111,7 @@ export async function createRuntime(
     pendingAssetStore: store,
     isCodexGroupChat: chatId => Boolean(store.getProjectChatByChatId(chatId)),
     requireGroupMention: config.feishu.requireGroupMention,
+    recordDmPeer: input => store.recordDmPeer(input),
     logger: overrides?.logger,
   });
   const cardActionService = new FeishuCardActionService({

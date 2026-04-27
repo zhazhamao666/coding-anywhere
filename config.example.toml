@@ -23,7 +23,9 @@ apiBaseUrl = "https://open.feishu.cn/open-apis"
 allowlist = []
 # Add trusted user open_id values here to enable user gating, for example:
 # allowlist = ["ou_xxx", "ou_yyy"]
-# Optional when allowlist has exactly one owner; set this to force desktop-completion DM fallback.
+# Optional. Set this to force desktop-completion DM fallback when multiple users may DM the bot.
+# If omitted, CA can infer the target from an exact DM thread binding, a single allowlist user,
+# or the only DM user seen by this local bridge instance.
 desktopOwnerOpenId = ""
 requireGroupMention = false
 encryptKey = ""

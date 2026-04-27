@@ -144,11 +144,13 @@ describe("FeishuAdapter", () => {
       handleMessage: vi.fn(async () => [{ kind: "assistant", text: "未配置 allowlist 也可使用" } satisfies BridgeReply]),
     };
     const apiClient = createApiClientDouble();
+    const recordDmPeer = vi.fn();
 
     const adapter = new FeishuAdapter({
       allowlist: [],
       bridgeService,
       apiClient,
+      recordDmPeer,
     });
 
     await adapter.handleEnvelope({
@@ -181,6 +183,10 @@ describe("FeishuAdapter", () => {
       }),
     );
     expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_anyone", "未配置 allowlist 也可使用");
+    expect(recordDmPeer).toHaveBeenCalledWith({
+      channel: "feishu",
+      peerId: "ou_anyone",
+    });
   });
 
   it("deduplicates retries by message_id when event_id is missing", async () => {

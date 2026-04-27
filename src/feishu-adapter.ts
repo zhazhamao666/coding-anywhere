@@ -107,6 +107,7 @@ export interface FeishuEnvelope {
       message_type?: string;
       thread_id?: string;
       content?: string;
+      mentions?: FeishuMention[];
     };
     sender?: {
       sender_id?: {
@@ -117,6 +118,11 @@ export interface FeishuEnvelope {
 }
 
 type FeishuEnvelopeMessage = NonNullable<NonNullable<FeishuEnvelope["event"]>["message"]>;
+
+interface FeishuMention {
+  key?: string;
+  mentioned_type?: string;
+}
 
 export class FeishuAdapter {
   private readonly seenMessageKeys = new Set<string>();
@@ -135,6 +141,10 @@ export class FeishuAdapter {
       inboundAssetRootDir?: string;
       isCodexGroupChat?: (chatId: string) => boolean;
       requireGroupMention?: boolean;
+      recordDmPeer?: (input: {
+        channel: string;
+        peerId: string;
+      }) => void;
       logger?: {
         info?: (message: string) => void;
       };
@@ -164,6 +174,13 @@ export class FeishuAdapter {
       return;
     }
 
+    if (message.chat_type === "p2p") {
+      this.dependencies.recordDmPeer?.({
+        channel: "feishu",
+        peerId,
+      });
+    }
+
     if (message.message_type === "image") {
       try {
         await this.handleInboundImage({
@@ -185,7 +202,14 @@ export class FeishuAdapter {
     }
 
     const parsedContent = parseFeishuTextContent(message.content);
-    if (!parsedContent.text) {
+    const normalizedText = normalizeFeishuTextForRouting({
+      text: parsedContent.text,
+      chatType: message.chat_type,
+      messageMentions: message.mentions,
+      contentMentions: parsedContent.mentions,
+      requireGroupMention: Boolean(this.dependencies.requireGroupMention),
+    });
+    if (!normalizedText.text) {
       return;
     }
 
@@ -203,7 +227,10 @@ export class FeishuAdapter {
       message.chat_type === "group" &&
       !!message.chat_id &&
       !message.thread_id &&
-      isBridgeCommandMessage(parsedContent.text);
+      isBridgeCommandMessage(normalizedText.commandText ?? normalizedText.text);
+    const bridgeText = isGroupCommand
+      ? normalizedText.commandText ?? normalizedText.text
+      : normalizedText.text;
 
     if (!isDm && !isGroupThread && !isGroupCommand && !isRegisteredGroupChat) {
       return;
@@ -212,7 +239,7 @@ export class FeishuAdapter {
     if (
       isGroupThread &&
       this.dependencies.requireGroupMention &&
-      !parsedContent.hasMention
+      !normalizedText.hasMention
     ) {
       return;
     }
@@ -224,7 +251,7 @@ export class FeishuAdapter {
         messageId: message.message_id,
         chatId: message.chat_id,
         threadId: message.thread_id,
-        text: parsedContent.text,
+        text: bridgeText,
       }),
     );
 
@@ -240,7 +267,7 @@ export class FeishuAdapter {
               chatId: message.chat_id,
               surfaceType: "thread",
               surfaceRef: message.thread_id,
-              text: parsedContent.text,
+              text: bridgeText,
             }
           : (isGroupCommand || isRegisteredGroupChat)
             ? {
@@ -248,13 +275,13 @@ export class FeishuAdapter {
                 peerId,
                 chatType: normalizedChatType,
                 chatId: message.chat_id,
-                text: parsedContent.text,
+                text: bridgeText,
               }
           : {
               channel: "feishu",
               peerId,
               chatType: normalizedChatType,
-              text: parsedContent.text,
+              text: bridgeText,
             },
         {
           onProgress: async snapshot => {
@@ -545,11 +572,11 @@ function formatImageFallbackText(reply: Extract<BridgeReply, { kind: "image" }>)
     : "图片结果已生成。";
 }
 
-function parseFeishuTextContent(content?: string): { text?: string; hasMention: boolean } {
+function parseFeishuTextContent(content?: string): { text?: string; mentions: FeishuMention[] } {
   if (!content) {
     return {
       text: undefined,
-      hasMention: false,
+      mentions: [],
     };
   }
 
@@ -557,14 +584,121 @@ function parseFeishuTextContent(content?: string): { text?: string; hasMention: 
     const parsed = JSON.parse(content) as { text?: string; mentions?: unknown[] };
     return {
       text: parsed.text?.trim() || undefined,
-      hasMention: Array.isArray(parsed.mentions) ? parsed.mentions.length > 0 : false,
+      mentions: parseFeishuMentions(parsed.mentions),
     };
   } catch {
     return {
       text: content.trim() || undefined,
+      mentions: [],
+    };
+  }
+}
+
+function normalizeFeishuTextForRouting(input: {
+  text?: string;
+  chatType?: string;
+  messageMentions?: FeishuMention[];
+  contentMentions?: FeishuMention[];
+  requireGroupMention: boolean;
+}): { text?: string; commandText?: string; hasMention: boolean } {
+  const text = input.text?.trim();
+  if (!text) {
+    return {
+      text: undefined,
+      commandText: undefined,
       hasMention: false,
     };
   }
+
+  const mentions = mergeFeishuMentions(input.messageMentions, input.contentMentions);
+  const hasMention = mentions.length > 0;
+  if (input.chatType !== "group" || !hasMention) {
+    return {
+      text,
+      commandText: text,
+      hasMention,
+    };
+  }
+
+  const allMentionKeys = mentions
+    .map(mention => mention.key?.trim())
+    .filter((key): key is string => Boolean(key));
+  const botMentionKeys = mentions
+    .filter(mention => mention.mentioned_type?.toLowerCase() === "bot")
+    .map(mention => mention.key?.trim())
+    .filter((key): key is string => Boolean(key));
+
+  const commandText = stripLeadingMentionKeys(text, allMentionKeys);
+  const normalizedText = botMentionKeys.length > 0
+    ? stripLeadingMentionKeys(text, botMentionKeys)
+    : input.requireGroupMention
+      ? commandText
+      : text;
+
+  return {
+    text: normalizedText.trim() || undefined,
+    commandText: commandText.trim() || undefined,
+    hasMention,
+  };
+}
+
+function mergeFeishuMentions(
+  messageMentions?: FeishuMention[],
+  contentMentions?: FeishuMention[],
+): FeishuMention[] {
+  return [
+    ...parseFeishuMentions(messageMentions),
+    ...parseFeishuMentions(contentMentions),
+  ];
+}
+
+function parseFeishuMentions(value?: unknown): FeishuMention[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const mentions: FeishuMention[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const candidate = entry as Record<string, unknown>;
+    const key = typeof candidate.key === "string" ? candidate.key.trim() : undefined;
+    const mentionedType = typeof candidate.mentioned_type === "string"
+      ? candidate.mentioned_type.trim()
+      : undefined;
+    if (!key) {
+      continue;
+    }
+
+    mentions.push(mentionedType ? { key, mentioned_type: mentionedType } : { key });
+  }
+
+  return mentions;
+}
+
+function stripLeadingMentionKeys(text: string, mentionKeys: string[]): string {
+  const uniqueKeys = [...new Set(mentionKeys.filter(key => key.length > 0))]
+    .sort((left, right) => right.length - left.length);
+  if (uniqueKeys.length === 0) {
+    return text.trim();
+  }
+
+  let remaining = text.trimStart();
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const key of uniqueKeys) {
+      if (remaining.startsWith(key)) {
+        remaining = remaining.slice(key.length).trimStart();
+        stripped = true;
+        break;
+      }
+    }
+  }
+
+  return remaining.trim();
 }
 
 function parseFeishuImageContent(content?: string): string | undefined {

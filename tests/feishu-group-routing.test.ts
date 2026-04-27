@@ -112,6 +112,55 @@ describe("FeishuAdapter group thread routing", () => {
     expect(apiClient.replyTextMessage).toHaveBeenCalledWith("om_2", "[ca] ok");
   });
 
+  it("routes at-bot group mainline CA commands after stripping the bot mention placeholder", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(
+        async () => [{ kind: "system", text: "[ca] mentioned ok" } satisfies BridgeReply],
+      ),
+    };
+
+    const apiClient = createApiClientDouble();
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_user"],
+      bridgeService,
+      apiClient,
+    });
+
+    await adapter.handleEnvelope({
+      header: { event_id: "evt-at-command-1" },
+      event: {
+        sender: { sender_id: { open_id: "ou_user" } },
+        message: {
+          message_id: "om_at_command_1",
+          chat_id: "oc_chat_1",
+          chat_type: "group",
+          message_type: "text",
+          content: JSON.stringify({ text: "@_user_1 /ca project current" }),
+          mentions: [
+            {
+              key: "@_user_1",
+              mentioned_type: "bot",
+            },
+          ],
+        },
+      },
+    } as any);
+
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(
+      {
+        channel: "feishu",
+        peerId: "ou_user",
+        chatId: "oc_chat_1",
+        chatType: "group",
+        text: "/ca project current",
+      },
+      {
+        onProgress: expect.any(Function),
+      },
+    );
+    expect(apiClient.replyTextMessage).toHaveBeenCalledWith("om_at_command_1", "[ca] mentioned ok");
+  });
+
   it("stages thread image messages on the exact thread surface and replies inline", async () => {
     const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-thread-image-"));
 
