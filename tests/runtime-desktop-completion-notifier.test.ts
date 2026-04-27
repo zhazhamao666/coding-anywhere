@@ -428,6 +428,20 @@ describe("runtime desktop completion notifier", () => {
     expect(harness.runtime.store.getCodexThreadDesktopNotificationState("thread-native-1")).toBeUndefined();
   });
 
+  it("can disable desktop completion polling for fixture-scoped live validation", async () => {
+    const harness = await createHarness(harnesses, {
+      desktopCompletionPollingEnabled: false,
+    });
+
+    await harness.runtime.start();
+
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(harness.runtime.store.getCodexThreadWatchState("thread-native-1")).toBeUndefined();
+    expect(harness.apiClient.sendInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.apiClient.updateInteractiveCard).not.toHaveBeenCalled();
+    expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+  });
+
   it("prefers a newer running turn over an older unseen completion when the service resumes polling", async () => {
     const harness = await createHarness(harnesses);
 
@@ -505,6 +519,7 @@ async function createHarness(
       source: string;
       sourceInfo?: CodexCatalogThread["sourceInfo"];
     }>;
+    desktopCompletionPollingEnabled?: boolean;
   },
 ): Promise<RuntimeHarness> {
   const rootDir = mkdtempSync(path.join(tmpdir(), "runtime-desktop-completion-"));
@@ -543,6 +558,7 @@ async function createHarness(
     }),
     createCodexCatalog: () => codexCatalog,
     desktopCompletionPollIntervalMs: 20,
+    desktopCompletionPollingEnabled: input?.desktopCompletionPollingEnabled,
   });
 
   const harness: RuntimeHarness = {

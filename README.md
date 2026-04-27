@@ -156,7 +156,8 @@ codex --version
 
 - 首次启动时如果本地还没有 `data/bridge.db`，程序会自动创建 SQLite 数据库和所需表结构
 - 仓库不会提交真实 `config.toml`，所以新环境仍然需要先执行 `npm run init:config` 并补齐配置，服务才会正常启动
-- 如果你会跑真实飞书 live smoke，默认就只允许落到 `coding-anywhere-autotest` 固定夹具：`npm run test:feishu:live` / `test:feishu:live:dm` 会先把 DM 切到该项目；`npm run test:feishu:live:group` 只允许命中已绑定好的测试群 `coding-anywhere-autotest`，也会拒绝其他群名。如确实要覆盖到别的项目或群夹具，必须显式设置 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
+- 如果你会跑真实飞书 live smoke，默认就只允许落到 `coding-anywhere-autotest` 固定夹具：`npm run test:feishu:live` / `test:feishu:live:dm` 会先把 DM 切到该项目，并走 `/ca`、项目列表、状态、会话入口；`npm run test:feishu:live:group` 只允许命中已绑定好的测试群 `coding-anywhere-autotest`，并走项目自检、`/ca`、项目列表、当前项目、状态，也会拒绝其他群名。如确实要覆盖到别的项目或群夹具，必须显式设置 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
+- 真实联调启动 bridge 时可设置 `BRIDGE_DISABLE_DESKTOP_COMPLETION_POLLING=1`，避免补发历史桌面 completion 通知到非本次测试夹具
 
 ## 最小使用方式
 

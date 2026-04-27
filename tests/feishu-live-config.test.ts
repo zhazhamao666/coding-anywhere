@@ -7,6 +7,7 @@ import {
   assertFeishuLiveTargetConfigured,
   loadFeishuLiveTestSettings,
 } from "../src/feishu-live-test-settings.js";
+import { buildFeishuLiveJourney } from "../src/feishu-live-journey.js";
 
 const repoRoot = path.resolve(__dirname, "..");
 
@@ -237,5 +238,79 @@ describe("feishu live test settings", () => {
     expect(settings.surface).toBe("group");
     expect(settings.conversationName).toBe("coding-anywhere");
     expect(settings.allowNonAutotest).toBe(true);
+  });
+});
+
+describe("feishu live user journeys", () => {
+  it("covers the DM project entry, card navigation, status, and session journeys", () => {
+    const journey = buildFeishuLiveJourney({
+      surface: "dm",
+      projectKey: "coding-anywhere-autotest",
+    });
+
+    expect(journey.name).toBe("dm");
+    expect(journey.steps).toMatchObject([
+      {
+        kind: "command",
+        text: "/ca project switch coding-anywhere-autotest",
+        expectText: ["当前项目已切换"],
+      },
+      {
+        kind: "command",
+        text: "/ca",
+        expectAnyText: ["当前项目已选择", "当前会话已就绪"],
+      },
+      {
+        kind: "click",
+        label: "查看项目",
+        expectText: ["项目列表", "进入项目"],
+      },
+      {
+        kind: "command",
+        text: "/ca status",
+        expectText: ["运行状态"],
+      },
+      {
+        kind: "command",
+        text: "/ca session",
+        expectAnyText: ["当前项目已选择", "当前会话已就绪"],
+      },
+    ]);
+  });
+
+  it("covers the group fixture self-check, project list, current project, and status journeys", () => {
+    const journey = buildFeishuLiveJourney({
+      surface: "group",
+      projectKey: "coding-anywhere-autotest",
+    });
+
+    expect(journey.name).toBe("group");
+    expect(journey.steps).toMatchObject([
+      {
+        kind: "command",
+        text: "/ca project current",
+        expectText: ["当前项目", "coding-anywhere-autotest"],
+      },
+      {
+        kind: "command",
+        text: "/ca",
+        expectAnyText: ["当前群已绑定项目", "当前会话已就绪"],
+      },
+      {
+        kind: "command",
+        text: "/ca project list",
+        expectText: ["项目列表", "已绑定当前群"],
+      },
+      {
+        kind: "click",
+        label: "当前项目",
+        expectText: ["当前项目", "coding-anywhere-autotest"],
+      },
+      {
+        kind: "command",
+        text: "/ca status",
+        expectText: ["运行状态"],
+      },
+    ]);
   });
 });

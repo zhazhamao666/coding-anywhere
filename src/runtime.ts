@@ -65,6 +65,7 @@ export async function createRuntime(
     ) => WsClientLike;
     createCodexCatalog?: () => CodexCatalogLike | undefined;
     desktopCompletionPollIntervalMs?: number;
+    desktopCompletionPollingEnabled?: boolean;
     logger?: Logger;
   },
 ) {
@@ -189,6 +190,9 @@ export async function createRuntime(
   let idleReaper: NodeJS.Timeout | undefined;
   let desktopCompletionPoller: NodeJS.Timeout | undefined;
   let desktopCompletionPollInFlight = false;
+  const desktopCompletionPollingEnabled =
+    overrides?.desktopCompletionPollingEnabled ??
+    process.env.BRIDGE_DISABLE_DESKTOP_COMPLETION_POLLING !== "1";
 
   const runDesktopCompletionPoll = async () => {
     if (desktopCompletionPollInFlight) {
@@ -234,10 +238,12 @@ export async function createRuntime(
           ttlHours: config.root.idleTtlHours,
         });
       }, 5 * 60 * 1000);
-      desktopCompletionPoller = setInterval(() => {
+      if (desktopCompletionPollingEnabled) {
+        desktopCompletionPoller = setInterval(() => {
+          void runDesktopCompletionPoll();
+        }, overrides?.desktopCompletionPollIntervalMs ?? DEFAULT_DESKTOP_COMPLETION_POLL_INTERVAL_MS);
         void runDesktopCompletionPoll();
-      }, overrides?.desktopCompletionPollIntervalMs ?? DEFAULT_DESKTOP_COMPLETION_POLL_INTERVAL_MS);
-      void runDesktopCompletionPoll();
+      }
     },
     async stop() {
       if (idleReaper) {

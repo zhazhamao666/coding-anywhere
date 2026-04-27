@@ -1,25 +1,59 @@
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const surface = normalizeSurface(process.argv[2] ?? process.env.FEISHU_LIVE_SURFACE);
-const command = process.platform === "win32" ? "npx.cmd" : "npx";
-const result = spawnSync(
-  command,
-  ["playwright", "test", "-c", "playwright.config.ts", "--project=feishu-live"],
-  {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      FEISHU_LIVE_SURFACE: surface,
+if (isMainModule(import.meta.url)) {
+  const surface = normalizeSurface(process.argv[2] ?? process.env.FEISHU_LIVE_SURFACE);
+  const command = buildFeishuLivePlaywrightCommand(process.platform);
+  const result = spawnSync(
+    command.file,
+    command.args,
+    {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        FEISHU_LIVE_SURFACE: surface,
+      },
     },
-  },
-);
+  );
 
-if (result.error) {
-  throw result.error;
+  if (result.error) {
+    throw result.error;
+  }
+
+  process.exit(result.status ?? 1);
 }
 
-process.exit(result.status ?? 1);
+export function buildFeishuLivePlaywrightCommand(platform = process.platform) {
+  if (platform === "win32") {
+    return {
+      file: "cmd.exe",
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        "npm exec -- playwright test -c playwright.config.ts --project=feishu-live",
+      ],
+    };
+  }
 
-function normalizeSurface(rawSurface) {
+  return {
+    file: "npm",
+    args: [
+      "exec",
+      "--",
+      "playwright",
+      "test",
+      "-c",
+      "playwright.config.ts",
+      "--project=feishu-live",
+    ],
+  };
+}
+
+export function normalizeSurface(rawSurface) {
   return rawSurface?.trim().toLowerCase() === "group" ? "group" : "dm";
+}
+
+function isMainModule(metaUrl) {
+  return process.argv[1] && fileURLToPath(metaUrl) === process.argv[1];
 }
