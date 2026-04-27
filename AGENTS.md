@@ -20,6 +20,18 @@
 - 在提交代码前，确认总文档是否仍然准确反映当前实现。
 - 允许将临时计划文档写入 `plan/` 目录辅助工作，但该目录内容视为本地工作产物，不提交到 git。
 
+## Real Feishu Validation Rule
+
+- 任何真实飞书联调都默认只能使用 `coding-anywhere-autotest` 夹具；这里的“真实联调”包括 `npm run test:feishu:live*`、Playwright/浏览器中的手工验证、以及 Codex 在执行任务时主动发起的新增真实飞书验证。严禁直接在 `coding-anywhere` 或其他业务项目/业务群里试验。
+- 允许使用的真实飞书 surface 只有两类：
+  - 机器人测试 DM，并且当前项目必须是 `coding-anywhere-autotest`
+  - 名称为 `coding-anywhere-autotest` 的测试群，并且该群已绑定 `coding-anywhere-autotest`
+- 不论是否走仓库内置 smoke 脚本，只要准备向飞书发送真实测试消息，必须先做夹具自检：
+  - DM：先执行 `/ca project switch coding-anywhere-autotest` 或 `/ca project current`，确认当前项目就是 `coding-anywhere-autotest`
+  - 群聊：先确认当前群名就是 `coding-anywhere-autotest`，再执行 `/ca project current`，确认当前群绑定项目就是 `coding-anywhere-autotest`
+- 如果当前场景不满足上述夹具条件，必须停止真实联调；优先改用 mock、单测、补新的 live smoke、或先和用户确认是否要建立新的测试夹具。禁止为了“先试一下”直接改绑业务群、切换业务项目或在未知群里发真实消息。
+- 除非用户明确要求并再次确认，禁止在真实联调过程中自动绑定/解绑任何非测试群；群绑定修复只能针对专用测试群进行，且应作为单独步骤执行。
+
 ## Feishu Development Rule
 
 - 只要改动涉及飞书 SDK、事件与回调、长连接、消息卡片、CardKit、消息/群组 API、线程/话题、权限或开发者后台配置，必须先使用 `chrome-devtools` 访问飞书开放平台最新官方文档核实方案与字段，再开始实现；禁止仅凭记忆、本地 SDK README、旧报错经验或搜索摘要直接下结论。
