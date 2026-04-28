@@ -82,6 +82,49 @@ describe("DM Codex browser", () => {
     expect(switchCardText).toContain("下一条普通消息会在该项目下创建新会话");
   });
 
+  it("switches the current DM project by the unique display name used by live fixtures", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere-autotest");
+    const catalogProject = {
+      projectKey: "encoded-autotest-project",
+      cwd: projectCwd,
+      displayName: "coding-anywhere-autotest",
+      threadCount: 1,
+      activeThreadCount: 1,
+      lastUpdatedAt: "2026-04-28T00:00:00.000Z",
+      gitBranch: "main",
+    };
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: {
+        listProjects: vi.fn(() => [catalogProject]),
+        getProject: vi.fn((projectKey: string) =>
+          projectKey === catalogProject.projectKey ? catalogProject : undefined
+        ),
+        listThreads: vi.fn(() => []),
+        getThread: vi.fn(() => undefined),
+        listRecentConversation: vi.fn(() => []),
+      },
+    } as any);
+
+    const switchReplies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca project switch coding-anywhere-autotest",
+    });
+
+    expect(switchReplies).toHaveLength(1);
+    expect(switchReplies[0]).toMatchObject({ kind: "card" });
+    expect((store as any).getCodexProjectSelection("feishu", "ou_demo")).toMatchObject({
+      projectKey: "encoded-autotest-project",
+    });
+
+    const switchCardText = JSON.stringify((switchReplies[0] as { card: Record<string, unknown> }).card);
+    expect(switchCardText).toContain("当前项目已切换");
+    expect(switchCardText).toContain("coding-anywhere-autotest");
+    expect(switchCardText).not.toContain("项目不可用");
+  });
+
   it("clears an existing DM thread binding when switching to another project", async () => {
     store.bindCodexWindow({
       channel: "feishu",

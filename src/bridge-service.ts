@@ -47,6 +47,7 @@ import type {
   CodexCatalogThread,
   CodexCatalogThreadSourceInfo,
   PendingPlanInteractionRecord,
+  ProjectRecord,
   RootProfile,
   StableSessionCardModel,
   ProgressCardState,
@@ -1220,7 +1221,7 @@ export class BridgeService {
   ): Promise<BridgeReply[]> {
     const [action = "help", rawProjectId, rawChatIdOrCwd, rawCwdOrName, ...rest] = args;
     const projectCommandHelp =
-      `[ca] project commands: ${BRIDGE_COMMAND_PREFIX} project bind <projectId> <chatId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project bind-current <projectId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project bind-current <projectKey>, ${BRIDGE_COMMAND_PREFIX} project current, ${BRIDGE_COMMAND_PREFIX} project list, ${BRIDGE_COMMAND_PREFIX} project switch <projectKey>`;
+      `[ca] project commands: ${BRIDGE_COMMAND_PREFIX} project bind <projectId> <chatId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project bind-current <projectId> <cwd> [name], ${BRIDGE_COMMAND_PREFIX} project bind-current <projectKey|name>, ${BRIDGE_COMMAND_PREFIX} project current, ${BRIDGE_COMMAND_PREFIX} project list, ${BRIDGE_COMMAND_PREFIX} project switch <projectKey|name>`;
 
     if (action === "list") {
       if (this.isDmContext(input) && this.dependencies.codexCatalog) {
@@ -1240,7 +1241,7 @@ export class BridgeService {
         return [{ kind: "system", text: projectCommandHelp }];
       }
 
-      const project = this.dependencies.codexCatalog.getProject(rawProjectId);
+      const project = this.lookupCodexCatalogProject(rawProjectId);
       if (!project) {
         return [this.buildCodexProjectUnavailableCardReply(input)];
       }
@@ -1254,9 +1255,7 @@ export class BridgeService {
         return [{ kind: "system", text: projectCommandHelp }];
       }
 
-      const project = this.dependencies.codexCatalog.getProject(rawProjectId, {
-        includeArchived: true,
-      });
+      const project = this.lookupCodexCatalogProject(rawProjectId);
       if (!project) {
         return [this.buildCodexProjectUnavailableCardReply(input)];
       }
@@ -1751,9 +1750,7 @@ export class BridgeService {
       throw new Error("CODEX_CATALOG_NOT_CONFIGURED");
     }
 
-    const project = this.dependencies.codexCatalog.getProject(projectKey, {
-      includeArchived: true,
-    });
+    const project = this.lookupCodexCatalogProject(projectKey);
     if (!project) {
       return this.buildCodexProjectUnavailableCardReply(input);
     }
@@ -3730,6 +3727,63 @@ export class BridgeService {
       .filter((binding): binding is CatalogProjectChatBinding => Boolean(binding));
   }
 
+  private lookupCodexCatalogProject(projectRef: string): CodexCatalogProject | undefined {
+    if (!this.dependencies.codexCatalog) {
+      return undefined;
+    }
+
+    const trimmedRef = projectRef.trim();
+    if (!trimmedRef) {
+      return undefined;
+    }
+
+    const exactProject = this.dependencies.codexCatalog.getProject(trimmedRef, {
+      includeArchived: true,
+    });
+    if (exactProject) {
+      return exactProject;
+    }
+
+    const projects = this.dependencies.codexCatalog.listProjects({
+      includeArchived: true,
+    });
+    const localProject = this.lookupStoreProjectRecordByRef(trimmedRef);
+    if (localProject) {
+      const projectByCwd = projects.find(project =>
+        normalizePathKey(project.cwd) === normalizePathKey(localProject.cwd)
+      );
+      if (projectByCwd) {
+        return projectByCwd;
+      }
+    }
+
+    const lookupKey = normalizeProjectLookupKey(trimmedRef);
+    const projectByUniqueName = projects.filter(project =>
+      normalizeProjectLookupKey(project.displayName) === lookupKey ||
+      normalizeProjectLookupKey(path.basename(project.cwd)) === lookupKey
+    );
+
+    return projectByUniqueName.length === 1 ? projectByUniqueName[0] : undefined;
+  }
+
+  private lookupStoreProjectRecordByRef(projectRef: string): ProjectRecord | undefined {
+    const exactProject = this.dependencies.store.getProject(projectRef);
+    if (exactProject) {
+      return exactProject;
+    }
+
+    const lookupKey = normalizeProjectLookupKey(projectRef);
+    const matchingProjects = this.dependencies.store.listProjects()
+      .filter(project =>
+        normalizeProjectLookupKey(project.projectId) === lookupKey ||
+        normalizeProjectLookupKey(project.name) === lookupKey
+      )
+      .map(project => this.dependencies.store.getProject(project.projectId))
+      .filter((project): project is ProjectRecord => Boolean(project));
+
+    return matchingProjects.length === 1 ? matchingProjects[0] : undefined;
+  }
+
   private lookupCatalogProjectForSurface(input: BridgeMessageInput): {
     projectId: string;
     project: CodexCatalogProject;
@@ -4226,6 +4280,10 @@ function normalizePathKey(value: string): string {
     .replace(/\\/g, "/")
     .replace(/\/+/g, "/")
     .toLowerCase();
+}
+
+function normalizeProjectLookupKey(value: string): string {
+  return value.trim().toLocaleLowerCase("en-US");
 }
 
 function buildDesktopCompletionDmTarget(input: {

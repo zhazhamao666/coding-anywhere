@@ -47,7 +47,7 @@
 17. 在群主时间线通过 `/ca project current` 查询当前群绑定到哪个项目
 18. 通过 `/ca` 返回导航卡，集中展示当前上下文、项目概览、线程摘要和按钮化操作入口；`/ca hub` 继续兼容到同一张卡
 19. DM 中的 `project list` 现在会直接读取 Codex `state_*.sqlite`，返回 Codex 派生项目列表卡片，而不是依赖 CA 本地项目清单
-20. DM 中可以从 Codex 项目列表进入线程列表，也可以先把“当前这个飞书聊天窗口”切到某个 Codex 项目，再决定是否查看线程或创建新会话
+20. DM 中可以从 Codex 项目列表进入线程列表，也可以先把“当前这个飞书聊天窗口”切到某个 Codex 项目，再决定是否查看线程或创建新会话；手输切换命令时可使用真实 `projectKey` 或唯一项目显示名，bridge 会归一化保存真实 catalog key
 21. DM 和已绑定项目群主时间线中都可以把“当前这个飞书对话窗口”切换到某个 Codex 原生线程
 22. DM 中未绑定窗口、以及已绑定项目群主时间线中未绑定线程的群聊首次收到普通 prompt 时，会优先在当前项目路径下创建新的 native Codex thread；如果 DM 还没选项目，则回退到 root 路径，再把当前窗口绑定到该 `thread_id`
 23. 通过 `project current` 和线程创建成功回执返回结构化摘要卡片
@@ -104,7 +104,7 @@
 74. Codex 偏好现在按“当前线程优先、当前 surface 兜底、系统默认回退”的顺序生效：已绑定 native thread 的 DM / 飞书线程会把设置记到 `thread_id` 级别；尚未绑定 native thread 的 DM、项目群或待创建线程 surface 则先记到当前 surface，并在后续创建新线程时继承
 75. `/ca session`、`/ca status` 以及具体对话卡现在都会附带三个 JSON 2.0 `select_static` 下拉选择器，允许在飞书里随时切换当前线程 / 当前 surface 的 `model`、`reasoning effort` 与 `speed`；选项文案和顺序会对齐 Codex App
 76. bridge 在需要显式覆盖 Codex 默认行为时，会把飞书侧选中的设置透传给 CLI：创建线程或续跑线程时分别写入 `codex exec -m <model>`、`-c model_reasoning_effort="..."`，以及速度相关的 `-c service_tier="fast"` / `-c features.fast_mode=...` 覆盖
-77. DM 中执行 `/ca project switch <projectKey>` 时，如果当前窗口还绑定着旧的 native Codex thread，bridge 现在会先解除这条旧绑定，再把“当前项目”切到目标项目；后续普通消息会在新项目下创建 fresh thread，而不是继续误跑旧项目
+77. DM 中执行 `/ca project switch <projectKey|name>` 时，如果当前窗口还绑定着旧的 native Codex thread，bridge 现在会先解除这条旧绑定，再把“当前项目”切到目标项目；后续普通消息会在新项目下创建 fresh thread，而不是继续误跑旧项目
 78. 如果 DM 当前保存了“已选项目”和“已绑线程”两个互相冲突的跨项目状态，bridge 现在会优先相信显式项目选择，并自动清理那条旧线程绑定，避免继续把普通消息送进错误项目
 79. Playwright 版真实飞书 live smoke 现在默认锁死到 `coding-anywhere-autotest` 夹具：`test:feishu:live` / `test:feishu:live:dm` 会先把测试 DM 切到该项目，`test:feishu:live:group` 只允许命中已绑定好的测试群 `coding-anywhere-autotest`，也会拒绝其他群名；如确实需要覆盖到别的项目或群夹具，必须显式设置危险开关 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
 80. 桌面 completion 通知卡的主按钮文案现在统一为“在飞书继续”，`continue_desktop_thread` 也已经覆盖三种接管路径：DM、已绑定飞书话题和项目群主时间线都会把目标 native Codex thread 接到对应飞书 surface，并统一落到“当前会话已就绪”稳定态主卡；其中项目群主时间线现在不再自动创建飞书话题，而是直接把当前群对话绑定到该 native thread
@@ -331,6 +331,7 @@ Windows 停止入口模块。
 - DM 绑定、群主时间线绑定或线程绑定的 native thread 解析
 - DM 中读取 Codex `state_*.sqlite` 的项目/线程目录
 - DM 中把当前窗口切换到选中的 Codex thread_id
+- 把手输项目引用解析为 Codex catalog 项目：优先精确 `projectKey`，其次按 CA 本地项目记录的 `cwd` 对齐，最后才接受唯一的项目显示名 / 目录名，并始终保存真实 catalog key
 - 在项目群中把选中的 native thread 直接绑定到当前群对话
 - 生成 `/ca` 导航卡内容
 - 让导航卡、运行状态卡、当前会话卡优先展示可读的项目 / 线程标签，并把 raw ID 降到辅助诊断层
@@ -613,10 +614,10 @@ Feishu DM / Group Thread image
 - `/ca logs`
 - `/ca project bind <projectId> <chatId> <cwd> [name]`
 - `/ca project bind-current <projectId> <cwd> [name]`
-- `/ca project bind-current <projectKey>`
+- `/ca project bind-current <projectKey|name>`
 - `/ca project current`
 - `/ca project list`
-- `/ca project switch <projectKey>`
+- `/ca project switch <projectKey|name>`
 - `/ca thread create <projectId> <title...>`
 - `/ca thread create-current <title...>`
 - `/ca thread list <projectId>`
@@ -629,6 +630,10 @@ Feishu DM / Group Thread image
   - 读取 Codex `state_*.sqlite`
   - 展示 Codex 派生项目列表
   - 每个项目行只展示一个主动作按钮，当前默认展示“进入项目”；如需查看线程，可先进入项目后再进入线程列表
+- DM 中 `/ca project switch <projectKey|name>`
+  - 先按真实 Codex `projectKey` 精确匹配
+  - 再按 CA 本地项目记录或唯一显示名 / 目录名解析到 Codex catalog 项目
+  - 成功后保存真实 `projectKey`，后续 `/ca`、`/ca session` 和普通消息创建新线程都沿用归一化后的项目
 - 群聊 / 已注册线程中的 `/ca project list`
   - 如果已配置 Codex catalog，也展示 Codex 派生项目列表
   - 群主时间线中会标出每个项目的群绑定状态，并允许点击未绑定项目直接绑定当前群
@@ -942,7 +947,7 @@ channel + peer_id -> codex_thread_id
 - `FEISHU_LIVE_TARGET_URL` 用于指定待测飞书网页入口；兼容旧变量 `FEISHU_LIVE_DM_URL`。未设置时只允许做 auth bootstrap，不允许发消息 smoke
 - `FEISHU_LIVE_SURFACE` 用于显式指定当前 smoke 场景：`dm` 或 `group`；默认是 `dm`
 - `FEISHU_LIVE_CONVERSATION_NAME` 可在 `FEISHU_LIVE_TARGET_URL` 只能打开 messenger 根页时指定左侧会话名；若 `FEISHU_LIVE_SURFACE=group` 且未显式提供，则默认固定为测试群 `coding-anywhere-autotest`；未开启危险开关时，group smoke 也会拒绝任何其他群名
-- `FEISHU_LIVE_PROJECT_KEY` 默认固定为 `coding-anywhere-autotest`；DM smoke 会先发送 `/ca project switch coding-anywhere-autotest`，群聊 smoke 则只校验当前群已经绑定到该项目，不自动改绑
+- `FEISHU_LIVE_PROJECT_KEY` 默认固定为 `coding-anywhere-autotest`；该值可以是 Codex 真实 `projectKey`，也可以是唯一项目显示名。DM smoke 会先发送 `/ca project switch coding-anywhere-autotest`，由 bridge 解析并保存真实 catalog key；群聊 smoke 则只校验当前群已经绑定到该项目，不自动改绑
 - 如果确实需要把 live smoke 覆盖到非测试项目或非默认测试群，必须显式设置 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`；默认会直接拒绝执行
 - 即便不是走 `npm run test:feishu:live*`，任何新增的真实飞书联调也必须复用同一套 autotest 夹具：DM 只能落到当前项目为 `coding-anywhere-autotest` 的测试 DM，群聊只能落到群名为 `coding-anywhere-autotest` 且已绑定该项目的测试群；在向飞书发送任何真实测试消息前，都必须先做一次 `/ca project current` 级别的就地确认
 - `FEISHU_LIVE_OPS_BASE_URL` 可显式覆盖 `/ops` 根地址；未设置时会从 `config.toml` 的 `[server]` 配置自动推导
@@ -1038,7 +1043,7 @@ channel + peer_id -> codex_thread_id
    - 若未配置 `feishu.allowlist`，这里不再把它视为阻塞项；如果手动配置了 allowlist，则确认其中没有 `ou_xxx` 这类占位值
 2. Windows 本地双击 `start-coding-anywhere.cmd`，确认会先执行 `npm run build`，成功后进入前台服务日志；如需手工验证，也可直接执行 `npm run start`
 3. 飞书 DM 发 `/ca`：如果当前还没选项目，应先看到只含 `查看项目` 的起始卡；如果已经进入具体线程，才应看到“当前会话已就绪”主卡
-4. 如果要验证“切换项目后不再误跑旧线程”，先在一个已绑定旧线程的 DM 中执行 `/ca project switch <projectKey>`，确认返回卡会明确提示“已退出之前绑定的线程”
+4. 如果要验证“切换项目后不再误跑旧线程”，先在一个已绑定旧线程的 DM 中执行 `/ca project switch <projectKey|name>`，确认返回卡会明确提示“已退出之前绑定的线程”
 5. 点击导航卡按钮验证回调
 6. 飞书 DM 发 `/ca status`
 7. 飞书 DM 发一个足够长的任务，再次点击“运行状态”，确认卡片能展示 `runId`、状态、耗时、最近工具与摘要
