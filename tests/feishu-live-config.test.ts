@@ -249,12 +249,14 @@ describe("feishu live user journeys", () => {
     });
 
     expect(journey.name).toBe("dm");
-    expect(journey.steps).toMatchObject([
+    expect(journey.setupSteps).toMatchObject([
       {
         kind: "command",
         text: "/ca project switch coding-anywhere-autotest",
         expectText: ["当前项目已切换"],
       },
+    ]);
+    expect(journey.steps).toMatchObject([
       {
         kind: "command",
         text: "/ca",
@@ -263,7 +265,17 @@ describe("feishu live user journeys", () => {
       {
         kind: "click",
         label: "查看项目",
-        expectText: ["项目列表", "进入项目"],
+        expectText: ["选择项目", "coding-anywhere-autotest", "进入项目"],
+      },
+      {
+        kind: "click",
+        label: "返回当前会话",
+        expectAnyText: ["当前项目已选择", "当前会话已就绪"],
+      },
+      {
+        kind: "click",
+        label: "切换线程",
+        expectText: ["选择线程"],
       },
       {
         kind: "command",
@@ -285,20 +297,22 @@ describe("feishu live user journeys", () => {
     });
 
     expect(journey.name).toBe("group");
-    expect(journey.steps).toMatchObject([
+    expect(journey.setupSteps).toMatchObject([
       {
         kind: "command",
         text: "/ca project current",
         expectText: ["当前项目", "coding-anywhere-autotest"],
       },
+    ]);
+    expect(journey.steps).toMatchObject([
       {
         kind: "command",
         text: "/ca",
         expectAnyText: ["当前群已绑定项目", "当前会话已就绪"],
       },
       {
-        kind: "command",
-        text: "/ca project list",
+        kind: "click",
+        label: "查看项目",
         expectText: ["项目列表", "已绑定当前群"],
       },
       {

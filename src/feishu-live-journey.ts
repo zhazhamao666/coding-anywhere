@@ -17,6 +17,7 @@ export type FeishuLiveJourneyStep = (
 
 export interface FeishuLiveJourney {
   name: FeishuLiveSurface;
+  setupSteps: FeishuLiveJourneyStep[];
   steps: FeishuLiveJourneyStep[];
 }
 
@@ -27,13 +28,15 @@ export function buildFeishuLiveJourney(input: {
   if (input.surface === "group") {
     return {
       name: "group",
-      steps: [
+      setupSteps: [
         {
           name: "确认测试群绑定的是 autotest 项目",
           kind: "command",
           text: "/ca project current",
           expectText: ["当前项目", input.projectKey],
         },
+      ],
+      steps: [
         {
           name: "打开群入口卡",
           kind: "command",
@@ -41,9 +44,9 @@ export function buildFeishuLiveJourney(input: {
           expectAnyText: ["当前群已绑定项目", "当前会话已就绪"],
         },
         {
-          name: "查看群项目列表",
-          kind: "command",
-          text: "/ca project list",
+          name: "从入口卡查看群项目列表",
+          kind: "click",
+          label: "查看项目",
           expectText: ["项目列表", "已绑定当前群"],
         },
         {
@@ -64,13 +67,15 @@ export function buildFeishuLiveJourney(input: {
 
   return {
     name: "dm",
-    steps: [
+    setupSteps: [
       {
         name: "确认测试 DM 已切到 autotest 项目",
         kind: "command",
         text: `/ca project switch ${input.projectKey}`,
         expectText: ["当前项目已切换"],
       },
+    ],
+    steps: [
       {
         name: "打开 DM 入口卡",
         kind: "command",
@@ -81,7 +86,19 @@ export function buildFeishuLiveJourney(input: {
         name: "点击入口卡查看项目列表",
         kind: "click",
         label: "查看项目",
-        expectText: ["项目列表", "进入项目"],
+        expectText: ["选择项目", input.projectKey, "进入项目"],
+      },
+      {
+        name: "从项目列表回到当前会话入口",
+        kind: "click",
+        label: "返回当前会话",
+        expectAnyText: ["当前项目已选择", "当前会话已就绪"],
+      },
+      {
+        name: "从当前入口查看线程列表",
+        kind: "click",
+        label: "切换线程",
+        expectText: ["选择线程"],
       },
       {
         name: "查看运行状态",

@@ -43,8 +43,18 @@ test("walks the main Feishu live UI journey on the configured autotest surface",
       await page.keyboard.press("Enter");
     };
 
+    for (const step of journey.setupSteps) {
+      await test.step(`夹具准备：${step.name}`, async () => {
+        await executeJourneyStep({
+          step,
+          page,
+          sendComposerText,
+        });
+      });
+    }
+
     for (const step of journey.steps) {
-      await test.step(step.name, async () => {
+      await test.step(`用户旅程：${step.name}`, async () => {
         await executeJourneyStep({
           step,
           page,
@@ -74,6 +84,9 @@ async function executeJourneyStep(input: {
   page: Page;
   sendComposerText: (text: string) => Promise<void>;
 }): Promise<void> {
+  const expectedTexts = input.step.expectText ?? input.step.expectAnyText ?? [];
+  const beforeCounts = await countVisibleTexts(input.page, expectedTexts);
+
   if (input.step.kind === "command") {
     await input.sendComposerText(input.step.text);
   } else {
@@ -82,12 +95,66 @@ async function executeJourneyStep(input: {
     await target.click();
   }
 
+  if (expectedTexts.length > 0) {
+    await expectFreshText(input.page, expectedTexts, beforeCounts);
+  }
   if (input.step.expectText) {
     await expectText(input.page, input.step.expectText);
   }
   if (input.step.expectAnyText) {
     await expectAnyText(input.page, input.step.expectAnyText);
   }
+}
+
+async function countVisibleTexts(
+  page: Page,
+  texts: string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (const text of texts.filter(Boolean)) {
+    counts.set(text, await countVisibleText(page, text));
+  }
+
+  return counts;
+}
+
+async function countVisibleText(
+  page: Page,
+  text: string,
+): Promise<number> {
+  const locator = page.getByText(text, { exact: false });
+  const count = await locator.count();
+  let visibleCount = 0;
+  for (let index = 0; index < count; index += 1) {
+    if (await locator.nth(index).isVisible().catch(() => false)) {
+      visibleCount += 1;
+    }
+  }
+
+  return visibleCount;
+}
+
+async function expectFreshText(
+  page: Page,
+  texts: string[],
+  beforeCounts: Map<string, number>,
+): Promise<void> {
+  const startedAt = Date.now();
+  const timeoutMs = 45_000;
+  const expectedTexts = texts.filter(Boolean);
+
+  while (Date.now() - startedAt < timeoutMs) {
+    for (const text of expectedTexts) {
+      const beforeCount = beforeCounts.get(text) ?? 0;
+      const currentCount = await countVisibleText(page, text);
+      if (currentCount > beforeCount) {
+        return;
+      }
+    }
+    await page.waitForTimeout(500);
+  }
+
+  throw new Error(`Expected fresh text to appear: ${expectedTexts.join(", ")}`);
 }
 
 async function expectText(
