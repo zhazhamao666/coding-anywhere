@@ -75,7 +75,7 @@
 - 支持“当前会话已就绪”稳定态主卡、只读诊断卡，以及 `计划模式 [开/关]` 单次开关
 - 支持在 `/ca`、`/ca status`、`/ca session` 以及具体对话卡中展示当前生效的 `model` / `reasoning effort` / `speed`
 - 支持在 `/ca session`、`/ca status` 和具体对话卡中通过下拉框切换当前线程 / 当前 surface 的 `model` / `reasoning effort` / `speed`
-- 支持在 DM 中通过 `/ca project switch <projectKey>` 切到另一个 Codex 项目，并自动解除旧线程绑定
+- 支持在 DM 中通过 `/ca project switch <projectKey|name>` 切到另一个 Codex 项目，并自动解除旧线程绑定；可使用真实 project key 或唯一项目显示名，最终保存真实 catalog key
 - DM 中的项目列表直接读取本机 Codex `state_*.sqlite`
 - DM 中只记录“当前窗口绑定到哪个 Codex thread_id”，不镜像整份 Codex 项目目录
 - 已注册线程可复用长期存在的 Codex 会话
@@ -86,7 +86,7 @@
 - 单个线程串行执行，多个线程可并发执行
 - 线程内支持状态回推和最终结果回复
 - 兼容 Codex CLI 旧版 `item.*` JSONL 和新版 `event_msg` / `response_item` JSONL 输出；当新版续跑只产生 `task_complete(last_agent_message:null)` 时，会给出明确诊断，而不是只显示笼统的 `RUN_STREAM_FAILED`
-- 提供本地 Feishu live auth / live smoke 脚本，能用真实网页链路验证按钮卡和命令 smoke
+- 提供本地 Feishu live auth / live smoke 脚本，能用真实网页链路验证 `/ca` 入口、卡片点击、项目/线程导航和运行状态
 - 提供 `/ops/runtime` 实时调度快照、`/ops/runs/:id/cancel` 取消接口，以及可直接取消 live run 的 `ops/ui`
 - Windows 下额外提供 `start-coding-anywhere.cmd` / `stop-coding-anywhere.cmd` 一键启停脚本
 
@@ -156,7 +156,7 @@ codex --version
 
 - 首次启动时如果本地还没有 `data/bridge.db`，程序会自动创建 SQLite 数据库和所需表结构
 - 仓库不会提交真实 `config.toml`，所以新环境仍然需要先执行 `npm run init:config` 并补齐配置，服务才会正常启动
-- 如果你会跑真实飞书 live smoke，默认就只允许落到 `coding-anywhere-autotest` 固定夹具：`npm run test:feishu:live` / `test:feishu:live:dm` 会先把 DM 切到该项目，并走 `/ca`、项目列表、状态、会话入口；`npm run test:feishu:live:group` 只允许命中已绑定好的测试群 `coding-anywhere-autotest`，并走项目自检、`/ca`、项目列表、当前项目、状态，也会拒绝其他群名。如确实要覆盖到别的项目或群夹具，必须显式设置 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
+- 如果你会跑真实飞书 live smoke，默认就只允许落到 `coding-anywhere-autotest` 固定夹具：DM smoke 会先用 `/ca project switch coding-anywhere-autotest` 做夹具准备，再从 `/ca` 开始点击 `查看项目`、`返回当前会话`、`切换线程`，并检查 `/ca status` / `/ca session`；group smoke 只允许命中已绑定好的测试群 `coding-anywhere-autotest`，会先用 `/ca project current` 做夹具自检，再从 `/ca` 开始点击 `查看项目`、`当前项目`、`线程列表`，并检查 `/ca status`。如确实要覆盖到别的项目或群夹具，必须显式设置 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
 - 真实联调启动 bridge 时可设置 `BRIDGE_DISABLE_DESKTOP_COMPLETION_POLLING=1`，避免补发历史桌面 completion 通知到非本次测试夹具
 
 ## 最小使用方式
@@ -174,6 +174,16 @@ codex --version
 - 第一次绑定项目群
 - 创建新的线程
 - 查询少量底层状态
+
+## 真实飞书测试原则
+
+真实飞书测试不是为了证明某条命令能直达状态，而是为了贴近用户实际旅程，检查 UI、卡片交互和功能链路是否真的顺畅。
+
+- 默认只使用 `coding-anywhere-autotest` 夹具；DM 要确认或切到该项目，群聊要命中同名测试群并确认已经绑定该项目
+- 用例必须区分“夹具准备”和“用户主旅程”：`/ca project switch`、`/ca project current`、预置绑定这类动作只放在准备阶段或专项测试里
+- 常规 DM / group 主旅程通常从用户发送 `/ca` 开始，再根据返回卡片点击 `查看项目`、`当前项目`、`切换线程`、`返回当前会话` 等按钮继续
+- 每一步断言都要等待当前动作产生的新可见结果，避免因为历史消息里已有同名文案而误判通过
+- 只有在验证桌面 handoff、图片消费、特定命令等专项能力时，才可以先构造上下文；用例名称和步骤要写清它不是普通用户导航路径
 
 ## 当前限制
 
