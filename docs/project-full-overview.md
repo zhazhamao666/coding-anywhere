@@ -947,7 +947,7 @@ channel + peer_id -> codex_thread_id
 - 常规 DM / group 主旅程应从用户自然入口开始：通常先发送 `/ca`，再根据返回卡片点击 `查看项目`、`当前项目`、`切换线程`、`返回当前会话` 等按钮继续；如果某一步要验证卡片交互，就优先点击卡片按钮，而不是直接发送等价命令
 - 专项 live 测试可以先用 `/ca project switch`、桌面 handoff、预置线程等方式构造上下文，但用例名称和步骤应说明它是在验证特定功能点，而不是普通用户导航路径
 - 每一步断言必须等待当前动作产生的新可见结果，不能只因为历史消息里已有同名文案就提前通过；否则无法发现卡片未刷新、点击旧卡、延时更新失败这类真实交互问题
-- live smoke 不再只发一条可配置命令，而是按 surface 执行主要用户旅程；其中夹具准备步骤会和用户主旅程分开记录。DM 会先用 `/ca project switch coding-anywhere-autotest` 做夹具准备，然后主旅程从 `/ca` 开始，点击 `查看项目`、从项目列表返回当前会话、点击 `切换线程`，再查看 `/ca status` 与 `/ca session`；群聊会先用 `/ca project current` 做夹具自检，然后主旅程从 `/ca` 开始，点击 `查看项目`、点击 `当前项目` 与查看 `/ca status`
+- live smoke 不再只发一条可配置命令，而是按 surface 执行主要用户旅程；其中夹具准备步骤会和用户主旅程分开记录。DM 会先用 `/ca project switch coding-anywhere-autotest` 做夹具准备，然后主旅程从 `/ca` 开始，点击 `查看项目`、从项目列表返回当前会话、点击 `切换线程`，再查看 `/ca status` 与 `/ca session`；群聊会先用 `/ca project current` 做夹具自检，然后主旅程从 `/ca` 开始，点击 `查看项目`、点击 `当前项目`、点击 `线程列表` 与查看 `/ca status`
 - 做图片链路 live smoke 时，至少要覆盖“先发图片、bridge 回 `[ca] 已收到图片，请继续发送文字说明。`、再发文字消费图片”这条链路；单元回归也需要覆盖图片消息下载方法在真实 API client 实例上不能丢失 `this` 绑定
 - `FEISHU_LIVE_TARGET_URL` 用于指定待测飞书网页入口；兼容旧变量 `FEISHU_LIVE_DM_URL`。未设置时只允许做 auth bootstrap，不允许发消息 smoke
 - `FEISHU_LIVE_SURFACE` 用于显式指定当前 smoke 场景：`dm` 或 `group`；默认是 `dm`
@@ -1123,7 +1123,7 @@ channel + peer_id -> codex_thread_id
 2. 首次执行时，在打开的浏览器里完成登录，确认已经进入 `feishu.cn/messages` 后回到终端按 Enter
 3. DM 场景执行 `npm run test:feishu:live` 或 `npm run test:feishu:live:dm`；群聊场景执行 `npm run test:feishu:live:group`
 4. DM smoke 会复用 `.auth/feishu-profile` 打开真实测试 DM，先执行 `/ca project switch coding-anywhere-autotest` 做夹具准备；随后用户主旅程从 `/ca` 开始，依次点击 `查看项目`、`返回当前会话`、`切换线程`，再检查 `/ca status` 与 `/ca session`
-5. group smoke 会复用同一 profile 打开真实测试群，默认群名固定为 `coding-anywhere-autotest`；脚本会先执行 `/ca project current` 校验当前群已绑定到 `coding-anywhere-autotest`，再从 `/ca` 开始点击 `查看项目`、点击 `当前项目`、检查 `/ca status`，不会自动改绑
+5. group smoke 会复用同一 profile 打开真实测试群，默认群名固定为 `coding-anywhere-autotest`；脚本会先执行 `/ca project current` 校验当前群已绑定到 `coding-anywhere-autotest`，再从 `/ca` 开始点击 `查看项目`、点击 `当前项目`、点击 `线程列表`、检查 `/ca status`，不会自动改绑
 6. 两类 smoke 都会默认拒绝非 `coding-anywhere-autotest` 项目；group smoke 还会额外拒绝非默认测试群 `coding-anywhere-autotest`。如确实需要覆盖到别的项目或群夹具，必须显式设置 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
 7. smoke 还会请求 `/ops/overview` 确认本地 bridge 控制面可达；如需覆盖地址，设置 `FEISHU_LIVE_OPS_BASE_URL`
 8. 如需追加一条额外 smoke 指令，可设置 `FEISHU_LIVE_SMOKE_TEXT` 与 `FEISHU_LIVE_EXPECT_TEXT`；如需调整会话选择或输入框定位，可设置 `FEISHU_LIVE_CONVERSATION_NAME`、`FEISHU_LIVE_COMPOSER_SELECTOR`

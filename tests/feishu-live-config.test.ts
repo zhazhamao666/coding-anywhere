@@ -347,6 +347,11 @@ describe("feishu live user journeys", () => {
         expectText: ["当前项目", "coding-anywhere-autotest"],
       },
       {
+        kind: "click",
+        label: "线程列表",
+        expectText: ["选择线程"],
+      },
+      {
         kind: "command",
         text: "/ca status",
         expectText: ["运行状态"],

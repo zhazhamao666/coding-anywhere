@@ -64,6 +64,12 @@ export function buildFeishuLiveJourney(input: {
           expectText: ["当前项目", input.projectKey],
         },
         {
+          name: "从当前项目查看线程列表",
+          kind: "click",
+          label: "线程列表",
+          expectText: ["选择线程"],
+        },
+        {
           name: "查看运行状态",
           kind: "command",
           text: "/ca status",
