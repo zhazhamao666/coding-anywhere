@@ -17,7 +17,15 @@ export type FeishuLiveJourneyStep = (
 
 export interface FeishuLiveJourney {
   name: FeishuLiveSurface;
+  /**
+   * Fixture-only preparation. These steps may build or verify the safe autotest
+   * context, but they are not counted as the user's primary UI journey.
+   */
   setupSteps: FeishuLiveJourneyStep[];
+  /**
+   * Primary user journey. Keep this close to how a person would operate Feishu:
+   * enter from /ca, then follow the returned card buttons and visible UI state.
+   */
   steps: FeishuLiveJourneyStep[];
 }
 

@@ -942,6 +942,11 @@ channel + peer_id -> codex_thread_id
 - 登录成功后的页面既可能是 `https://feishu.cn/messages/`，也可能是租户域名下的 `/next/messenger/`
 - 首次执行需要人工完成飞书登录；成功后会在仓库根目录 `.auth/feishu-profile` 保存本地登录态，并写入 `.auth/feishu-live-auth.json`
 - `npm run test:feishu:live` 与 `npm run test:feishu:live:dm` 会复用该 profile 打开真实飞书测试 DM；`npm run test:feishu:live:group` 会复用同一 profile 打开真实飞书测试群，不再重复自动登录
+- 真实飞书测试用例的第一目标是贴合用户实际旅程，用来检验 UI 和交互是否合理、功能是否正常；不能把“能通过命令直达某状态”误当成“用户路径已经顺畅”
+- 用例必须明确区分“夹具准备”和“用户主旅程”：`/ca project switch`、`/ca project current`、预置绑定、清理状态这类动作只允许出现在准备阶段或专项测试说明里，不应混入主旅程步骤
+- 常规 DM / group 主旅程应从用户自然入口开始：通常先发送 `/ca`，再根据返回卡片点击 `查看项目`、`当前项目`、`切换线程`、`返回当前会话` 等按钮继续；如果某一步要验证卡片交互，就优先点击卡片按钮，而不是直接发送等价命令
+- 专项 live 测试可以先用 `/ca project switch`、桌面 handoff、预置线程等方式构造上下文，但用例名称和步骤应说明它是在验证特定功能点，而不是普通用户导航路径
+- 每一步断言必须等待当前动作产生的新可见结果，不能只因为历史消息里已有同名文案就提前通过；否则无法发现卡片未刷新、点击旧卡、延时更新失败这类真实交互问题
 - live smoke 不再只发一条可配置命令，而是按 surface 执行主要用户旅程；其中夹具准备步骤会和用户主旅程分开记录。DM 会先用 `/ca project switch coding-anywhere-autotest` 做夹具准备，然后主旅程从 `/ca` 开始，点击 `查看项目`、从项目列表返回当前会话、点击 `切换线程`，再查看 `/ca status` 与 `/ca session`；群聊会先用 `/ca project current` 做夹具自检，然后主旅程从 `/ca` 开始，点击 `查看项目`、点击 `当前项目` 与查看 `/ca status`
 - 做图片链路 live smoke 时，至少要覆盖“先发图片、bridge 回 `[ca] 已收到图片，请继续发送文字说明。`、再发文字消费图片”这条链路；单元回归也需要覆盖图片消息下载方法在真实 API client 实例上不能丢失 `this` 绑定
 - `FEISHU_LIVE_TARGET_URL` 用于指定待测飞书网页入口；兼容旧变量 `FEISHU_LIVE_DM_URL`。未设置时只允许做 auth bootstrap，不允许发消息 smoke

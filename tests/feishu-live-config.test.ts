@@ -242,6 +242,32 @@ describe("feishu live test settings", () => {
 });
 
 describe("feishu live user journeys", () => {
+  it("keeps fixture setup out of the primary user journeys", () => {
+    const journeys = [
+      buildFeishuLiveJourney({
+        surface: "dm",
+        projectKey: "coding-anywhere-autotest",
+      }),
+      buildFeishuLiveJourney({
+        surface: "group",
+        projectKey: "coding-anywhere-autotest",
+      }),
+    ];
+
+    for (const journey of journeys) {
+      expect(journey.setupSteps.length).toBeGreaterThan(0);
+      expect(journey.steps[0]).toMatchObject({
+        kind: "command",
+        text: "/ca",
+      });
+      expect(journey.steps.some(step => step.kind === "click")).toBe(true);
+      expect(journey.steps.filter(step =>
+        step.kind === "command" &&
+        /^\/ca project (switch|current|list)\b/.test(step.text)
+      )).toEqual([]);
+    }
+  });
+
   it("covers the DM project entry, card navigation, status, and session journeys", () => {
     const journey = buildFeishuLiveJourney({
       surface: "dm",
