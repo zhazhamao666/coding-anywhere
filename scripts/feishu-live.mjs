@@ -54,7 +54,13 @@ export function buildFeishuLivePlaywrightCommand(platform = process.platform) {
 
 export function normalizeSurface(rawSurface) {
   const normalized = rawSurface?.trim().toLowerCase();
-  return normalized === "group" || normalized === "topic" ? normalized : "dm";
+  if (normalized === "topic") {
+    throw new Error(
+      "[ca] Feishu live surface `topic` is not supported by the current autotest fixture. Use `dm` or `group`.",
+    );
+  }
+
+  return normalized === "group" ? normalized : "dm";
 }
 
 export function normalizeScenarios(rawScenarios) {

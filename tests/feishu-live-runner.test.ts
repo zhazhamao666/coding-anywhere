@@ -4,13 +4,18 @@ import { describe, expect, it } from "vitest";
 import { buildFeishuLivePlaywrightCommand, normalizeScenarios, normalizeSurface } from "../scripts/feishu-live.mjs";
 
 describe("feishu live runner", () => {
-  it("normalizes live surfaces to dm, group, or topic", () => {
+  it("normalizes live surfaces to dm or group", () => {
     expect(normalizeSurface(undefined)).toBe("dm");
     expect(normalizeSurface("group")).toBe("group");
     expect(normalizeSurface(" GROUP ")).toBe("group");
-    expect(normalizeSurface("topic")).toBe("topic");
     expect(normalizeSurface("dm")).toBe("dm");
     expect(normalizeSurface("other")).toBe("dm");
+  });
+
+  it("rejects topic because live UI autotest currently supports only dm and group", () => {
+    expect(() => normalizeSurface("topic")).toThrowError(
+      "[ca] Feishu live surface `topic` is not supported by the current autotest fixture. Use `dm` or `group`.",
+    );
   });
 
   it("normalizes comma separated live UI scenarios", () => {

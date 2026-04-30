@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { loadConfig, type BridgeConfig } from "./config.js";
 
-export type FeishuLiveSurface = "dm" | "group" | "topic";
+export type FeishuLiveSurface = "dm" | "group";
 
 export const DEFAULT_FEISHU_LIVE_PROJECT_KEY = "coding-anywhere-autotest";
 export const DEFAULT_FEISHU_LIVE_GROUP_NAME = "coding-anywhere-autotest";
@@ -88,7 +88,12 @@ export function assertFeishuLiveTargetConfigured(
 
 function normalizeLiveSurface(rawSurface: string | undefined): FeishuLiveSurface {
   const normalized = rawSurface?.trim().toLowerCase();
-  if (normalized === "group" || normalized === "topic") {
+  if (normalized === "topic") {
+    throw new Error(
+      "[ca] Feishu live surface `topic` is not supported by the current autotest fixture. Use `dm` or `group`.",
+    );
+  }
+  if (normalized === "group") {
     return normalized;
   }
 

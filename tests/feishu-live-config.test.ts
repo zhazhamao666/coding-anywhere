@@ -18,7 +18,7 @@ describe("feishu live repository config", () => {
     expect(gitignore).toContain(".auth/");
   });
 
-  it("exposes auth bootstrap and explicit dm/group/topic live smoke scripts", () => {
+  it("exposes auth bootstrap and explicit dm/group live smoke scripts", () => {
     const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
     };
@@ -29,7 +29,7 @@ describe("feishu live repository config", () => {
     expect(pkg.scripts?.["test:feishu:live:dm:ui"]).toBeTruthy();
     expect(pkg.scripts?.["test:feishu:live:group"]).toBeTruthy();
     expect(pkg.scripts?.["test:feishu:live:group:ui"]).toBeTruthy();
-    expect(pkg.scripts?.["test:feishu:live:topic"]).toBeTruthy();
+    expect(pkg.scripts?.["test:feishu:live:topic"]).toBeUndefined();
   });
 
   it("ships a live auth cli entrypoint", () => {
@@ -246,8 +246,8 @@ describe("feishu live test settings", () => {
     expect(settings.allowNonAutotest).toBe(true);
   });
 
-  it("accepts the registered topic live surface", () => {
-    const settings = assertFeishuLiveTargetConfigured(
+  it("rejects topic as a live UI surface because the current autotest fixture only supports dm and group", () => {
+    expect(() => assertFeishuLiveTargetConfigured(
       {
         cwd: "D:\\repo\\coding-anywhere",
         env: {
@@ -263,10 +263,9 @@ describe("feishu live test settings", () => {
           },
         }),
       },
+    )).toThrowError(
+      "[ca] Feishu live surface `topic` is not supported by the current autotest fixture. Use `dm` or `group`.",
     );
-
-    expect(settings.surface).toBe("topic");
-    expect(settings.projectKey).toBe("coding-anywhere-autotest");
   });
 });
 
@@ -418,23 +417,11 @@ describe("feishu live user journeys", () => {
     ]));
   });
 
-  it("builds a topic journey without project-switch or new-session mutations", () => {
-    const journeys = buildFeishuLiveJourneys({
-      surface: "topic",
+  it("does not expose topic journeys in the live UI matrix", () => {
+    expect(() => buildFeishuLiveJourneys({
+      surface: "topic" as "dm",
       projectKey: "coding-anywhere-autotest",
       scenarios: ["all"],
-    });
-
-    expect(journeys.map(journey => journey.name)).toEqual([
-      "topic:main",
-      "topic:session",
-      "topic:diagnostics",
-      "topic:plan-toggle",
-      "topic:run-basic",
-      "topic:ops-ui",
-    ]);
-    expect(journeys.flatMap(journey => journey.setupSteps).some(step =>
-      step.kind === "command" && step.text === "/ca new"
-    )).toBe(false);
+    })).toThrowError("[ca] Unsupported Feishu live UI surface: topic");
   });
 });

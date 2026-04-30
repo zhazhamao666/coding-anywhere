@@ -4,11 +4,12 @@
 
 `Coding Anywhere` 是一个把飞书消息桥接到 Codex 的单实例后端服务。
 
-当前实现已经不再只面向“飞书私聊”，而是同时覆盖三类工作面：
+当前实现已经不再只面向“飞书私聊”，而是覆盖两类已经产品化的工作面：
 
 - 飞书 DM
 - 已绑定项目的飞书群主时间线
-- 飞书群里的原生话题线程
+
+飞书“话题(topic)”相关旧实现和底层线程绑定记录不能被视为当前真实 UI 回归 surface；当前没有可用于自动真实回测的专用话题夹具，也没有把话题做成清晰的用户主入口。
 
 它的目标不是做一个通用聊天机器人平台，而是把飞书中的一个明确上下文，稳定映射到一个 Codex 会话，并把运行状态、最终结果和后台观测一起带回来。
 
@@ -29,7 +30,7 @@
 当前代码已经实现：
 
 1. 飞书 DM 文本消息接入
-2. 飞书群话题线程与已绑定项目群主时间线文本消息接入
+2. 已绑定项目群主时间线文本消息接入
 3. `/ca` 命令与普通 prompt 分流
 4. DM 与项目群主时间线级会话绑定
 5. 基于 native `thread_id` 的 DM / 群主时间线 / 群线程执行解析
@@ -81,7 +82,7 @@
 51. assistant 可以通过 `[bridge-image] ... [/bridge-image]` 私有指令声明本地图片路径；bridge 会校验路径后，把图片作为原生飞书图片消息回发
 52. 卡片按钮触发的异步 `/ca` 命令与计划模式链路也不会再静默吞掉图片结果；能发图时会真发图片，不能发图时会退回明确的文本卡说明
 53. runtime 维护任务除了线程空闲回收外，还会按 TTL 清理过期的待处理图片资产，避免 pending 图片长期滞留
-54. 仓库新增基于 Playwright 的飞书 live auth bootstrap 与 smoke / UI journey 脚本：首次人工登录一次后，可复用本地持久化浏览器 profile 做真实飞书网页链路验证；常规 smoke 保持轻量，`*:ui` 与 `topic` 脚本覆盖更完整的卡片交互矩阵
+54. 仓库新增基于 Playwright 的飞书 live auth bootstrap 与 smoke / UI journey 脚本：首次人工登录一次后，可复用本地持久化浏览器 profile 做真实飞书网页链路验证；常规 smoke 保持轻量，`*:ui` 脚本覆盖更完整的 DM / 测试群卡片交互矩阵
 55. 群主时间线中的 `/ca project list` 现在也会读取 Codex 派生项目列表，标出“已绑定当前群 / 已绑定其他群 / 未绑定”，并允许从未绑定项目行直接把当前群绑定到该项目
 56. Codex 线程列表卡会把 subagent 来源解析为结构化的母 agent / 子 agent 展示，按父线程分组缩进显示 agent 名称、角色、父线程和层级，不再把 Codex raw `source` JSON 原样暴露到飞书卡片里
 57. `FeishuWsClient` 现在会在每次底层长连接真正连上后额外打印 transport connected 日志，并在 socket `close` / `error` 时输出关闭码、关闭原因和结构化错误信息，便于定位 DNS、TLS 或代理隧道层面的出网问题
@@ -106,7 +107,7 @@
 76. bridge 在需要显式覆盖 Codex 默认行为时，会把飞书侧选中的设置透传给 CLI：创建线程或续跑线程时分别写入 `codex exec -m <model>`、`-c model_reasoning_effort="..."`，以及速度相关的 `-c service_tier="fast"` / `-c features.fast_mode=...` 覆盖
 77. DM 中执行 `/ca project switch <projectKey|name>` 时，如果当前窗口还绑定着旧的 native Codex thread，bridge 现在会先解除这条旧绑定，再把“当前项目”切到目标项目；后续普通消息会在新项目下创建 fresh thread，而不是继续误跑旧项目
 78. 如果 DM 当前保存了“已选项目”和“已绑线程”两个互相冲突的跨项目状态，bridge 现在会优先相信显式项目选择，并自动清理那条旧线程绑定，避免继续把普通消息送进错误项目
-79. Playwright 版真实飞书 live smoke 现在默认锁死到 `coding-anywhere-autotest` 夹具：`test:feishu:live` / `test:feishu:live:dm` 会先把测试 DM 切到该项目，`test:feishu:live:group` 只允许命中已绑定好的测试群 `coding-anywhere-autotest`，`test:feishu:live:topic` 用于已注册测试话题；`test:feishu:live:dm:ui` 和 `test:feishu:live:group:ui` 会运行完整 UI journey 矩阵；如确实需要覆盖到别的项目或群夹具，必须显式设置危险开关 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
+79. Playwright 版真实飞书 live smoke 现在默认锁死到 `coding-anywhere-autotest` 夹具：`test:feishu:live` / `test:feishu:live:dm` 会先把测试 DM 切到该项目，`test:feishu:live:group` 只允许命中已绑定好的测试群 `coding-anywhere-autotest`；`test:feishu:live:dm:ui` 和 `test:feishu:live:group:ui` 会运行完整 UI journey 矩阵；当前真实 UI 回归不支持 `topic` surface，如确实需要覆盖到别的项目或群夹具，必须显式设置危险开关 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
 80. 桌面 completion 通知卡的主按钮文案现在统一为“在飞书继续”，`continue_desktop_thread` 也已经覆盖三种接管路径：DM、已绑定飞书话题和项目群主时间线都会把目标 native Codex thread 接到对应飞书 surface，并统一落到“当前会话已就绪”稳定态主卡；其中项目群主时间线现在不再自动创建飞书话题，而是直接把当前群对话绑定到该 native thread
 81. 飞书已绑定项目群主时间线现在和 DM 保持同一套心智：`切换到此线程` / `在飞书继续` 都会把当前对话窗口直接绑定到一个 native Codex thread，后续普通群消息会继续进入这个线程
 82. 桌面侧原生 Codex thread 已经从“完成后单次通知”升级为完整生命周期通知：runtime 会在新一轮顶层 desktop run 发现 `task_started` 后先发一张 `桌面任务进行中` 卡，并在后续轮询里复用同一 `message_id` patch 最近公开进展与结构化计划清单；卡片会先展示“你最后说了什么”，再展示当前情况，不再额外放一个独立的 `进度 / Ran N commands` 区块；其中“你最后说了什么”会优先从 rollout 的结构化快照中提取，并显式忽略 `<subagent_notification>`、`<turn_aborted>` 这类 synthetic wrapper，避免把系统包装文本误显示成用户输入
@@ -142,9 +143,9 @@
 - 飞书侧仍看不到 Codex 5 小时额度 / 周额度
 - 飞书侧还不能直接查看和切换更多 profile 级高级参数
 - 桌面侧原生 Codex thread 生命周期通知虽然已经接通“runtime 轮询 + lifecycle observer + 本地路由决策 + 进行中卡创建 / patch + 完成态原卡收口”整条链路，但 history/mute 回调和失败后的自动修复仍未接通
-- 群聊里的“话题承载会话”仍然不是当前主交互模式；虽然项目线程创建与已注册原生话题 surface 仍可用，但“群主时间线直接绑定 thread”和“真正的话题群/话题模式”还没有做成一套完整、清晰的产品交互
+- 群聊里的“话题承载会话”不是当前产品能力，也不是当前真实 UI 回归 surface；历史线程/话题相关底层实现不能作为新增 live 测试或对外说明的依据
 
-也就是说，DM、已绑定项目群主时间线和已注册群线程都已经具备运行链路，但“群聊话题化承载会话”的完整产品方案仍然留待后续单独设计。
+也就是说，当前产品化入口只按 DM 与已绑定项目群主时间线验收；“群聊话题化承载会话”的完整产品方案留待后续单独设计。
 
 ## 3. 高层架构
 
@@ -942,7 +943,7 @@ channel + peer_id -> codex_thread_id
 - `npm run test:feishu:auth` 会启动一个最大化的持久化浏览器 profile，默认打开 `https://feishu.cn/messages/`
 - 登录成功后的页面既可能是 `https://feishu.cn/messages/`，也可能是租户域名下的 `/next/messenger/`
 - 首次执行需要人工完成飞书登录；成功后会在仓库根目录 `.auth/feishu-profile` 保存本地登录态，并写入 `.auth/feishu-live-auth.json`
-- `npm run test:feishu:live` 与 `npm run test:feishu:live:dm` 会复用该 profile 打开真实飞书测试 DM；`npm run test:feishu:live:group` 会复用同一 profile 打开真实飞书测试群；`npm run test:feishu:live:topic` 面向已注册测试话题；`npm run test:feishu:live:dm:ui` 与 `npm run test:feishu:live:group:ui` 会执行完整 UI journey 矩阵，不再重复自动登录
+- `npm run test:feishu:live` 与 `npm run test:feishu:live:dm` 会复用该 profile 打开真实飞书测试 DM；`npm run test:feishu:live:group` 会复用同一 profile 打开真实飞书测试群；`npm run test:feishu:live:dm:ui` 与 `npm run test:feishu:live:group:ui` 会执行完整 UI journey 矩阵，不再重复自动登录；当前没有 `topic` live 脚本
 - 真实飞书测试用例的第一目标是贴合用户实际旅程，用来检验 UI 和交互是否合理、功能是否正常；不能把“能通过命令直达某状态”误当成“用户路径已经顺畅”
 - 用例必须明确区分“夹具准备”和“用户主旅程”：`/ca project switch`、`/ca project current`、预置绑定、清理状态这类动作只允许出现在准备阶段或专项测试说明里，不应混入主旅程步骤
 - 常规 DM / group 主旅程应从用户自然入口开始：通常先发送 `/ca`，再根据返回卡片点击 `查看项目`、`当前项目`、`切换线程`、`返回当前会话` 等按钮继续；如果某一步要验证卡片交互，就优先点击卡片按钮，而不是直接发送等价命令
@@ -952,7 +953,7 @@ channel + peer_id -> codex_thread_id
 - 完整 UI journey 可通过 `FEISHU_LIVE_SCENARIOS=all` 或 `*:ui` 脚本触发，会覆盖标准会话卡、`更多信息` 诊断卡、计划模式开关、新会话、线程切换、短任务终态和 `/ops/ui`；这些场景会在 autotest DM / 测试群内创建或复用测试线程，仍禁止自动改绑非测试群
 - 做图片链路 live smoke 时，至少要覆盖“先发图片、bridge 回 `[ca] 已收到图片，请继续发送文字说明。`、再发文字消费图片”这条链路；单元回归也需要覆盖图片消息下载方法在真实 API client 实例上不能丢失 `this` 绑定
 - `FEISHU_LIVE_TARGET_URL` 用于指定待测飞书网页入口；兼容旧变量 `FEISHU_LIVE_DM_URL`。未设置时只允许做 auth bootstrap，不允许发消息 smoke
-- `FEISHU_LIVE_SURFACE` 用于显式指定当前 smoke 场景：`dm`、`group` 或 `topic`；默认是 `dm`
+- `FEISHU_LIVE_SURFACE` 用于显式指定当前 smoke 场景：`dm` 或 `group`；默认是 `dm`。显式传 `topic` 会直接报错，因为当前没有可用于真实 UI 回归的话题夹具
 - `FEISHU_LIVE_SCENARIOS` 可用逗号指定要执行的 UI 场景；常用值为 `main` 或 `all`
 - `FEISHU_LIVE_CONVERSATION_NAME` 可在 `FEISHU_LIVE_TARGET_URL` 只能打开 messenger 根页时指定左侧会话名；若 `FEISHU_LIVE_SURFACE=group` 且未显式提供，则默认固定为测试群 `coding-anywhere-autotest`；未开启危险开关时，group smoke 也会拒绝任何其他群名
 - `FEISHU_LIVE_PROJECT_KEY` 默认固定为 `coding-anywhere-autotest`；该值可以是 Codex 真实 `projectKey`，也可以是唯一项目显示名。DM smoke 的夹具准备会先发送 `/ca project switch coding-anywhere-autotest`，由 bridge 解析并保存真实 catalog key；群聊 smoke 的夹具准备只校验当前群已经绑定到该项目，不自动改绑
@@ -1031,13 +1032,13 @@ channel + peer_id -> codex_thread_id
 
 - 没有完整 DM Hub
 - 还不能自动创建飞书项目群，只能先绑定已有群；当前群可以通过 `/ca project bind-current` 或项目列表卡片按钮完成绑定
-- CA 不提供精确跳转到指定飞书话题的能力
+- CA 当前不把飞书话题作为产品化 UI 入口，也不提供精确跳转到指定飞书话题的能力
 - `/ops/ui` 仍然主要围绕 run 控制、告警排查与历史详情展开，项目/线程管理页仍以 JSON drill-down 为主，没有做成完整多页后台
 - 卡片按钮目前除了导航命令外，还覆盖稳定态会话卡的 `计划模式 [开/关]`、`更多信息` 诊断切换、Codex 设置下拉，以及桥接式计划选择续跑；但它仍不是通用的任意参数命令表单平台
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
 - 普通对话 run 的终态投递策略当前固定为“终态卡 + 完整正文消息”：终态卡会收敛显示 `Codex 最终返回了什么` 和后续动作，但完整 assistant 正文仍以下方消息承载；如后续确有分场景需求，可再扩展为可配置策略，但当前记为低优先级后续计划
 - 现在的“计划模式”仍然是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，只是飞书侧入口已经从独立表单卡收敛成会话级单次开关；它依然不等同于官方交互式 CLI `/plan` 原语
-- 桌面 completion 通知虽然已经有本地路由决策、DM owner 配置解析、实际消息发送器、runtime 轮询，以及 DM / group / topic continue handoff，但 history/mute 回调以及“同一 completion 失败后自动修复”还没有接通
+- 桌面 completion 通知虽然已经有本地路由决策、DM owner 配置解析、实际消息发送器、runtime 轮询，以及 DM / group continue handoff，但 history/mute 回调以及“同一 completion 失败后自动修复”还没有接通
 - 当前只支持文本 + 图片；通用文件、语音仍未接通
 - outbound 图片必须位于当前 run `cwd` 或 bridge 受管资产目录下；超出范围的路径会被拒绝并退回文本错误
 - 真实飞书网页版 live smoke 当前采用“首次人工登录 + 持久 profile 复用”模型；如果租户启用了 SSO、验证码或二次验证，登录刷新仍需要人工介入
@@ -1124,7 +1125,7 @@ channel + peer_id -> codex_thread_id
 
 1. `npm run test:feishu:auth`
 2. 首次执行时，在打开的浏览器里完成登录，确认已经进入 `feishu.cn/messages` 后回到终端按 Enter
-3. DM 场景执行 `npm run test:feishu:live` 或 `npm run test:feishu:live:dm`；群聊场景执行 `npm run test:feishu:live:group`；已注册测试话题执行 `npm run test:feishu:live:topic`
+3. DM 场景执行 `npm run test:feishu:live` 或 `npm run test:feishu:live:dm`；群聊场景执行 `npm run test:feishu:live:group`；当前不提供真实话题 smoke
 4. DM smoke 会复用 `.auth/feishu-profile` 打开真实测试 DM，先执行 `/ca project switch coding-anywhere-autotest` 做夹具准备；随后用户主旅程从 `/ca` 开始，依次点击 `查看项目`、`返回当前会话`、`切换线程`，再检查 `/ca status` 与 `/ca session`
 5. group smoke 会复用同一 profile 打开真实测试群，默认群名固定为 `coding-anywhere-autotest`；脚本会先执行 `/ca project current` 校验当前群已绑定到 `coding-anywhere-autotest`，再从 `/ca` 开始查看项目列表、点击 `当前项目`、点击 `线程列表`、检查 `/ca status`，不会自动改绑
 6. 完整 UI 回归执行 `npm run test:feishu:live:dm:ui`、`npm run test:feishu:live:group:ui` 或设置 `FEISHU_LIVE_SCENARIOS=all`，会额外覆盖稳定态会话卡、诊断卡、计划模式开关、新会话、线程切换、短任务终态和 `/ops/ui`

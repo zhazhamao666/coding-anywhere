@@ -26,6 +26,7 @@
 - 允许使用的真实飞书 surface 只有两类：
   - 机器人测试 DM，并且当前项目必须是 `coding-anywhere-autotest`
   - 名称为 `coding-anywhere-autotest` 的测试群，并且该群已绑定 `coding-anywhere-autotest`
+- 当前项目没有可用于真实 UI 回归的“话题(topic)”夹具或产品入口；不要新增 `FEISHU_LIVE_SURFACE=topic`、`test:feishu:live:topic` 或把历史“线程/话题”实现描述当作真实联调能力。除非用户明确要求设计并确认新的专用话题夹具，否则真实飞书 UI 回测只能覆盖 DM 与测试群。
 - 不论是否走仓库内置 smoke 脚本，只要准备向飞书发送真实测试消息，必须先做夹具自检：
   - DM：先执行 `/ca project switch coding-anywhere-autotest` 或 `/ca project current`，确认当前项目就是 `coding-anywhere-autotest`
   - 群聊：先确认当前群名就是 `coding-anywhere-autotest`，再执行 `/ca project current`，确认当前群绑定项目就是 `coding-anywhere-autotest`

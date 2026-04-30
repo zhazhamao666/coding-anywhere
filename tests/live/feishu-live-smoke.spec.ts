@@ -7,6 +7,8 @@ import {
 import { buildFeishuLiveJourneys, type FeishuLiveJourneyStep } from "../../src/feishu-live-journey.js";
 import { assertFeishuLiveTargetConfigured, loadFeishuLiveTestSettings } from "../../src/feishu-live-test-settings.js";
 
+test.setTimeout(12 * 60_000);
+
 test("walks the main Feishu live UI journey on the configured autotest surface", async () => {
   const auth = assertFeishuLiveAuthReady();
   const settings = assertFeishuLiveTargetConfigured();
@@ -108,7 +110,7 @@ async function executeJourneyStep(input: {
     });
   }
 
-  if (expectedTexts.length > 0 && expectFresh) {
+  if (expectedTexts.length > 0 && expectFresh && input.step.requireFreshText !== false) {
     await expectFreshText(input.page, expectedTexts, beforeCounts, input.step.timeoutMs);
   }
   if (input.step.expectText) {

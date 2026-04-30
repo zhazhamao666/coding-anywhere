@@ -2,13 +2,14 @@
 
 ## Context
 
-`Coding Anywhere` 现在已经不是单一的 DM 机器人，而是同时覆盖：
+`Coding Anywhere` 现在已经不是单一的 DM 机器人，而是覆盖当前已经产品化、可真实回测的飞书工作面：
 
 - 飞书 DM
 - 已绑定项目群主时间线
-- 已注册的话题线程
 - 桌面 Codex thread 的生命周期通知
 - `/ops/ui` 后台观察面
+
+当前项目没有可用于真实 UI 回归的飞书话题(topic)产品入口或专用夹具；旧的线程/话题底层实现不作为本轮 UI 验收 surface。
 
 当前 UI 主要由以下几块组成：
 
@@ -1291,8 +1292,8 @@ DM 场景示例：
 - `tests/app.test.ts`
   - `/ops/ui` 词汇与状态标签更新
 - `tests/feishu-live-config.test.ts` 与 `tests/live/feishu-live-smoke.spec.ts`
-  - 真实飞书 UI journey 矩阵：DM、已绑定项目群、已注册话题、稳定态会话卡、诊断卡、计划模式开关、新会话、线程切换、短任务终态和 `/ops/ui`
-  - 所有真实飞书 journey 默认锁定 `coding-anywhere-autotest` 夹具；群未绑定项目、自动改绑、桌面 lifecycle 等不适合常规自动真实联调的场景继续由单测 / 集成测试覆盖，或等专用夹具确认后再加入 live suite
+  - 真实飞书 UI journey 矩阵：DM、已绑定项目群、稳定态会话卡、诊断卡、计划模式开关、新会话、线程切换、短任务终态和 `/ops/ui`
+  - 所有真实飞书 journey 默认锁定 `coding-anywhere-autotest` 夹具；话题、群未绑定项目、自动改绑、桌面 lifecycle 等不适合常规自动真实联调的场景继续由单测 / 集成测试覆盖，或等专用夹具确认后再加入 live suite
 
 ## Acceptance Criteria
 
@@ -1301,5 +1302,5 @@ DM 场景示例：
 - 新 UI 不再生成独立计划表单；历史计划表单回调与计划单选触发的长任务都使用新的进度消息链路。
 - 排队态显示 `取消排队`，取消中态不再保留重复停止按钮，运行态只保留 `停止任务`。
 - `/ops/ui` 与飞书卡片使用同一套状态词汇。
-- 真实飞书 live 用例覆盖方案里的主要交互页面和可安全自动化场景；受夹具限制不能自动覆盖的场景必须在文档和测试策略中明确。
+- 真实飞书 live 用例覆盖方案里的主要交互页面和可安全自动化场景；当前只允许 DM / 测试群两个 surface，受夹具限制不能自动覆盖的场景必须在文档和测试策略中明确。
 - `docs/project-full-overview.md` 与实现保持一致。
