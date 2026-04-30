@@ -36,6 +36,7 @@ export function loadFeishuLiveTestSettings(
   const scenarios = parseLiveScenarios(env.FEISHU_LIVE_SCENARIOS);
   const allowNonAutotest = env.FEISHU_LIVE_ALLOW_NON_AUTOTEST?.trim() === "1";
   const conversationName = env.FEISHU_LIVE_CONVERSATION_NAME?.trim()
+    || (surface === "dm" ? env.FEISHU_LIVE_DM_CONVERSATION_NAME?.trim() : undefined)
     || (surface === "group" ? DEFAULT_FEISHU_LIVE_GROUP_NAME : undefined);
 
   return {

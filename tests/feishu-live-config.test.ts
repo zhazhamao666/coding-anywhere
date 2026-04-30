@@ -105,6 +105,47 @@ describe("feishu live test settings", () => {
     expect(settings.conversationName).toBe("coding-anywhere-autotest");
   });
 
+  it("uses a dedicated dm conversation name without changing the default group fixture", () => {
+    const dmSettings = loadFeishuLiveTestSettings(
+      {
+        cwd: "D:\\repo\\coding-anywhere",
+        env: {
+          FEISHU_LIVE_TARGET_URL: "https://rcn7xhorjmzz.feishu.cn/next/messenger/",
+          FEISHU_LIVE_DM_CONVERSATION_NAME: "渣渣Co",
+        },
+      },
+      {
+        loadConfig: () => ({
+          server: {
+            host: "127.0.0.1",
+            port: 8787,
+          },
+        }),
+      },
+    );
+    const groupSettings = loadFeishuLiveTestSettings(
+      {
+        cwd: "D:\\repo\\coding-anywhere",
+        env: {
+          FEISHU_LIVE_TARGET_URL: "https://rcn7xhorjmzz.feishu.cn/next/messenger/",
+          FEISHU_LIVE_DM_CONVERSATION_NAME: "渣渣Co",
+          FEISHU_LIVE_SURFACE: "group",
+        },
+      },
+      {
+        loadConfig: () => ({
+          server: {
+            host: "127.0.0.1",
+            port: 8787,
+          },
+        }),
+      },
+    );
+
+    expect(dmSettings.conversationName).toBe("渣渣Co");
+    expect(groupSettings.conversationName).toBe("coding-anywhere-autotest");
+  });
+
   it("still accepts the legacy dm url variable as the target url", () => {
     const settings = loadFeishuLiveTestSettings(
       {

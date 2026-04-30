@@ -386,6 +386,7 @@ function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLive
           kind: "command",
           text: "/ca session",
           expectText: ["当前会话已就绪", "下次任务设置", "计划模式"],
+          requireFreshText: false,
         },
       ];
     case "main":

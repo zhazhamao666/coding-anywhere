@@ -955,7 +955,8 @@ channel + peer_id -> codex_thread_id
 - `FEISHU_LIVE_TARGET_URL` 用于指定待测飞书网页入口；兼容旧变量 `FEISHU_LIVE_DM_URL`。未设置时只允许做 auth bootstrap，不允许发消息 smoke
 - `FEISHU_LIVE_SURFACE` 用于显式指定当前 smoke 场景：`dm` 或 `group`；默认是 `dm`。显式传 `topic` 会直接报错，因为当前没有可用于真实 UI 回归的话题夹具
 - `FEISHU_LIVE_SCENARIOS` 可用逗号指定要执行的 UI 场景；常用值为 `main` 或 `all`
-- `FEISHU_LIVE_CONVERSATION_NAME` 可在 `FEISHU_LIVE_TARGET_URL` 只能打开 messenger 根页时指定左侧会话名；若 `FEISHU_LIVE_SURFACE=group` 且未显式提供，则默认固定为测试群 `coding-anywhere-autotest`；未开启危险开关时，group smoke 也会拒绝任何其他群名
+- `FEISHU_LIVE_DM_CONVERSATION_NAME` 可在 DM 只拿到 messenger 根页 URL 时指定左侧机器人 DM 会话名；本机默认测试 DM 是 `渣渣Co`
+- `FEISHU_LIVE_CONVERSATION_NAME` 是通用覆盖项，可在 `FEISHU_LIVE_TARGET_URL` 只能打开 messenger 根页时指定左侧会话名；若 `FEISHU_LIVE_SURFACE=group` 且未显式提供，则默认固定为测试群 `coding-anywhere-autotest`；未开启危险开关时，group smoke 也会拒绝任何其他群名
 - `FEISHU_LIVE_PROJECT_KEY` 默认固定为 `coding-anywhere-autotest`；该值可以是 Codex 真实 `projectKey`，也可以是唯一项目显示名。DM smoke 的夹具准备会先发送 `/ca project switch coding-anywhere-autotest`，由 bridge 解析并保存真实 catalog key；群聊 smoke 的夹具准备只校验当前群已经绑定到该项目，不自动改绑
 - 如果确实需要把 live smoke 覆盖到非测试项目或非默认测试群，必须显式设置 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`；默认会直接拒绝执行
 - 即便不是走 `npm run test:feishu:live*`，任何新增的真实飞书联调也必须复用同一套 autotest 夹具：DM 只能落到当前项目为 `coding-anywhere-autotest` 的测试 DM，群聊只能落到群名为 `coding-anywhere-autotest` 且已绑定该项目的测试群；在向飞书发送任何真实测试消息前，都必须先做一次 `/ca project current` 级别的就地确认
@@ -1131,7 +1132,7 @@ channel + peer_id -> codex_thread_id
 6. 完整 UI 回归执行 `npm run test:feishu:live:dm:ui`、`npm run test:feishu:live:group:ui` 或设置 `FEISHU_LIVE_SCENARIOS=all`，会额外覆盖稳定态会话卡、诊断卡、计划模式开关、新会话、线程切换、短任务终态和 `/ops/ui`
 7. 各类 smoke 都会默认拒绝非 `coding-anywhere-autotest` 项目；group smoke 还会额外拒绝非默认测试群 `coding-anywhere-autotest`。如确实需要覆盖到别的项目或群夹具，必须显式设置 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
 8. smoke 还会请求 `/ops/overview` 确认本地 bridge 控制面可达；如需覆盖地址，设置 `FEISHU_LIVE_OPS_BASE_URL`
-9. 如需追加一条额外 smoke 指令，可设置 `FEISHU_LIVE_SMOKE_TEXT` 与 `FEISHU_LIVE_EXPECT_TEXT`；如需调整会话选择或输入框定位，可设置 `FEISHU_LIVE_CONVERSATION_NAME`、`FEISHU_LIVE_COMPOSER_SELECTOR`
+9. 如需追加一条额外 smoke 指令，可设置 `FEISHU_LIVE_SMOKE_TEXT` 与 `FEISHU_LIVE_EXPECT_TEXT`；如需调整会话选择或输入框定位，可设置 `FEISHU_LIVE_DM_CONVERSATION_NAME`、`FEISHU_LIVE_CONVERSATION_NAME`、`FEISHU_LIVE_COMPOSER_SELECTOR`
 10. 登录态失效时，重新运行 `npm run test:feishu:auth` 刷新 profile
 11. 如果某个问题暂时没有被现有 smoke 覆盖，需要在任务执行过程中临时追加真实联调，也必须沿用同一套规则：DM 先确认或切换到 `coding-anywhere-autotest`，群聊先确认群名和 `/ca project current` 都指向 `coding-anywhere-autotest`；不满足条件时应先停下补夹具，而不是直接在业务会话里验证
 
