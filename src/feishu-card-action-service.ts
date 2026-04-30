@@ -136,8 +136,9 @@ export class FeishuCardActionService {
     const bridgeAction = actionValue?.bridgeAction;
     const patchTargetCardId = actionValue?.cardId;
     const patchTargetMessageId = actionValue?.messageId ?? event.open_message_id;
+    const actionChatType = actionValue?.chatType ?? inferChatTypeFromActionValue(actionValue);
     const effectiveChatId = actionValue?.chatId ?? (
-      actionValue?.chatType === "p2p" ? undefined : event.open_chat_id
+      shouldUseOpenChatIdFallback(actionValue, bridgeAction, actionChatType) ? event.open_chat_id : undefined
     );
 
     if (
@@ -155,7 +156,7 @@ export class FeishuCardActionService {
       const updatedReply = await this.dependencies.bridgeService.updateCodexPreferences({
         channel: "feishu",
         peerId: event.open_id,
-        chatType: actionValue?.chatType,
+        chatType: actionChatType,
         chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
@@ -193,7 +194,7 @@ export class FeishuCardActionService {
         channel: "feishu",
         peerId: event.open_id,
         action: bridgeAction === "open_plan_form" ? "toggle_plan_mode" : bridgeAction,
-        chatType: actionValue?.chatType,
+        chatType: actionChatType,
         chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
@@ -224,7 +225,7 @@ export class FeishuCardActionService {
         peerId: event.open_id,
         threadId,
         mode,
-        chatType: actionValue?.chatType,
+        chatType: actionChatType,
         chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
@@ -293,7 +294,7 @@ export class FeishuCardActionService {
           execute: options => this.dependencies.bridgeService.handleMessage({
             channel: "feishu",
             peerId: event.open_id,
-            chatType: actionValue?.chatType,
+            chatType: actionChatType,
             chatId: effectiveChatId,
             surfaceType: actionValue?.surfaceType,
             surfaceRef: actionValue?.surfaceRef,
@@ -329,7 +330,7 @@ export class FeishuCardActionService {
           execute: options => this.dependencies.bridgeService.handlePlanChoice?.({
             channel: "feishu",
             peerId: event.open_id,
-            chatType: actionValue?.chatType,
+            chatType: actionChatType,
             chatId: effectiveChatId,
             surfaceType: actionValue?.surfaceType,
             surfaceRef: actionValue?.surfaceRef,
@@ -377,14 +378,14 @@ export class FeishuCardActionService {
         actionValue,
         interactionToken: event.token,
         existingMessageId: patchTargetMessageId,
-        chatType: actionValue?.chatType,
+        chatType: actionChatType,
         chatId: effectiveChatId,
         surfaceType: actionValue?.surfaceType,
         surfaceRef: actionValue?.surfaceRef,
         execute: () => this.dependencies.bridgeService.handleMessage({
           channel: "feishu",
           peerId: event.open_id,
-          chatType: actionValue?.chatType,
+          chatType: actionChatType,
           chatId: effectiveChatId,
           surfaceType: actionValue?.surfaceType,
           surfaceRef: actionValue?.surfaceRef,
@@ -804,6 +805,58 @@ function isDesktopThreadContinuationResult(value: unknown): value is DesktopThre
   return !!value
     && typeof value === "object"
     && "reply" in value;
+}
+
+function inferChatTypeFromActionValue(actionValue: CardActionValue | undefined): "p2p" | "group" | undefined {
+  if (!actionValue) {
+    return undefined;
+  }
+
+  if (actionValue.mode === "dm") {
+    return "p2p";
+  }
+
+  if (actionValue.mode === "project_group" || actionValue.mode === "thread") {
+    return "group";
+  }
+
+  return undefined;
+}
+
+function shouldUseOpenChatIdFallback(
+  actionValue: CardActionValue | undefined,
+  bridgeAction: CardActionValue["bridgeAction"] | undefined,
+  chatType: "p2p" | "group" | undefined,
+): boolean {
+  if (chatType === "p2p") {
+    return false;
+  }
+
+  if (chatType === "group") {
+    return true;
+  }
+
+  if (actionValue?.surfaceType || actionValue?.surfaceRef) {
+    return true;
+  }
+
+  if (bridgeAction && shouldDefaultLegacyBridgeActionToDm(bridgeAction)) {
+    return false;
+  }
+
+  return true;
+}
+
+function shouldDefaultLegacyBridgeActionToDm(bridgeAction: NonNullable<CardActionValue["bridgeAction"]>): boolean {
+  return bridgeAction === "set_codex_model"
+    || bridgeAction === "set_reasoning_effort"
+    || bridgeAction === "set_codex_speed"
+    || bridgeAction === "toggle_plan_mode"
+    || bridgeAction === "open_diagnostics"
+    || bridgeAction === "close_diagnostics"
+    || bridgeAction === "open_plan_form"
+    || bridgeAction === "submit_plan_form"
+    || bridgeAction === "answer_plan_choice";
 }
 
 function isSuccessfulThreadSwitchReply(replies: BridgeReply[]): boolean {

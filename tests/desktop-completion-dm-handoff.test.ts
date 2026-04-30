@@ -55,6 +55,41 @@ describe("desktop completion DM handoff", () => {
     expect(cardText).not.toContain("命令已提交");
   });
 
+  it("keeps DM semantics when changing model from the session card returned by desktop handoff", async () => {
+    const harness = createHarness(harnesses);
+
+    const handoffResponse = await createHandoffResponse(harness);
+    const modelSelect = collectSelectStatic(handoffResponse).find(select =>
+      select.behaviors?.some(behavior => behavior.value?.bridgeAction === "set_codex_model"));
+    const modelActionValue = modelSelect?.behaviors?.[0]?.value;
+
+    expect(modelActionValue).toMatchObject({
+      bridgeAction: "set_codex_model",
+    });
+
+    const modelResponse = await harness.cardActionService.handleAction({
+      open_id: "ou_demo",
+      open_chat_id: "oc_dm_callback_context",
+      open_message_id: "om_session_card_1",
+      action: {
+        tag: "select_static",
+        option: "gpt-5.4-mini",
+        value: modelActionValue as any,
+      },
+    });
+
+    const cardText = JSON.stringify(modelResponse);
+    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).not.toContain("当前群未绑定项目");
+    expect(modelActionValue).toMatchObject({
+      chatType: "p2p",
+    });
+    expect(modelActionValue).not.toHaveProperty("chatId");
+    expect(harness.store.getCodexThreadPreference("thread-alpha-2")).toMatchObject({
+      model: "gpt-5.4-mini",
+    });
+  });
+
   it("hides git app directives and keeps only the compact git summary in the switched-thread card", async () => {
     const harness = createHarness(harnesses);
     const repoDir = createGitRepo(harness.rootDir);
@@ -168,6 +203,44 @@ interface DesktopCompletionDmHandoffHarness {
   codexCatalog: ReturnType<typeof createCatalogDouble>;
   bridge: BridgeService;
   cardActionService: FeishuCardActionService;
+}
+
+function collectSelectStatic(card: unknown): Array<{
+  behaviors?: Array<{
+    value?: Record<string, unknown>;
+  }>;
+}> {
+  const found: Array<{
+    behaviors?: Array<{
+      value?: Record<string, unknown>;
+    }>;
+  }> = [];
+  const visit = (value: unknown) => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item);
+      }
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      return;
+    }
+
+    const node = value as Record<string, unknown>;
+    if (node.tag === "select_static") {
+      found.push(node as {
+        behaviors?: Array<{
+          value?: Record<string, unknown>;
+        }>;
+      });
+    }
+    for (const child of Object.values(node)) {
+      visit(child);
+    }
+  };
+
+  visit(card);
+  return found;
 }
 
 function createHarness(

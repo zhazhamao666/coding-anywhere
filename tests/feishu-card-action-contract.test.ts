@@ -96,6 +96,7 @@ describe("feishu card action contract", () => {
       bridgeAction: "continue_desktop_thread",
       threadId: "thread-native-1",
       mode: "dm",
+      chatType: "p2p",
     });
   });
 });

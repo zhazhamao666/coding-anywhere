@@ -95,6 +95,7 @@ describe("desktop completion card builder", () => {
         value: expect.objectContaining({
           bridgeAction: "continue_desktop_thread",
           threadId: "thread_native_123",
+          chatType: "p2p",
         }),
       }),
     ]);
@@ -130,6 +131,7 @@ describe("desktop completion card builder", () => {
         value: expect.objectContaining({
           bridgeAction: "continue_desktop_thread",
           threadId: "thread_native_group_456",
+          chatType: "group",
         }),
       }),
     ]);
@@ -164,6 +166,7 @@ describe("desktop completion card builder", () => {
         value: expect.objectContaining({
           mode: "thread",
           threadId: "thread_native_topic_321",
+          chatType: "group",
           chatId: "oc_group_topic_321",
           surfaceType: "thread",
           surfaceRef: "omt_topic_321",

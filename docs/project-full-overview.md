@@ -123,7 +123,7 @@
 93. 飞书稳定态会话卡上的 `更多信息` 现在已经改成原卡 `inline_replace` 的只读诊断卡：会集中展示当前上下文、最近运行和下次任务设置摘要，并通过 `返回当前会话` 原地切回主卡，而不是额外污染消息时间线
 94. 旧的 `open_plan_form` / `submit_plan_form` 计划表单链路已经退出飞书主会话卡流程；历史卡片回调仍可兼容处理，但新的稳定态会话 UI 不再把“计划模式”实现成一张独立表单卡
 95. `feishu.allowlist` 现在已经改成可选配置：缺省或空数组时不做用户白名单校验；只有显式配置了非空 `open_id` 列表后，飞书消息入口才会按用户放行，`doctor` 也只会在列表里仍残留 `ou_xxx` 这类占位值时给出阻塞提示
-96. 飞书卡片按钮现在会显式携带 surface 的 `chatType` 上下文；运行态进度卡、稳定态会话卡、模型/偏好下拉和线程选择入口都会把 DM / group 语义写进 action value；DM 卡片即使在回调 payload 里带了 `open_chat_id` / `chatId`，bridge 也仍会把它识别成 DM，而不是误判成项目群主时间线
+96. 飞书卡片按钮现在会显式携带 surface 的 `chatType` 上下文；运行态进度卡、稳定态会话卡、模型/偏好下拉和线程选择入口都会把 DM / group 语义写进 action value；桌面 completion 卡会按 `mode` 写入 `p2p` / `group`，回调服务也会兼容只带 `mode` 的旧卡；DM 卡片即使在回调 payload 里带了 `open_chat_id` / `chatId`，bridge 也仍会把它识别成 DM，而不是误判成项目群主时间线
 97. 因此，DM 中的 `/ca`、`/ca help`、未知子命令回退、`项目列表`、计划模式开关、模型/推理/速度下拉，以及 `在飞书继续` 后的新稳定态卡，都会继续沿用 DM 的会话语义：不会再冒出“当前群”“绑定到本群”这类群聊专用文案，也不会把 DM 的 surface 交互状态和设置偏好错误写成群聊键
 98. Codex 模型下拉现在不再依赖脆弱的手工白名单顺序：GPT 家族模型会被归一化为小写 CLI ID、在飞书里统一显示为 `GPT-*`，并按数值版本倒序排列；同版本再按 Codex / Base / Spark / Mini 等变体排序，非 GPT 自定义模型保留原始 ID 并排在 GPT 家族之后
 99. `CodexCliRunner` 现在同时兼容旧版 `item.*` JSONL 和新版 `event_msg` / `response_item` JSONL：可以从 `agent_message`、assistant `message` 和 `task_complete.last_agent_message` 提取最终正文，识别 `function_call` / `exec_command_end` 进度；当 Codex 进程非 0 退出且只留下 `task_complete(last_agent_message:null)` 时，会返回明确的 `CODEX_RUN_NO_ASSISTANT_OUTPUT`，不再把这类新版协议空输出误报成笼统的 `RUN_STREAM_FAILED`

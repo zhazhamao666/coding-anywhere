@@ -87,11 +87,17 @@ export function buildDesktopThreadActionValue(
     mode: "dm" | "project_group" | "thread";
   },
 ): Record<string, unknown> {
+  const chatType = input.chatType ?? (input.mode === "dm" ? "p2p" : "group");
   return withSurfaceContext({
     bridgeAction,
     threadId: input.threadId,
     mode: input.mode,
-  }, input);
+  }, {
+    chatType,
+    ...(chatType === "group" && input.chatId ? { chatId: input.chatId } : {}),
+    surfaceType: input.surfaceType,
+    surfaceRef: input.surfaceRef,
+  });
 }
 
 function withSurfaceContext(

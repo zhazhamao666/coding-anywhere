@@ -542,6 +542,62 @@ describe("FeishuCardActionService", () => {
     });
   });
 
+  it("does not infer group context for legacy DM preference callbacks that only carry bridgeAction", async () => {
+    const replyCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "当前会话已就绪",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
+    const bridgeService = {
+      handleMessage: vi.fn(async () => []),
+      updateCodexPreferences: vi.fn(async () => ({
+        kind: "card",
+        card: replyCard,
+      })),
+    };
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: createApiClientDouble() as any,
+    });
+
+    const result = await service.handleAction({
+      open_id: "ou_demo",
+      open_chat_id: "oc_dm_callback_context",
+      open_message_id: "om_legacy_dm_session_card",
+      action: {
+        tag: "select_static",
+        option: "gpt-5.4-mini",
+        value: {
+          bridgeAction: "set_codex_model",
+        },
+      },
+    });
+
+    expect(bridgeService.updateCodexPreferences).toHaveBeenCalledWith({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatType: undefined,
+      chatId: undefined,
+      surfaceType: undefined,
+      surfaceRef: undefined,
+      model: "gpt-5.4-mini",
+    });
+    expect(result).toMatchObject({
+      card: {
+        type: "raw",
+        data: replyCard,
+      },
+    });
+  });
+
   it("updates Codex speed from a select_static callback and returns the refreshed session card", async () => {
     const replyCard = {
       schema: "2.0",
@@ -648,6 +704,7 @@ describe("FeishuCardActionService", () => {
       peerId: "ou_demo",
       threadId: "thread-native-current",
       mode: "thread",
+      chatType: "group",
       chatId: "oc_chat_current",
       surfaceType: "thread",
       surfaceRef: "omt_current",
