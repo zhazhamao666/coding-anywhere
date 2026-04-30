@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { loadConfig, type BridgeConfig } from "./config.js";
 
-export type FeishuLiveSurface = "dm" | "group";
+export type FeishuLiveSurface = "dm" | "group" | "topic";
 
 export const DEFAULT_FEISHU_LIVE_PROJECT_KEY = "coding-anywhere-autotest";
 export const DEFAULT_FEISHU_LIVE_GROUP_NAME = "coding-anywhere-autotest";
@@ -13,6 +13,7 @@ export interface FeishuLiveTestSettings {
   opsBaseUrl: string;
   projectKey: string;
   surface: FeishuLiveSurface;
+  scenarios: string[];
   conversationName?: string;
   allowNonAutotest: boolean;
 }
@@ -32,6 +33,7 @@ export function loadFeishuLiveTestSettings(
   const opsBaseUrl = env.FEISHU_LIVE_OPS_BASE_URL ?? deriveOpsBaseUrl(cwd, dependencies);
   const projectKey = env.FEISHU_LIVE_PROJECT_KEY?.trim() || DEFAULT_FEISHU_LIVE_PROJECT_KEY;
   const surface = normalizeLiveSurface(env.FEISHU_LIVE_SURFACE);
+  const scenarios = parseLiveScenarios(env.FEISHU_LIVE_SCENARIOS);
   const allowNonAutotest = env.FEISHU_LIVE_ALLOW_NON_AUTOTEST?.trim() === "1";
   const conversationName = env.FEISHU_LIVE_CONVERSATION_NAME?.trim()
     || (surface === "group" ? DEFAULT_FEISHU_LIVE_GROUP_NAME : undefined);
@@ -42,6 +44,7 @@ export function loadFeishuLiveTestSettings(
     opsBaseUrl,
     projectKey,
     surface,
+    scenarios,
     conversationName,
     allowNonAutotest,
   };
@@ -84,7 +87,19 @@ export function assertFeishuLiveTargetConfigured(
 }
 
 function normalizeLiveSurface(rawSurface: string | undefined): FeishuLiveSurface {
-  return rawSurface?.trim().toLowerCase() === "group" ? "group" : "dm";
+  const normalized = rawSurface?.trim().toLowerCase();
+  if (normalized === "group" || normalized === "topic") {
+    return normalized;
+  }
+
+  return "dm";
+}
+
+function parseLiveScenarios(rawScenarios: string | undefined): string[] {
+  return (rawScenarios ?? "")
+    .split(",")
+    .map(scenario => scenario.trim())
+    .filter(Boolean);
 }
 
 function deriveOpsBaseUrl(

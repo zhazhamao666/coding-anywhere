@@ -86,7 +86,14 @@ describe("StreamingCardController", () => {
       }),
     );
     expect(apiClient.updateInteractiveCard).toHaveBeenCalled();
-    const runningCall = apiClient.sendInteractiveCard.mock.calls[0];
+    const queuedCall = apiClient.sendInteractiveCard.mock.calls[0];
+    expect(queuedCall).toBeDefined();
+    const queuedCard = (queuedCall as unknown as Array<unknown>)[1] as Record<string, unknown>;
+    expect(JSON.stringify(queuedCard)).toContain("取消排队");
+    expect(JSON.stringify(queuedCard)).not.toContain("停止任务");
+    const runningCall = apiClient.updateInteractiveCard.mock.calls.find(call =>
+      JSON.stringify((call as unknown as Array<unknown>)[1]).includes("运行中")
+    );
     expect(runningCall).toBeDefined();
     const runningCard = (runningCall as unknown as Array<unknown>)[1] as Record<string, unknown>;
     expect(JSON.stringify(runningCard)).toContain("停止任务");

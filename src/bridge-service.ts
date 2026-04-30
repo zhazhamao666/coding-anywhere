@@ -3416,12 +3416,12 @@ export class BridgeService {
     },
     currentRun?: RuntimeRunSnapshot,
   ): void {
-    if (!currentRun) {
+    if (!currentRun || currentRun.status === "canceling" || !currentRun.cancelable) {
       return;
     }
 
     actions.push({
-      label: "停止任务",
+      label: currentRun.status === "queued" ? "取消排队" : "停止任务",
       type: "danger",
       value: this.buildCardActionValue(context, `${BRIDGE_COMMAND_PREFIX} stop`),
     });

@@ -318,9 +318,9 @@ describe("buildApp", () => {
     expect(ui.body).toContain("最近公开进展");
     expect(ui.body).toContain("技术元数据");
     expect(ui.body).toContain("会话快照（次级）");
-    expect(ui.body).toContain('"running":"处理中"');
+    expect(ui.body).toContain('"running":"运行中"');
     expect(ui.body).toContain('"tool_call":"工具调用"');
-    expect(ui.body).toContain('"queued":"已接收"');
+    expect(ui.body).toContain('"queued":"排队中"');
     expect(ui.body).toContain('"received":"已接收"');
     expect(ui.body).not.toContain("默认按最近更新时间倒序");
     expect(ui.body.indexOf("<label>状态</label>")).toBeLessThan(ui.body.indexOf("<label>Root</label>"));

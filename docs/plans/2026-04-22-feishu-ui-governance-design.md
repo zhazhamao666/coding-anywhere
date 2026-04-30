@@ -61,7 +61,9 @@
 - JSON 2.0 卡片不能更新成 JSON 1.0。
 - 交互消息卡片请求体最大 30 KB；JSON 2.0 卡片最多 200 个元素或组件。
 
-## Current Problems In Code
+## Original Problems In Code
+
+以下问题描述的是 UI 治理启动时的原始状态，不再作为 2026-04-30 当前代码的完整现状说明。
 
 ### 1. Builder 分裂，BridgeService 直接承担 UI 组装
 
@@ -153,34 +155,22 @@ Codex 设置控件至少存在两份实现：
 
 ### A. 建立统一的卡片渲染层
 
-在 `src/feishu-card/` 下引入三层结构：
+当前落地形态以共享 frame 为第一层收敛目标，而不是强制一次性引入独立 `card-model.ts`：
 
-1. `card-model.ts`
-定义共享的 view model，而不是在业务代码里直接拼 JSON：
+1. `frame-builder.ts`
+负责统一输出 JSON 2.0、`config.update_multi = true`、摘要和分段元素拼接。
 
-```ts
-interface FeishuCardModel {
-  title: string;
-  template?: "blue" | "green" | "orange" | "red" | "grey";
-  summary: string;
-  facts: CardFact[];
-  sections: CardSection[];
-  controls?: CardControl[];
-  actions?: CardAction[];
-}
-```
+2. `action-contract.ts`
+负责生成带 `actionKind` 和 surface 上下文的动作 value。
 
-2. `card-frame-builder.ts`
-负责把 `facts / sections / controls / actions` 渲染成统一的 JSON 2.0 结构。
-
-3. 各业务 builder 只负责把领域状态变成 model：
+3. 各业务 builder / service 只负责把领域状态变成统一 frame 可渲染的元素：
 
 - `navigation-card-builder.ts`
-- `run-card-builder.ts`
+- `card-builder.ts`
 - `desktop-completion-card-builder.ts`
 - 后续如有需要，再加 `list-card-builder.ts`
 
-BridgeService 不再直接拼字符串数组，而是只创建 typed model。
+`BridgeService` 仍保留少量领域分支内的 `summaryLines / sections / rows` 组装；这是当前阶段允许存在的实现边界。后续若继续拆分，应在不改变卡片协议的前提下，把这些领域 model 生成逻辑逐步迁出。
 
 ### B. 统一信息架构
 
@@ -211,7 +201,8 @@ BridgeService 不再直接拼字符串数组，而是只创建 typed model。
 
 适用于：
 
-- 打开计划表单
+- 计划模式开关
+- `更多信息` / 返回当前会话诊断切换
 - 切换当前项目 / 当前会话 / 状态这类可在 3 秒内完成的只读刷新
 - 桌面 continue 这类同步完成的绑定动作
 
@@ -240,7 +231,7 @@ BridgeService 不再直接拼字符串数组，而是只创建 typed model。
 
 适用于：
 
-- `submit_plan_form`
+- 历史卡片上的 `submit_plan_form` 兼容回调
 - `answer_plan_choice`
 - 后续任何会真正触发 Codex 长任务的卡片动作
 
@@ -258,7 +249,7 @@ BridgeService 不再直接拼字符串数组，而是只创建 typed model。
 当前动作 value 由多处手工拼装。重构后统一通过 `card-action-contract.ts` 生成，分为：
 
 - `command_action`
-- `plan_form_action`
+- `session_ui_action`
 - `plan_choice_action`
 - `continue_thread_action`
 - `preference_action`
@@ -285,6 +276,8 @@ interface NormalizedCardActionEvent {
   open_chat_id?: string;
   open_message_id?: string;
   token?: string;
+  host?: string;
+  timezone?: string;
   action: {
     tag?: string;
     name?: string;
@@ -564,7 +557,7 @@ interface NormalizedCardActionEvent {
 
 ### 5. 完成态卡
 
-目标：完成任务后优先在当前卡片展示“Codex 最终返回了什么”；只有在结果过长或超过卡片预算时，才额外补完整结果消息。
+目标：完成任务后优先在当前卡片展示“Codex 最终返回了什么”。普通飞书对话 run 的投递策略固定为“终态卡 + 完整正文消息”：终态卡展示收敛正文，完整 assistant 正文仍单独作为下方普通消息 / 线程回复发送。桌面 completion 通知例外，它在同一张桌面通知卡中直接内嵌完成结果，不再额外补第二条结果消息。
 
 完成示例：
 
@@ -647,7 +640,7 @@ Codex 最终返回了什么
 规则：
 
 - 成功完成态卡片的正文区统一命名为 `Codex 最终返回了什么`。
-- 默认优先在当前卡片展示最终结果正文；如果结果过长或超出卡片预算，则在当前卡片展示截断后的正文，并补一句“完整结果见下方消息”。
+- 普通飞书对话 run 默认同时发送终态卡和完整正文消息；卡片只展示收敛后的正文摘要，并提示完整结果见下方消息。
 - 只有在超长 / 超预算时，才额外补完整结果消息或完整结果卡。
 - `错误摘要` / `结果摘要` 仍保留给失败态与取消态。
 - 完成态保留可交互的 `计划模式 [开/关]` 状态项，以及 `新会话`、`切换线程`、`更多信息` 三个后续动作。
@@ -1275,7 +1268,7 @@ DM 场景示例：
 
 ### 3. BridgeService 仍然很大
 
-本次重构的目标不是一次性拆散整个 BridgeService，而是先让 UI 组装离开业务分支。只要 model 生成点收敛，后续再拆业务服务才有基础。
+本次重构的目标不是一次性拆散整个 BridgeService，而是先把卡片 JSON frame、动作 value、回调更新路径和状态词汇收敛到统一协议。BridgeService 中仍存在的领域卡片组装属于后续可拆分工作，不应再影响用户可见协议和测试口径。
 
 ## Testing Strategy
 
@@ -1297,11 +1290,16 @@ DM 场景示例：
   - callback 触发长任务后创建新的进度消息
 - `tests/app.test.ts`
   - `/ops/ui` 词汇与状态标签更新
+- `tests/feishu-live-config.test.ts` 与 `tests/live/feishu-live-smoke.spec.ts`
+  - 真实飞书 UI journey 矩阵：DM、已绑定项目群、已注册话题、稳定态会话卡、诊断卡、计划模式开关、新会话、线程切换、短任务终态和 `/ops/ui`
+  - 所有真实飞书 journey 默认锁定 `coding-anywhere-autotest` 夹具；群未绑定项目、自动改绑、桌面 lifecycle 等不适合常规自动真实联调的场景继续由单测 / 集成测试覆盖，或等专用夹具确认后再加入 live suite
 
 ## Acceptance Criteria
 
 - 现有飞书卡片收敛为一套共享 card frame。
 - 异步卡片交互不再混用“直接回卡 + 后续 patch 同一卡”。
-- 计划表单 / 计划单选触发的长任务使用新的进度消息链路。
+- 新 UI 不再生成独立计划表单；历史计划表单回调与计划单选触发的长任务都使用新的进度消息链路。
+- 排队态显示 `取消排队`，取消中态不再保留重复停止按钮，运行态只保留 `停止任务`。
 - `/ops/ui` 与飞书卡片使用同一套状态词汇。
+- 真实飞书 live 用例覆盖方案里的主要交互页面和可安全自动化场景；受夹具限制不能自动覆盖的场景必须在文档和测试策略中明确。
 - `docs/project-full-overview.md` 与实现保持一致。

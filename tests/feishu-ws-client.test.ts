@@ -674,6 +674,8 @@ describe("FeishuWsClient", () => {
       event: {
         context: {
           open_message_id: "om_card_3",
+          host: "web",
+          timezone: "Asia/Shanghai",
         },
         operator: {
           open_id: "ou_demo",
@@ -692,6 +694,8 @@ describe("FeishuWsClient", () => {
     expect(onCardAction).toHaveBeenCalledWith({
       open_id: "ou_demo",
       open_message_id: "om_card_3",
+      host: "web",
+      timezone: "Asia/Shanghai",
       action: {
         tag: "checkbox",
         checked: true,

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   STREAMING_ELEMENT_ID,
   buildBridgeCard,
-  buildPlanModeFormCard,
   buildStreamingCardMarkdown,
   buildStreamingShellCard,
 } from "../src/feishu-card/card-builder.js";
@@ -185,6 +184,54 @@ describe("feishu card builder", () => {
     expect(serialized).not.toContain("更多信息");
   });
 
+  it("renders queued cards with a cancel-queue action and canceling cards without a repeated stop action", () => {
+    const queuedCard = buildBridgeCard(createState({
+      status: "queued",
+      stage: "received",
+      preview: "当前任务正在等待调度执行",
+    }));
+    const cancelingCard = buildBridgeCard(createState({
+      status: "canceling",
+      stage: "canceling",
+      preview: "已收到停止请求，正在等待当前任务收口",
+    }));
+
+    expect(JSON.stringify(queuedCard)).toContain("排队中");
+    expect(JSON.stringify(queuedCard)).toContain("取消排队");
+    expect(JSON.stringify(queuedCard)).not.toContain("停止任务");
+    expect(JSON.stringify(cancelingCard)).toContain("停止中");
+    expect(JSON.stringify(cancelingCard)).not.toContain("取消排队");
+    expect(JSON.stringify(cancelingCard)).not.toContain("停止任务");
+  });
+
+  it("limits running-card progress and todo sections to the validated UI budget", () => {
+    const card = buildBridgeCard(createState({
+      status: "running",
+      stage: "text",
+      preview: [
+        "第一条公开进展",
+        "第二条公开进展",
+        "第三条公开进展",
+        "第四条不应出现在卡片里",
+      ].join("\n"),
+      planTodos: [
+        { text: "任务一", completed: true },
+        { text: "任务二", completed: true },
+        { text: "任务三", completed: false },
+        { text: "任务四", completed: false },
+        { text: "任务五", completed: false },
+        { text: "任务六不应出现在卡片里", completed: false },
+      ],
+    }));
+
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain("第一条公开进展");
+    expect(serialized).toContain("第三条公开进展");
+    expect(serialized).not.toContain("第四条不应出现在卡片里");
+    expect(serialized).toContain("任务五");
+    expect(serialized).not.toContain("任务六不应出现在卡片里");
+  });
+
   it("renders structured todo items and plan-choice buttons on bridge cards", () => {
     const card = buildBridgeCard(createState({
       status: "done",
@@ -248,36 +295,6 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("\"choiceId\":\"architecture\"");
     expect(serialized).toContain("\"surfaceType\":\"thread\"");
     expect(serialized).toContain("\"surfaceRef\":\"omt_current\"");
-  });
-
-  it("builds a JSON 2.0 plan-mode form card with a multiline form input", () => {
-    const card = buildPlanModeFormCard({
-      title: "计划模式",
-      context: {
-        chatId: "oc_chat_current",
-        surfaceType: "thread",
-        surfaceRef: "omt_current",
-      },
-    });
-
-    const serialized = JSON.stringify(card);
-    expect(card).toMatchObject({
-      schema: "2.0",
-      body: {
-        elements: expect.arrayContaining([
-          expect.objectContaining({
-            tag: "form",
-          }),
-        ]),
-      },
-    });
-    expect(serialized).toContain("\"tag\":\"input\"");
-    expect(serialized).toContain("\"input_type\":\"multiline_text\"");
-    expect(serialized).toContain("\"name\":\"plan_prompt\"");
-    expect(serialized).toContain("\"required\":true");
-    expect(serialized).toContain("\"form_action_type\":\"submit\"");
-    expect(serialized).toContain("\"bridgeAction\":\"submit_plan_form\"");
-    expect(serialized).toContain("\"command\":\"/ca\"");
   });
 
   it("builds the navigation hub card in schema 2.0 format", () => {

@@ -4,7 +4,7 @@ import {
   assertFeishuLiveAuthReady,
   createFeishuLiveBrowserLaunchOptions,
 } from "../../src/feishu-live-auth.js";
-import { buildFeishuLiveJourney, type FeishuLiveJourneyStep } from "../../src/feishu-live-journey.js";
+import { buildFeishuLiveJourneys, type FeishuLiveJourneyStep } from "../../src/feishu-live-journey.js";
 import { assertFeishuLiveTargetConfigured, loadFeishuLiveTestSettings } from "../../src/feishu-live-test-settings.js";
 
 test("walks the main Feishu live UI journey on the configured autotest surface", async () => {
@@ -12,9 +12,10 @@ test("walks the main Feishu live UI journey on the configured autotest surface",
   const settings = assertFeishuLiveTargetConfigured();
   const conversationName = settings.conversationName;
   const composerSelector = process.env.FEISHU_LIVE_COMPOSER_SELECTOR ?? "textarea, [contenteditable='true']";
-  const journey = buildFeishuLiveJourney({
+  const journeys = buildFeishuLiveJourneys({
     surface: settings.surface,
     projectKey: settings.projectKey,
+    scenarios: settings.scenarios,
   });
   const context = await chromium.launchPersistentContext(
     auth.profileDir,
@@ -43,24 +44,28 @@ test("walks the main Feishu live UI journey on the configured autotest surface",
       await page.keyboard.press("Enter");
     };
 
-    for (const step of journey.setupSteps) {
-      await test.step(`夹具准备：${step.name}`, async () => {
-        await executeJourneyStep({
-          step,
-          page,
-          sendComposerText,
+    for (const journey of journeys) {
+      for (const step of journey.setupSteps) {
+        await test.step(`${journey.name} 夹具准备：${step.name}`, async () => {
+          await executeJourneyStep({
+            step,
+            page,
+            sendComposerText,
+            opsBaseUrl: settings.opsBaseUrl,
+          });
         });
-      });
-    }
+      }
 
-    for (const step of journey.steps) {
-      await test.step(`用户旅程：${step.name}`, async () => {
-        await executeJourneyStep({
-          step,
-          page,
-          sendComposerText,
+      for (const step of journey.steps) {
+        await test.step(`${journey.name} 用户旅程：${step.name}`, async () => {
+          await executeJourneyStep({
+            step,
+            page,
+            sendComposerText,
+            opsBaseUrl: settings.opsBaseUrl,
+          });
         });
-      });
+      }
     }
 
     if (process.env.FEISHU_LIVE_SMOKE_TEXT) {
@@ -83,27 +88,85 @@ async function executeJourneyStep(input: {
   step: FeishuLiveJourneyStep;
   page: Page;
   sendComposerText: (text: string) => Promise<void>;
+  opsBaseUrl: string;
 }): Promise<void> {
   const expectedTexts = input.step.expectText ?? input.step.expectAnyText ?? [];
   const beforeCounts = await countVisibleTexts(input.page, expectedTexts);
+  let expectFresh = true;
 
   if (input.step.kind === "command") {
     await input.sendComposerText(input.step.text);
-  } else {
+  } else if (input.step.kind === "click") {
     const target = input.page.getByText(input.step.label, { exact: true }).last();
     await expect(target).toBeVisible({ timeout: 45_000 });
     await target.click();
+  } else if (input.step.kind === "click_plan_mode_toggle") {
+    expectFresh = await ensurePlanModeToggle(input.page, input.step.target);
+  } else {
+    await input.page.goto(new URL("/ops/ui", input.opsBaseUrl).toString(), {
+      waitUntil: "domcontentloaded",
+    });
   }
 
-  if (expectedTexts.length > 0) {
-    await expectFreshText(input.page, expectedTexts, beforeCounts);
+  if (expectedTexts.length > 0 && expectFresh) {
+    await expectFreshText(input.page, expectedTexts, beforeCounts, input.step.timeoutMs);
   }
   if (input.step.expectText) {
-    await expectText(input.page, input.step.expectText);
+    await expectText(input.page, input.step.expectText, input.step.timeoutMs);
   }
   if (input.step.expectAnyText) {
-    await expectAnyText(input.page, input.step.expectAnyText);
+    await expectAnyText(input.page, input.step.expectAnyText, input.step.timeoutMs);
   }
+  if (input.step.expectAbsentText) {
+    await expectAbsentText(input.page, input.step.expectAbsentText);
+  }
+}
+
+async function ensurePlanModeToggle(page: Page, targetState: "on" | "off"): Promise<boolean> {
+  const wantedLabel = targetState === "on" ? "计划模式 [开]" : "计划模式 [关]";
+  const oppositeLabel = targetState === "on" ? "计划模式 [关]" : "计划模式 [开]";
+  const latestToggle = await findLatestVisibleExactText(page, [wantedLabel, oppositeLabel]);
+  if (!latestToggle) {
+    throw new Error("Expected a visible plan mode toggle on the latest Feishu card.");
+  }
+  if (latestToggle.text === wantedLabel) {
+    return false;
+  }
+
+  await expect(latestToggle.locator).toBeVisible({ timeout: 45_000 });
+  await latestToggle.locator.click();
+  return true;
+}
+
+async function findLatestVisibleExactText(
+  page: Page,
+  texts: string[],
+): Promise<{ text: string; locator: ReturnType<Page["locator"]> } | null> {
+  const candidates: Array<{
+    text: string;
+    locator: ReturnType<Page["locator"]>;
+    y: number;
+    index: number;
+  }> = [];
+  for (const text of texts) {
+    const locator = page.getByText(text, { exact: true });
+    const count = await locator.count();
+    for (let index = 0; index < count; index += 1) {
+      const item = locator.nth(index);
+      if (!await item.isVisible().catch(() => false)) {
+        continue;
+      }
+      const box = await item.boundingBox();
+      candidates.push({
+        text,
+        locator: item,
+        y: box?.y ?? 0,
+        index,
+      });
+    }
+  }
+
+  return candidates.sort((left, right) => right.y - left.y || right.index - left.index)[0] ?? null;
 }
 
 async function countVisibleTexts(
@@ -138,9 +201,9 @@ async function expectFreshText(
   page: Page,
   texts: string[],
   beforeCounts: Map<string, number>,
+  timeoutMs = 45_000,
 ): Promise<void> {
   const startedAt = Date.now();
-  const timeoutMs = 45_000;
   const expectedTexts = texts.filter(Boolean);
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -160,10 +223,11 @@ async function expectFreshText(
 async function expectText(
   page: Page,
   texts: string[],
+  timeoutMs = 45_000,
 ): Promise<void> {
   for (const text of texts.filter(Boolean)) {
     await expect(page.getByText(text, { exact: false }).first()).toBeVisible({
-      timeout: 45_000,
+      timeout: timeoutMs,
     });
   }
 }
@@ -171,9 +235,9 @@ async function expectText(
 async function expectAnyText(
   page: Page,
   texts: string[],
+  timeoutMs = 45_000,
 ): Promise<void> {
   const startedAt = Date.now();
-  const timeoutMs = 45_000;
   while (Date.now() - startedAt < timeoutMs) {
     for (const text of texts) {
       const visible = await page.getByText(text, { exact: false }).first().isVisible().catch(() => false);
@@ -185,4 +249,15 @@ async function expectAnyText(
   }
 
   throw new Error(`Expected one of these texts to be visible: ${texts.join(", ")}`);
+}
+
+async function expectAbsentText(
+  page: Page,
+  texts: string[],
+): Promise<void> {
+  for (const text of texts.filter(Boolean)) {
+    await expect(page.getByText(text, { exact: false }).first()).not.toBeVisible({
+      timeout: 3_000,
+    });
+  }
 }

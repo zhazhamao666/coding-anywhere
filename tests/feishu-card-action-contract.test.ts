@@ -12,6 +12,7 @@ describe("feishu card action contract", () => {
         surfaceRef: "omt_current",
       },
     })).toEqual({
+      actionKind: "command_action",
       command: "/ca status",
       chatId: "oc_chat_current",
       surfaceType: "thread",
@@ -26,13 +27,8 @@ describe("feishu card action contract", () => {
       surfaceRef: "omt_current",
     };
 
-    expect(actionContract.buildPlanFormActionValue(context)).toEqual({
-      bridgeAction: "open_plan_form",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
-    });
     expect(actionContract.buildPreferenceActionValue(context, "set_codex_model")).toEqual({
+      actionKind: "preference_action",
       bridgeAction: "set_codex_model",
       chatId: "oc_chat_current",
       surfaceType: "thread",
@@ -43,6 +39,7 @@ describe("feishu card action contract", () => {
       choiceId: "tests",
       context,
     })).toEqual({
+      actionKind: "plan_choice_action",
       bridgeAction: "answer_plan_choice",
       interactionId: "plan-1",
       choiceId: "tests",
@@ -65,6 +62,7 @@ describe("feishu card action contract", () => {
 
     expect(typeof buildPlanModeToggleActionValue).toBe("function");
     expect(buildPlanModeToggleActionValue?.(context)).toEqual({
+      actionKind: "session_ui_action",
       bridgeAction: "toggle_plan_mode",
       chatId: "oc_chat_current",
       surfaceType: "thread",
@@ -73,6 +71,7 @@ describe("feishu card action contract", () => {
 
     expect(typeof buildOpenDiagnosticsActionValue).toBe("function");
     expect(buildOpenDiagnosticsActionValue?.(context)).toEqual({
+      actionKind: "session_ui_action",
       bridgeAction: "open_diagnostics",
       chatId: "oc_chat_current",
       surfaceType: "thread",
@@ -81,6 +80,7 @@ describe("feishu card action contract", () => {
 
     expect(typeof buildCloseDiagnosticsActionValue).toBe("function");
     expect(buildCloseDiagnosticsActionValue?.(context)).toEqual({
+      actionKind: "session_ui_action",
       bridgeAction: "close_diagnostics",
       chatId: "oc_chat_current",
       surfaceType: "thread",
@@ -93,6 +93,7 @@ describe("feishu card action contract", () => {
       threadId: "thread-native-1",
       mode: "dm",
     })).toEqual({
+      actionKind: "continue_thread_action",
       bridgeAction: "continue_desktop_thread",
       threadId: "thread-native-1",
       mode: "dm",

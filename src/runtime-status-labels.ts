@@ -2,14 +2,14 @@ import type { ProgressStage, ProgressStatus } from "./types.js";
 
 export const RUNTIME_STATUS_LABELS: Record<ProgressStatus | "idle", string> = {
   idle: "空闲",
-  queued: "已接收",
+  queued: "排队中",
   preparing: "准备中",
   canceling: "停止中",
-  running: "处理中",
+  running: "运行中",
   tool_active: "工具执行中",
   waiting: "等待中",
   done: "已完成",
-  error: "失败",
+  error: "出错",
   canceled: "已停止",
 };
 
@@ -25,7 +25,7 @@ export const RUNTIME_STAGE_LABELS: Record<ProgressStage, string> = {
   text: "文本响应",
   waiting: "等待中",
   done: "已完成",
-  error: "失败",
+  error: "出错",
   canceled: "已停止",
 };
 

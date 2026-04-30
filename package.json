@@ -17,7 +17,10 @@
     "test:feishu:auth": "tsx src/feishu-live-auth-cli.ts",
     "test:feishu:live": "node scripts/feishu-live.mjs dm",
     "test:feishu:live:dm": "node scripts/feishu-live.mjs dm",
+    "test:feishu:live:dm:ui": "node scripts/feishu-live.mjs dm all",
     "test:feishu:live:group": "node scripts/feishu-live.mjs group",
+    "test:feishu:live:group:ui": "node scripts/feishu-live.mjs group all",
+    "test:feishu:live:topic": "node scripts/feishu-live.mjs topic all",
     "test:watch": "vitest"
   },
   "keywords": [],

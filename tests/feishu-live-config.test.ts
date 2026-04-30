@@ -7,7 +7,7 @@ import {
   assertFeishuLiveTargetConfigured,
   loadFeishuLiveTestSettings,
 } from "../src/feishu-live-test-settings.js";
-import { buildFeishuLiveJourney } from "../src/feishu-live-journey.js";
+import { buildFeishuLiveJourney, buildFeishuLiveJourneys } from "../src/feishu-live-journey.js";
 
 const repoRoot = path.resolve(__dirname, "..");
 
@@ -18,7 +18,7 @@ describe("feishu live repository config", () => {
     expect(gitignore).toContain(".auth/");
   });
 
-  it("exposes auth bootstrap and explicit dm/group live smoke scripts", () => {
+  it("exposes auth bootstrap and explicit dm/group/topic live smoke scripts", () => {
     const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
     };
@@ -26,7 +26,10 @@ describe("feishu live repository config", () => {
     expect(pkg.scripts?.["test:feishu:auth"]).toBeTruthy();
     expect(pkg.scripts?.["test:feishu:live"]).toBeTruthy();
     expect(pkg.scripts?.["test:feishu:live:dm"]).toBeTruthy();
+    expect(pkg.scripts?.["test:feishu:live:dm:ui"]).toBeTruthy();
     expect(pkg.scripts?.["test:feishu:live:group"]).toBeTruthy();
+    expect(pkg.scripts?.["test:feishu:live:group:ui"]).toBeTruthy();
+    expect(pkg.scripts?.["test:feishu:live:topic"]).toBeTruthy();
   });
 
   it("ships a live auth cli entrypoint", () => {
@@ -68,6 +71,7 @@ describe("feishu live test settings", () => {
     expect(settings.opsBaseUrl).toBe("http://127.0.0.1:8787");
     expect(settings.projectKey).toBe("coding-anywhere-autotest");
     expect(settings.surface).toBe("dm");
+    expect(settings.scenarios).toEqual([]);
     expect(settings.allowNonAutotest).toBe(false);
   });
 
@@ -80,6 +84,7 @@ describe("feishu live test settings", () => {
           FEISHU_LIVE_OPS_BASE_URL: "http://localhost:3000",
           FEISHU_LIVE_PROJECT_KEY: "coding-anywhere-autotest",
           FEISHU_LIVE_SURFACE: "group",
+          FEISHU_LIVE_SCENARIOS: "main,diagnostics",
         },
       },
       {
@@ -96,6 +101,7 @@ describe("feishu live test settings", () => {
     expect(settings.opsBaseUrl).toBe("http://localhost:3000");
     expect(settings.projectKey).toBe("coding-anywhere-autotest");
     expect(settings.surface).toBe("group");
+    expect(settings.scenarios).toEqual(["main", "diagnostics"]);
     expect(settings.conversationName).toBe("coding-anywhere-autotest");
   });
 
@@ -239,6 +245,29 @@ describe("feishu live test settings", () => {
     expect(settings.conversationName).toBe("coding-anywhere");
     expect(settings.allowNonAutotest).toBe(true);
   });
+
+  it("accepts the registered topic live surface", () => {
+    const settings = assertFeishuLiveTargetConfigured(
+      {
+        cwd: "D:\\repo\\coding-anywhere",
+        env: {
+          FEISHU_LIVE_TARGET_URL: "https://feishu.cn/messages/topic",
+          FEISHU_LIVE_SURFACE: "topic",
+        },
+      },
+      {
+        loadConfig: () => ({
+          server: {
+            host: "127.0.0.1",
+            port: 8787,
+          },
+        }),
+      },
+    );
+
+    expect(settings.surface).toBe("topic");
+    expect(settings.projectKey).toBe("coding-anywhere-autotest");
+  });
 });
 
 describe("feishu live user journeys", () => {
@@ -263,7 +292,7 @@ describe("feishu live user journeys", () => {
       expect(journey.steps.some(step => step.kind === "click")).toBe(true);
       expect(journey.steps.filter(step =>
         step.kind === "command" &&
-        /^\/ca project (switch|current|list)\b/.test(step.text)
+        /^\/ca project (switch|current)\b/.test(step.text)
       )).toEqual([]);
     }
   });
@@ -274,7 +303,8 @@ describe("feishu live user journeys", () => {
       projectKey: "coding-anywhere-autotest",
     });
 
-    expect(journey.name).toBe("dm");
+    expect(journey.name).toBe("dm:main");
+    expect(journey.surface).toBe("dm");
     expect(journey.setupSteps).toMatchObject([
       {
         kind: "command",
@@ -322,7 +352,8 @@ describe("feishu live user journeys", () => {
       projectKey: "coding-anywhere-autotest",
     });
 
-    expect(journey.name).toBe("group");
+    expect(journey.name).toBe("group:main");
+    expect(journey.surface).toBe("group");
     expect(journey.setupSteps).toMatchObject([
       {
         kind: "command",
@@ -337,8 +368,8 @@ describe("feishu live user journeys", () => {
         expectAnyText: ["当前群已绑定项目", "当前会话已就绪"],
       },
       {
-        kind: "click",
-        label: "查看项目",
+        kind: "command",
+        text: "/ca project list",
         expectText: ["项目列表", "已绑定当前群"],
       },
       {
@@ -357,5 +388,53 @@ describe("feishu live user journeys", () => {
         expectText: ["运行状态"],
       },
     ]);
+  });
+
+  it("builds the full DM UI journey matrix for the validated card scenes", () => {
+    const journeys = buildFeishuLiveJourneys({
+      surface: "dm",
+      projectKey: "coding-anywhere-autotest",
+      scenarios: ["all"],
+    });
+
+    expect(journeys.map(journey => journey.name)).toEqual([
+      "dm:main",
+      "dm:session",
+      "dm:diagnostics",
+      "dm:plan-toggle",
+      "dm:new-session",
+      "dm:thread-switch",
+      "dm:run-basic",
+      "dm:ops-ui",
+    ]);
+    expect(journeys.flatMap(journey => journey.steps).map(step => step.name)).toEqual(expect.arrayContaining([
+      "查看标准会话卡",
+      "打开更多信息诊断卡",
+      "打开计划模式单次开关",
+      "从选择卡创建新会话",
+      "切换到一个已有线程",
+      "发送一条短任务并等待终态卡",
+      "打开后台观察面",
+    ]));
+  });
+
+  it("builds a topic journey without project-switch or new-session mutations", () => {
+    const journeys = buildFeishuLiveJourneys({
+      surface: "topic",
+      projectKey: "coding-anywhere-autotest",
+      scenarios: ["all"],
+    });
+
+    expect(journeys.map(journey => journey.name)).toEqual([
+      "topic:main",
+      "topic:session",
+      "topic:diagnostics",
+      "topic:plan-toggle",
+      "topic:run-basic",
+      "topic:ops-ui",
+    ]);
+    expect(journeys.flatMap(journey => journey.setupSteps).some(step =>
+      step.kind === "command" && step.text === "/ca new"
+    )).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 if (isMainModule(import.meta.url)) {
   const surface = normalizeSurface(process.argv[2] ?? process.env.FEISHU_LIVE_SURFACE);
+  const scenarios = normalizeScenarios(process.argv[3] ?? process.env.FEISHU_LIVE_SCENARIOS);
   const command = buildFeishuLivePlaywrightCommand(process.platform);
   const result = spawnSync(
     command.file,
@@ -12,6 +13,7 @@ if (isMainModule(import.meta.url)) {
       env: {
         ...process.env,
         FEISHU_LIVE_SURFACE: surface,
+        ...(scenarios ? { FEISHU_LIVE_SCENARIOS: scenarios } : {}),
       },
     },
   );
@@ -51,7 +53,16 @@ export function buildFeishuLivePlaywrightCommand(platform = process.platform) {
 }
 
 export function normalizeSurface(rawSurface) {
-  return rawSurface?.trim().toLowerCase() === "group" ? "group" : "dm";
+  const normalized = rawSurface?.trim().toLowerCase();
+  return normalized === "group" || normalized === "topic" ? normalized : "dm";
+}
+
+export function normalizeScenarios(rawScenarios) {
+  return rawScenarios
+    ?.split(",")
+    .map(scenario => scenario.trim())
+    .filter(Boolean)
+    .join(",");
 }
 
 function isMainModule(metaUrl) {

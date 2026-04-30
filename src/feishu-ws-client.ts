@@ -13,6 +13,8 @@ interface NormalizedCardActionEvent {
   open_chat_id?: string;
   open_message_id?: string;
   token?: string;
+  host?: string;
+  timezone?: string;
   action: {
     tag?: string;
     name?: string;
@@ -267,6 +269,12 @@ function normalizeCardActionPayload(
     token:
       readString(candidate.token) ??
       readString(readNested(candidate, ["context", "token"])),
+    host:
+      readString(candidate.host) ??
+      readString(readNested(candidate, ["context", "host"])),
+    timezone:
+      readString(candidate.timezone) ??
+      readString(readNested(candidate, ["context", "timezone"])),
     action,
   };
 }

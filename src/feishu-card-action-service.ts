@@ -13,6 +13,12 @@ interface DesktopThreadContinuationResult {
 }
 
 interface CardActionValue {
+  actionKind?:
+    | "command_action"
+    | "plan_choice_action"
+    | "continue_thread_action"
+    | "preference_action"
+    | "session_ui_action";
   cardId?: string;
   command?: string;
   bridgeAction?:
@@ -126,6 +132,9 @@ export class FeishuCardActionService {
       tag?: string;
       name?: string;
       option?: string;
+      options?: string[];
+      checked?: boolean;
+      input_value?: string;
       value?: CardActionValue;
       form_value?: Record<string, unknown>;
     };

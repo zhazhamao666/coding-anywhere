@@ -9,7 +9,6 @@ import {
   buildCommandActionValue,
   buildOpenDiagnosticsActionValue,
   buildPlanChoiceActionValue,
-  buildPlanSubmitActionValue,
   buildPreferenceActionValue,
 } from "./action-contract.js";
 import { buildFeishuCardFrame } from "./frame-builder.js";
@@ -152,115 +151,6 @@ export function buildBridgeCard(state: ProgressCardState): Record<string, unknow
   });
 }
 
-export function buildPlanModeFormCard(input: {
-  title?: string;
-  context: {
-    chatId?: string;
-    surfaceType?: "thread";
-    surfaceRef?: string;
-  };
-}): Record<string, unknown> {
-  return buildFeishuCardFrame({
-    title: input.title ?? "计划模式",
-    template: "blue",
-    summary: "计划模式",
-    elements: [
-      {
-        tag: "markdown",
-        content: [
-          "**计划模式**",
-          "描述你想先梳理的方案，我会把这次输入包装成 `/plan ...` 并发到当前 Codex 线程。",
-        ].join("\n"),
-      },
-      {
-        tag: "form",
-        name: "bridge_plan_form",
-        elements: [
-          {
-            tag: "input",
-            name: "plan_prompt",
-            required: true,
-            input_type: "multiline_text",
-            rows: 4,
-            auto_resize: true,
-            label: {
-              tag: "plain_text",
-              content: "计划请求",
-            },
-            placeholder: {
-              tag: "plain_text",
-              content: "例如：帮我先梳理这个仓库的改造方案，不要直接改代码",
-            },
-          },
-          {
-            tag: "column_set",
-            flex_mode: "flow",
-            background_style: "default",
-            columns: [
-              {
-                tag: "column",
-                width: "auto",
-                weight: 1,
-                vertical_align: "top",
-                elements: [{
-                  tag: "button",
-                  text: {
-                    tag: "plain_text",
-                    content: "提交",
-                  },
-                  type: "primary_filled",
-                  form_action_type: "submit",
-                  name: "bridge_plan_submit",
-                  value: buildPlanSubmitActionValue(input.context),
-                }],
-              },
-              {
-                tag: "column",
-                width: "auto",
-                weight: 1,
-                vertical_align: "top",
-                elements: [{
-                  tag: "button",
-                  text: {
-                    tag: "plain_text",
-                    content: "清空",
-                  },
-                  form_action_type: "reset",
-                  name: "bridge_plan_reset",
-                }],
-              },
-            ],
-          },
-        ],
-      },
-      {
-        tag: "column_set",
-        flex_mode: "flow",
-        background_style: "default",
-        columns: [{
-          tag: "column",
-          width: "auto",
-          weight: 1,
-          vertical_align: "top",
-          elements: [{
-            tag: "button",
-            text: {
-              tag: "plain_text",
-              content: "返回导航",
-            },
-            value: {
-              ...buildCommandActionValue({
-                command: "/ca",
-                context: input.context,
-              }),
-            },
-          }],
-        }],
-      },
-    ],
-  });
-}
-
 function isTerminalStatus(status: ProgressStatus): boolean {
   return status === "done" || status === "error" || status === "canceled";
 }
@@ -311,7 +201,7 @@ function summarizeTerminalPreview(preview: string): string {
 function buildTodoMarkdown(items: PlanTodoItem[]): string {
   return [
     "**计划清单**",
-    ...items.map(item => `- ${item.completed ? "[x]" : "[ ]"} ${item.text}`),
+    ...items.slice(0, 5).map(item => `- ${item.completed ? "[x]" : "[ ]"} ${item.text}`),
   ].join("\n");
 }
 
@@ -358,7 +248,7 @@ function buildProgressLines(state: ProgressCardState): string[] {
     : [];
 
   if (!commandText) {
-    return previewLines;
+    return previewLines.slice(0, 3);
   }
 
   if (previewLines.length === 0) {
@@ -369,14 +259,15 @@ function buildProgressLines(state: ProgressCardState): string[] {
     return [commandText];
   }
 
-  return [commandText, ...previewLines];
+  return [commandText, ...previewLines].slice(0, 3);
 }
 
 function buildStopButtonElements(state: ProgressCardState): Array<Record<string, unknown>> {
-  if (isTerminalStatus(state.status)) {
+  if (isTerminalStatus(state.status) || state.status === "canceling") {
     return [];
   }
 
+  const label = state.status === "queued" ? "取消排队" : "停止任务";
   return [
     {
       tag: "hr",
@@ -394,7 +285,7 @@ function buildStopButtonElements(state: ProgressCardState): Array<Record<string,
           tag: "button",
           text: {
             tag: "plain_text",
-            content: "停止任务",
+            content: label,
           },
           type: "danger",
           value: buildStopActionValue(state),

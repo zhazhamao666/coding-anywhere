@@ -25,6 +25,7 @@ export function buildCommandActionValue(input: {
   context: CardSurfaceContext;
 }): Record<string, unknown> {
   return withSurfaceContext({
+    actionKind: "command_action",
     command: input.command,
   }, input.context);
 }
@@ -34,36 +35,28 @@ export function buildPreferenceActionValue(
   bridgeAction: PreferenceBridgeAction,
 ): Record<string, unknown> {
   return withSurfaceContext({
+    actionKind: "preference_action",
     bridgeAction,
-  }, context);
-}
-
-export function buildPlanFormActionValue(context: CardSurfaceContext): Record<string, unknown> {
-  return withSurfaceContext({
-    bridgeAction: "open_plan_form",
-  }, context);
-}
-
-export function buildPlanSubmitActionValue(context: CardSurfaceContext): Record<string, unknown> {
-  return withSurfaceContext({
-    bridgeAction: "submit_plan_form",
   }, context);
 }
 
 export function buildPlanModeToggleActionValue(context: CardSurfaceContext): Record<string, unknown> {
   return withSurfaceContext({
+    actionKind: "session_ui_action",
     bridgeAction: "toggle_plan_mode",
   }, context);
 }
 
 export function buildOpenDiagnosticsActionValue(context: CardSurfaceContext): Record<string, unknown> {
   return withSurfaceContext({
+    actionKind: "session_ui_action",
     bridgeAction: "open_diagnostics",
   }, context);
 }
 
 export function buildCloseDiagnosticsActionValue(context: CardSurfaceContext): Record<string, unknown> {
   return withSurfaceContext({
+    actionKind: "session_ui_action",
     bridgeAction: "close_diagnostics",
   }, context);
 }
@@ -74,6 +67,7 @@ export function buildPlanChoiceActionValue(input: {
   context: CardSurfaceContext;
 }): Record<string, unknown> {
   return withSurfaceContext({
+    actionKind: "plan_choice_action",
     bridgeAction: "answer_plan_choice",
     interactionId: input.interactionId,
     choiceId: input.choiceId,
@@ -89,6 +83,7 @@ export function buildDesktopThreadActionValue(
 ): Record<string, unknown> {
   const chatType = input.chatType ?? (input.mode === "dm" ? "p2p" : "group");
   return withSurfaceContext({
+    actionKind: "continue_thread_action",
     bridgeAction,
     threadId: input.threadId,
     mode: input.mode,

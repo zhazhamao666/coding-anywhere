@@ -561,7 +561,7 @@ describe("BridgeService", () => {
     const statusCardText = JSON.stringify(statusCard);
     expect(statusCardText).toContain("run-");
     expect(statusCardText).toContain("still working");
-    expect(statusCardText).toContain("处理中");
+    expect(statusCardText).toContain("运行中");
     expect(statusCardText).toContain("停止任务");
     expect(readCardSummaryMarkdown(statusCard)).toContain("当前线程");
     expect(readCardSummaryMarkdown(statusCard)).not.toContain("Session");

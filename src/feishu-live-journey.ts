@@ -9,14 +9,24 @@ export type FeishuLiveJourneyStep = (
       kind: "click";
       label: string;
     }
+  | {
+      kind: "click_plan_mode_toggle";
+      target: "on" | "off";
+    }
+  | {
+      kind: "open_ops_ui";
+    }
 ) & {
   name: string;
   expectText?: string[];
   expectAnyText?: string[];
+  expectAbsentText?: string[];
+  timeoutMs?: number;
 };
 
 export interface FeishuLiveJourney {
-  name: FeishuLiveSurface;
+  name: string;
+  surface: FeishuLiveSurface;
   /**
    * Fixture-only preparation. These steps may build or verify the safe autotest
    * context, but they are not counted as the user's primary UI journey.
@@ -29,13 +39,111 @@ export interface FeishuLiveJourney {
   steps: FeishuLiveJourneyStep[];
 }
 
+export type FeishuLiveScenario =
+  | "main"
+  | "session"
+  | "diagnostics"
+  | "plan-toggle"
+  | "new-session"
+  | "thread-switch"
+  | "run-basic"
+  | "ops-ui";
+
 export function buildFeishuLiveJourney(input: {
+  surface: FeishuLiveSurface;
+  projectKey: string;
+}): FeishuLiveJourney {
+  return buildFeishuLiveJourneys(input)[0] ?? buildMainJourney(input);
+}
+
+export function buildFeishuLiveJourneys(input: {
+  surface: FeishuLiveSurface;
+  projectKey: string;
+  scenarios?: string[];
+}): FeishuLiveJourney[] {
+  const scenarios = normalizeScenarioList(input.surface, input.scenarios);
+  return scenarios.map(scenario => buildScenarioJourney(input, scenario));
+}
+
+function normalizeScenarioList(
+  surface: FeishuLiveSurface,
+  scenarios: string[] | undefined,
+): FeishuLiveScenario[] {
+  const rawScenarios = scenarios && scenarios.length > 0
+    ? scenarios
+    : ["main"];
+  const expanded = rawScenarios.flatMap(scenario =>
+    scenario === "all" ? allScenariosForSurface(surface) : [scenario],
+  );
+  const allowed = new Set(allScenariosForSurface(surface));
+  const unique: FeishuLiveScenario[] = [];
+  for (const scenario of expanded) {
+    if (!allowed.has(scenario as FeishuLiveScenario)) {
+      throw new Error(`[ca] Unsupported Feishu live UI scenario for ${surface}: ${scenario}`);
+    }
+    if (!unique.includes(scenario as FeishuLiveScenario)) {
+      unique.push(scenario as FeishuLiveScenario);
+    }
+  }
+
+  return unique;
+}
+
+function allScenariosForSurface(surface: FeishuLiveSurface): FeishuLiveScenario[] {
+  if (surface === "topic") {
+    return ["main", "session", "diagnostics", "plan-toggle", "run-basic", "ops-ui"];
+  }
+
+  return [
+    "main",
+    "session",
+    "diagnostics",
+    "plan-toggle",
+    "new-session",
+    "thread-switch",
+    "run-basic",
+    "ops-ui",
+  ];
+}
+
+function buildScenarioJourney(input: {
+  surface: FeishuLiveSurface;
+  projectKey: string;
+}, scenario: FeishuLiveScenario): FeishuLiveJourney {
+  if (scenario === "main") {
+    return buildMainJourney(input);
+  }
+
+  if (scenario === "ops-ui") {
+    return {
+      name: `${input.surface}:ops-ui`,
+      surface: input.surface,
+      setupSteps: [],
+      steps: [{
+        name: "打开后台观察面",
+        kind: "open_ops_ui",
+        expectText: ["活跃任务", "排队任务", "取消中", "最近公开进展", "技术元数据"],
+        expectAbsentText: ["tool_active", "canceling"],
+      }],
+    };
+  }
+
+  return {
+    name: `${input.surface}:${scenario}`,
+    surface: input.surface,
+    setupSteps: buildThreadReadySetupSteps(input),
+    steps: buildThreadReadyScenarioSteps(scenario),
+  };
+}
+
+function buildMainJourney(input: {
   surface: FeishuLiveSurface;
   projectKey: string;
 }): FeishuLiveJourney {
   if (input.surface === "group") {
     return {
-      name: "group",
+      name: "group:main",
+      surface: "group",
       setupSteps: [
         {
           name: "确认测试群绑定的是 autotest 项目",
@@ -52,9 +160,9 @@ export function buildFeishuLiveJourney(input: {
           expectAnyText: ["当前群已绑定项目", "当前会话已就绪"],
         },
         {
-          name: "从入口卡查看群项目列表",
-          kind: "click",
-          label: "查看项目",
+          name: "查看群项目列表",
+          kind: "command",
+          text: "/ca project list",
           expectText: ["项目列表", "已绑定当前群"],
         },
         {
@@ -79,8 +187,38 @@ export function buildFeishuLiveJourney(input: {
     };
   }
 
+  if (input.surface === "topic") {
+    return {
+      name: "topic:main",
+      surface: "topic",
+      setupSteps: [
+        {
+          name: "确认测试话题已绑定到 autotest 项目",
+          kind: "command",
+          text: "/ca project current",
+          expectText: ["当前项目", input.projectKey],
+        },
+      ],
+      steps: [
+        {
+          name: "打开话题入口卡",
+          kind: "command",
+          text: "/ca",
+          expectText: ["当前会话已就绪", "下次任务设置", "计划模式"],
+        },
+        {
+          name: "查看运行状态",
+          kind: "command",
+          text: "/ca status",
+          expectText: ["运行状态"],
+        },
+      ],
+    };
+  }
+
   return {
-    name: "dm",
+    name: "dm:main",
+    surface: "dm",
     setupSteps: [
       {
         name: "确认测试 DM 已切到 autotest 项目",
@@ -128,4 +266,167 @@ export function buildFeishuLiveJourney(input: {
       },
     ],
   };
+}
+
+function buildThreadReadySetupSteps(input: {
+  surface: FeishuLiveSurface;
+  projectKey: string;
+}): FeishuLiveJourneyStep[] {
+  if (input.surface === "group") {
+    return [
+      {
+        name: "确认测试群绑定的是 autotest 项目",
+        kind: "command",
+        text: "/ca project current",
+        expectText: ["当前项目", input.projectKey],
+      },
+      {
+        name: "确保测试群已有可交互线程",
+        kind: "command",
+        text: "/ca new",
+        expectText: ["当前会话已就绪"],
+        timeoutMs: 90_000,
+      },
+    ];
+  }
+
+  if (input.surface === "topic") {
+    return [
+      {
+        name: "确认测试话题绑定的是 autotest 项目",
+        kind: "command",
+        text: "/ca project current",
+        expectText: ["当前项目", input.projectKey],
+      },
+      {
+        name: "确认测试话题已有可交互线程",
+        kind: "command",
+        text: "/ca",
+        expectText: ["当前会话已就绪"],
+      },
+    ];
+  }
+
+  return [
+    {
+      name: "确认测试 DM 已切到 autotest 项目",
+      kind: "command",
+      text: `/ca project switch ${input.projectKey}`,
+      expectText: ["当前项目已切换"],
+    },
+    {
+      name: "确保测试 DM 已有可交互线程",
+      kind: "command",
+      text: "/ca new",
+      expectText: ["当前会话已就绪"],
+      timeoutMs: 90_000,
+    },
+  ];
+}
+
+function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLiveJourneyStep[] {
+  switch (scenario) {
+    case "session":
+      return [
+        {
+          name: "查看标准会话卡",
+          kind: "command",
+          text: "/ca session",
+          expectText: ["当前会话已就绪", "下次任务设置", "模型", "推理", "速度", "计划模式", "作用范围"],
+        },
+      ];
+    case "diagnostics":
+      return [
+        {
+          name: "打开标准会话卡",
+          kind: "command",
+          text: "/ca session",
+          expectText: ["当前会话已就绪", "更多信息"],
+        },
+        {
+          name: "打开更多信息诊断卡",
+          kind: "click",
+          label: "更多信息",
+          expectText: ["上下文", "最近运行", "返回当前会话"],
+        },
+        {
+          name: "返回标准会话卡",
+          kind: "click",
+          label: "返回当前会话",
+          expectText: ["当前会话已就绪", "下次任务设置", "计划模式"],
+        },
+      ];
+    case "plan-toggle":
+      return [
+        {
+          name: "打开标准会话卡",
+          kind: "command",
+          text: "/ca session",
+          expectText: ["当前会话已就绪", "计划模式"],
+        },
+        {
+          name: "打开计划模式单次开关",
+          kind: "click_plan_mode_toggle",
+          target: "on",
+          expectText: ["计划模式 [开]", "下一条消息将按计划模式发送"],
+        },
+        {
+          name: "关闭计划模式单次开关",
+          kind: "click_plan_mode_toggle",
+          target: "off",
+          expectText: ["计划模式 [关]"],
+        },
+      ];
+    case "new-session":
+      return [
+        {
+          name: "打开线程选择卡",
+          kind: "command",
+          text: "/ca thread list-current",
+          expectText: ["选择线程", "新会话"],
+        },
+        {
+          name: "从选择卡创建新会话",
+          kind: "click",
+          label: "新会话",
+          expectText: ["当前会话已就绪", "下次任务设置", "计划模式"],
+          timeoutMs: 90_000,
+        },
+      ];
+    case "thread-switch":
+      return [
+        {
+          name: "打开线程选择卡",
+          kind: "command",
+          text: "/ca thread list-current",
+          expectText: ["选择线程", "切换到此线程"],
+        },
+        {
+          name: "切换到一个已有线程",
+          kind: "click",
+          label: "切换到此线程",
+          expectText: ["当前会话已就绪", "下次任务设置"],
+          timeoutMs: 90_000,
+        },
+      ];
+    case "run-basic":
+      return [
+        {
+          name: "发送一条短任务并等待终态卡",
+          kind: "command",
+          text: "请只回复：autotest-ui-ok",
+          expectAnyText: ["Codex 最终返回了什么", "任务出错", "已停止"],
+          timeoutMs: 180_000,
+        },
+        {
+          name: "确认终态后续动作存在",
+          kind: "command",
+          text: "/ca session",
+          expectText: ["当前会话已就绪", "下次任务设置", "计划模式"],
+        },
+      ];
+    case "main":
+    case "ops-ui":
+      return [];
+  }
 }
