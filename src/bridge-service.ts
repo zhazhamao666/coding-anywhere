@@ -486,7 +486,23 @@ export class BridgeService {
         latestPreview: currentProgress.preview,
         latestTool: toolName ?? currentProgress.latestTool ?? null,
       });
-      await options?.onProgress?.(currentProgress);
+      if (!options?.onProgress) {
+        return;
+      }
+
+      try {
+        await options.onProgress(currentProgress);
+      } catch (error) {
+        this.dependencies.store.appendRunEvent({
+          runId: currentProgress.runId,
+          source: "system",
+          status: currentProgress.status,
+          stage: currentProgress.stage,
+          preview: `[ca] delivery failed: ${normalizeRunError(error)}`,
+          coalesceSimilar: true,
+          updateRun: false,
+        });
+      }
     };
 
     const emitLifecycle = async (

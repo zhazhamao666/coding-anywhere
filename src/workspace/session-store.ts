@@ -1400,8 +1400,10 @@ export class SessionStore {
     toolName?: string | null;
     createdAt?: string;
     coalesceSimilar?: boolean;
+    updateRun?: boolean;
   }): void {
     const createdAt = input.createdAt ?? new Date().toISOString();
+    const shouldUpdateRun = input.updateRun !== false;
 
     const insertEvent = this.db.prepare(`
       INSERT INTO observability_run_events (
@@ -1488,11 +1490,13 @@ export class SessionStore {
         });
       }
 
-      updateRun.run({
-        ...input,
-        toolName,
-        createdAt,
-      });
+      if (shouldUpdateRun) {
+        updateRun.run({
+          ...input,
+          toolName,
+          createdAt,
+        });
+      }
     })();
   }
 

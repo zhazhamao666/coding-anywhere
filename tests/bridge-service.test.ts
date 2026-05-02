@@ -1085,6 +1085,79 @@ describe("BridgeService", () => {
     );
   });
 
+  it("keeps the runner error when progress delivery fails during an error snapshot", async () => {
+    const runnerError = "\u001b[31mvitest failed\u001b[0m\nexpected true to be false";
+    const deliveryError = new Error("Request failed with status code 400");
+    const events: RunnerEvent[] = [
+      { type: "error", content: runnerError },
+    ];
+    const runner = {
+      createThread: vi.fn(async () => ({
+        exitCode: 0,
+        events: [],
+        threadId: "thread-created",
+      })),
+      ensureSession: vi.fn(async () => undefined),
+      cancel: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      submitVerbatim: vi.fn(async (
+        _context,
+        _prompt,
+        optionsOrOnEvent?: { images?: string[] } | ((event: RunnerEvent) => void | Promise<void>),
+        maybeOnEvent?: (event: RunnerEvent) => void | Promise<void>,
+      ) => {
+        const onEvent = typeof optionsOrOnEvent === "function"
+          ? optionsOrOnEvent
+          : maybeOnEvent;
+
+        for (const event of events) {
+          await onEvent?.(event);
+        }
+
+        return {
+          exitCode: 1,
+          events,
+        };
+      }),
+    };
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    await expect(service.handleMessage(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        text: "执行会失败的测试",
+      },
+      {
+        onProgress: snapshot => {
+          if (snapshot.status === "error") {
+            throw deliveryError;
+          }
+        },
+      },
+    )).rejects.toThrow(runnerError);
+
+    const observabilityStore = store as any;
+    const [run] = observabilityStore.listRuns({ limit: 1 });
+    expect(run).toMatchObject({
+      status: "error",
+      stage: "error",
+      errorText: runnerError,
+    });
+    expect(run.errorText).not.toBe("Request failed with status code 400");
+    expect(observabilityStore.listRunEvents(run.runId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "system",
+          preview: "[ca] delivery failed: Request failed with status code 400",
+        }),
+      ]),
+    );
+  });
+
   it("still emits CA lifecycle snapshots for text-only runs", async () => {
     const runner = createRunnerDouble([
       { type: "text", content: "响应正常。" },

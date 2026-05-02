@@ -98,7 +98,7 @@
 67. `/ca`、`/ca status`、`/ca session` 这几张主卡现在会优先展示人类可读的项目名 / 线程名；raw `thread_id` 只保留为辅助诊断字段，不再把 `Session` 作为主信息直接抛给飞书用户
 68. 运行态相关动作现在只留在真正的运行中卡与 `/ca status` 里：稳定态会话卡继续只承载上下文、下次任务设置、计划模式开关和后续动作，避免把会话首页做成运维面板
 69. 运行中的流式状态卡现在只保留一个运行控制危险按钮：排队态显示 `取消排队`，运行 / 工具 / 等待态显示 `停止任务`，取消中态不再保留重复按钮；即便 DM 走的是 CardKit 流式 shell 卡，非终态也会补上同一条 `/ca stop` 卡片回调入口，不再额外混入导航动作
-70. `/ca`、`/ca status`、运行中的流式卡、普通对话 run 的终态卡，以及 assistant Markdown 正文卡写入 `config.summary` 的预览文本，都会先把 assistant Markdown 归一化为纯文本再展示，避免 `**标题**`、列表标记等原始语法直接泄漏到飞书卡片摘要区或会话列表预览
+70. `/ca`、`/ca status`、运行中的流式卡、普通对话 run 的终态卡，以及 assistant Markdown 正文卡写入 `config.summary` 的预览文本，都会先把 assistant Markdown 归一化为纯文本再展示，避免 `**标题**`、列表标记等原始语法直接泄漏到飞书卡片摘要区或会话列表预览；错误类飞书可见摘要会额外清理 ANSI / 控制字符并做安全截断，进度卡、错误卡或错误文本投递失败只记录为投递失败，不会打断 runner 事件处理或覆盖原始 run 错误
 71. assistant 的最终正文如果包含明显 Markdown 结构，会优先以 JSON 2.0 Markdown 卡片发送；若内容过大超出飞书 `interactive` 消息安全体积，则会回退为去掉 Markdown 标记的纯文本消息
 72. Windows 仓库根目录现在额外提供 `start-coding-anywhere.cmd` 与 `stop-coding-anywhere.cmd` 一键启停脚本；前者会先自拉起独立的 `cmd /k` 窗口，再执行 `npm run build` 和前台 `npm run start`，并在服务退出后保留窗口显示退出码，后者会通过共享清理逻辑停止当前项目相关进程
 73. 飞书侧现在可以在 `/ca`、`/ca status`、`/ca session`、运行中的流式状态卡和普通对话 run 的终态卡中直接看到当前生效的 Codex `model`、`reasoning effort` 与 `speed`
@@ -1141,12 +1141,12 @@ channel + peer_id -> codex_thread_id
 10. 针对 Codex 原生计划行为和子代理行为的扩展测试，会优先使用一次性真实 JSONL 录制生成的 fixture，再回到默认的 transcript 驱动回归，不把这类高成本调用放进常规测试路径
 11. `tests/codex-cli-runner.test.ts` 现在会直接回放 `plan-mode.jsonl` 与 `sub-agent.jsonl`，校验 native 计划事件和子代理生命周期事件是否被归一化成正确的 runner 事件；同时覆盖新版 `event_msg` / `response_item` JSONL、重复 assistant 文本去重，以及 `task_complete(last_agent_message:null)` 非 0 退出时的明确错误诊断
 12. `tests/bridge-real-codex.test.ts` 现在也会用同一批 fixture 校验 bridge 层的等待态、工具调用观测和最终回复，不要求额外真实 Codex 调用
-13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式单次开关、诊断卡切换、todo list 展示、待回答计划选择题，以及续跑同一 native thread 的桥接链路
+13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式单次开关、诊断卡切换、todo list 展示、待回答计划选择题、续跑同一 native thread 的桥接链路，以及 onProgress 投递失败不能覆盖原始 runner 错误的回归
 14. `tests/codex-preferences.test.ts` 会锁定 Codex 模型候选项规则：GPT 家族按数值版本倒序、大小写统一显示为 `GPT-*`，并能把本机 Codex config / profile 中大小写混杂的模型 ID 去重归一
 15. `tests/codex-desktop-completion-observer.test.ts` 与 `tests/codex-desktop-lifecycle-observer.test.ts` 会分别锁定 completion 兼容层和完整 lifecycle observer：既覆盖 offset 读取、`task_complete` 检测、最终 assistant 正文提取和稳定 `completionKey`，也覆盖 `task_started` / `agent_message` / `update_plan` / `shell_command` 组合下的公开进度快照、稳定 `runKey` 和跨轮询累计命令计数
 16. `tests/desktop-completion-routing.test.ts` 会用本地 SQLite store + 小型 catalog double 校验桌面 completion 的本地投递目标解析：项目群 fallback 会先看精确 `projectKey`，再看唯一 cwd 命中；cwd 命中多个项目时不会猜测，而是退回 DM 或明确报出 DM owner 歧义错误；历史话题绑定只作为 stale 数据负向守护，不能优先于项目群主时间线或 DM
 17. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面生命周期卡在运行中 / 已完成两态下的字段顺序、按钮、计划清单和 payload 预算行为：运行态必须先显示“你最后说了什么”再显示当前情况，完成态则必须先显示提醒区、再显示直接内嵌的最终正文，而且不能再冒出独立的 `进度 / Ran N commands` 区块
-18. `tests/config.test.ts`、`tests/doctor.test.ts` 与 `tests/feishu-adapter.test.ts` 现在会额外锁定飞书 allowlist 的新语义：缺省 allowlist 会回退为空数组、`doctor` 不再把“未配置 allowlist”视为阻塞，而空 allowlist 下的消息也能正常进入 bridge
+18. `tests/config.test.ts`、`tests/doctor.test.ts` 与 `tests/feishu-adapter.test.ts` 现在会额外锁定飞书 allowlist、错误回推隔离和错误摘要清理截断语义：缺省 allowlist 会回退为空数组、`doctor` 不再把“未配置 allowlist”视为阻塞，而空 allowlist 下的消息也能正常进入 bridge；错误卡或错误文本投递失败不会继续抛出污染 runner 结果
 19. `tests/desktop-completion-notifier.test.ts` 会校验桌面 lifecycle 投递器在 DM / 项目群主时间线目标下的运行态卡创建、完成态原卡 patch、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及完成态正文直接内嵌在同一张卡里而不是额外补发第二条结果消息；历史话题上下文只作为 stale 数据隔离测试
 20. `tests/desktop-completion-dm-handoff.test.ts` 会用真实 `BridgeService` + `FeishuCardActionService` harness 校验 DM 通知卡主按钮 `continue_desktop_thread`：点击后会把 DM 绑定到目标 native thread、回调直接返回标准“当前会话”卡，且下一条普通 DM 文本会续跑同一线程；该测试文件名中的 handoff 是历史命名，不代表 live UI scenario
 21. `tests/runtime-desktop-completion-notifier.test.ts` 会校验 runtime 启动后真的开始轮询本地 rollout：首次 bootstrap watch state 时不会回放历史 run / completion，新的顶层 desktop run 会先创建一张运行态卡、在公开进展变化时 patch，并在真正 `task_complete` 后原地收口为完成态；如果旧 completion 之后又继续出现同一轮顶层公开进展，就必须优先维持进行中态；unchanged `completionKey` 不会重复推送，`sourceInfo.kind = subagent` 的子线程不会触发生命周期通知，近期飞书终态 run 对应的 desktop 回声也不会再额外发卡

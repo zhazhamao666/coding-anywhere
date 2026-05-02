@@ -6,6 +6,7 @@ import { StreamingCardController } from "./feishu-card/streaming-card-controller
 import { normalizeMarkdownToPlainText } from "./markdown-text.js";
 import { isBridgeCommandMessage } from "./command-router.js";
 import { buildFeishuInboundLog } from "./feishu-message-log.js";
+import { formatFeishuCaErrorText, formatFeishuErrorText } from "./feishu-error-text.js";
 import type {
   BridgeAssetDownloadResult,
   BridgeAssetRecord,
@@ -147,6 +148,7 @@ export class FeishuAdapter {
       }) => void;
       logger?: {
         info?: (message: string) => void;
+        warn?: (message: string) => void;
       };
     },
   ) {}
@@ -195,7 +197,7 @@ export class FeishuAdapter {
         await this.replyText({
           peerId,
           anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
-          text: `[ca] error: ${normalizeBridgeError(error)}`,
+          text: formatFeishuCaErrorText(error),
         });
       }
       return;
@@ -268,23 +270,29 @@ export class FeishuAdapter {
             },
         {
           onProgress: async snapshot => {
-            cardController ??= this.createStreamingCardController(
-              peerId,
-              message.chat_type === "group" ? message.message_id : undefined,
-            );
-            await cardController.push(snapshot);
+            await this.tryDeliver("progress card", async () => {
+              cardController ??= this.createStreamingCardController(
+                peerId,
+                message.chat_type === "group" ? message.message_id : undefined,
+              );
+              await cardController.push(sanitizeProgressSnapshotForFeishu(snapshot));
+            });
           },
         },
       );
     } catch (error) {
-      const errorText = `[ca] error: ${normalizeBridgeError(error)}`;
+      const errorText = formatFeishuCaErrorText(error);
       if (cardController) {
-        await cardController.finalizeError(errorText);
+        await this.tryDeliver("error card", async () => {
+          await cardController?.finalizeError(errorText);
+        });
       }
-      await this.replyText({
-        peerId,
-        anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
-        text: errorText,
+      await this.tryDeliver("error text", async () => {
+        await this.replyText({
+          peerId,
+          anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
+          text: errorText,
+        });
       });
       return;
     }
@@ -503,6 +511,20 @@ export class FeishuAdapter {
     return extractImageKey(result);
   }
 
+  private async tryDeliver(label: string, deliver: () => Promise<void>): Promise<void> {
+    try {
+      await deliver();
+    } catch (error) {
+      const message = `feishu delivery failed: ${label}: ${formatFeishuErrorText(error)}`;
+      const logger = this.dependencies.logger;
+      if (logger?.warn) {
+        logger.warn(message);
+        return;
+      }
+      logger?.info?.(message);
+    }
+  }
+
   private requirePendingAssetStore(): PendingBridgeAssetStoreLike {
     if (!this.dependencies.pendingAssetStore) {
       throw new Error("PENDING_BRIDGE_ASSET_STORE_UNAVAILABLE");
@@ -536,14 +558,6 @@ function getEnvelopeMessageKey(envelope: FeishuEnvelope): string | undefined {
   return undefined;
 }
 
-function normalizeBridgeError(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "RUN_STREAM_FAILED";
-}
-
 function extractImageKey(value: { imageKey?: string; image_key?: string } | string): string | undefined {
   if (typeof value === "string") {
     return value.trim() || undefined;
@@ -556,6 +570,21 @@ function formatImageFallbackText(reply: Extract<BridgeReply, { kind: "image" }>)
   return reply.caption?.trim()
     ? `图片结果：${reply.caption.trim()}`
     : "图片结果已生成。";
+}
+
+function sanitizeProgressSnapshotForFeishu(snapshot: ProgressCardState): ProgressCardState {
+  if (snapshot.status !== "error") {
+    return snapshot;
+  }
+
+  const prefix = "[ca] error: ";
+  const errorText = snapshot.preview.startsWith(prefix)
+    ? snapshot.preview.slice(prefix.length)
+    : snapshot.preview;
+  return {
+    ...snapshot,
+    preview: formatFeishuCaErrorText(errorText),
+  };
 }
 
 function parseFeishuTextContent(content?: string): { text?: string; mentions: FeishuMention[] } {

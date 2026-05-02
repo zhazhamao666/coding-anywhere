@@ -900,6 +900,113 @@ describe("FeishuAdapter", () => {
     expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", "[ca] error: RUN_STREAM_FAILED");
   });
 
+  it("does not throw when Feishu error-card and text delivery fail", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(
+        async (
+          _input: { channel: string; peerId: string; text: string },
+          options?: {
+            onProgress?: (snapshot: ProgressCardState) => Promise<void> | void;
+          },
+        ) => {
+          await options?.onProgress?.(createSnapshot({
+            status: "queued",
+            stage: "received",
+            preview: "[ca] received",
+          }));
+          throw new Error("RUN_STREAM_FAILED");
+        },
+      ),
+    };
+    const apiClient = createApiClientDouble({
+      sendTextMessage: vi.fn(async () => {
+        throw new Error("Request failed with status code 400");
+      }),
+    });
+    const controller = {
+      push: vi.fn(async () => undefined),
+      finalizeError: vi.fn(async () => {
+        throw new Error("Request failed with status code 400");
+      }),
+    };
+    const logger = {
+      warn: vi.fn(),
+    };
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+      createStreamingCardController: () => controller,
+      logger,
+    });
+
+    await expect(adapter.handleEnvelope({
+      header: {
+        event_id: "evt-error-delivery-fail",
+      },
+      event: {
+        message: {
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "执行任务" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    })).resolves.toBeUndefined();
+
+    expect(controller.finalizeError).toHaveBeenCalledWith("[ca] error: RUN_STREAM_FAILED");
+    expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", "[ca] error: RUN_STREAM_FAILED");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("feishu delivery failed"),
+    );
+  });
+
+  it("cleans ANSI control codes and truncates long error replies before sending them to Feishu", async () => {
+    const noisyError = `\u001b[31mvitest failed\u001b[0m\n${"diff output line\n".repeat(5_000)}`;
+    const bridgeService = {
+      handleMessage: vi.fn(async () => {
+        throw new Error(noisyError);
+      }),
+    };
+    const apiClient = createApiClientDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-long-error",
+      },
+      event: {
+        message: {
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "执行任务" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    const sendTextCalls = apiClient.sendTextMessage.mock.calls as unknown[][];
+    const sentText = sendTextCalls[0]?.[1] as string;
+    expect(sentText).toContain("[ca] error: vitest failed");
+    expect(sentText).not.toContain("\u001b");
+    expect(sentText.length).toBeLessThanOrEqual(4_096);
+    expect(sentText).toContain("已截断");
+  });
+
 });
 
 function createSnapshot(overrides?: Partial<ProgressCardState>): ProgressCardState {
