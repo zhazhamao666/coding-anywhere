@@ -1,6 +1,6 @@
 # 故障排查手册
 
-这份手册聚焦当前实现已经接通的 DM 与群线程链路。
+这份手册聚焦当前产品化入口：DM 与已绑定项目群主时间线。飞书 topic / 话题 / 群 `thread_id` 主题不属于当前 live 或推荐真实联调 surface。
 
 ## 先做的基础检查
 
@@ -11,26 +11,24 @@
 3. `http://127.0.0.1:3000/ops/overview`
 4. 飞书里发 `/ca status`
 
-## 现象 1：DM 正常，但群线程完全没有反应
+## 现象 1：DM 正常，但群主时间线完全没有反应
 
 最可能原因：
 
 - 飞书应用只开通了单聊消息权限，没有开通群消息或群 @ 机器人消息权限
-- 这条群消息不在原生话题线程里
-- 本地没有该 `(chat_id, thread_id)` 的注册记录
+- 目标群没有绑定到项目
 - 开启了 `feishu.requireGroupMention`，但消息没带 mention
 
 检查方法：
 
 - 在飞书开放平台确认“接收消息 v2.0”事件已添加，且权限已按目标场景发布：直接群消息需要“获取群组中所有消息”，`@机器人` 场景至少需要群 @ 机器人消息权限
-- 确认消息是否发在话题线程内
-- 检查 `codex_threads` 是否有对应记录
+- 确认当前群已经通过 `/ca project bind-current` 或项目列表卡片绑定到 `coding-anywhere-autotest` 等目标项目
 - 检查 `config.toml` 里的 `feishu.requireGroupMention`
 
 处理动作：
 
-- 把消息放到已注册线程里发送
-- 先补齐线程注册
+- 先在群主时间线执行 `/ca project current` 自检
+- 未绑定时先执行 `/ca project bind-current <projectId> <cwd> [name]`，或从项目列表卡片绑定当前群
 - 或者带 mention 后重试
 
 ## 现象 1.1：DM 正常，但群里直接 `/ca` 完全没有反应
@@ -52,21 +50,21 @@
 - 如果不想申请敏感权限，改用 `@机器人 /ca`
 - 如果必须支持群里直接 `/ca`，申请“获取群组中所有消息”权限，发布新版本后重启 bridge
 
-## 现象 2：群线程里有状态或结果，但回到了 DM
+## 现象 2：群主时间线里有状态或结果，但回到了 DM
 
 最可能原因：
 
-- 线程消息没有正确带上 `message_id`
-- adapter 没识别成线程 surface
+- 群消息没有正确带上 `message_id`
+- adapter 没识别成 group surface
 
 检查方法：
 
 - 看 `/ops/runs/:id` 里的 `delivery_chat_id` / `delivery_surface_ref`
-- 看 run 是否写成了 thread 类型
+- 看 run 是否写成了 group 类型
 
 处理动作：
 
-- 确认飞书事件里有 `chat_id` 和 `thread_id`
+- 确认飞书事件里有 `chat_id`
 - 确认当前运行的是最新版本代码
 
 ## 现象 3：线程里第二条任务一直不开始
@@ -104,11 +102,11 @@
 - 这是预期行为
 - 再发一次普通消息即可重新 warm up
 
-## 现象 5：`/ops/projects` 有数据，但线程消息仍然报 `THREAD_NOT_REGISTERED`
+## 现象 5：`/ops/projects` 有数据，但当前会话仍然报 `THREAD_NOT_REGISTERED`
 
 最可能原因：
 
-- 项目存在，但对应飞书线程没有注册
+- 项目存在，但当前 DM 或群主时间线还没有绑定到 native Codex thread
 
 检查方法：
 
@@ -117,23 +115,22 @@
 
 处理动作：
 
-- 先补齐该飞书话题和本地 `codex_threads` 的映射
+- 先确认当前群已绑定项目，并把当前群会话切换到一个 native Codex thread
 
-如果当前还没有线程记录，可以先执行：
+如果当前还没有 native thread，可以先执行：
 
 ```text
-/ca thread create <projectId> <title...>
+/ca new
 ```
 
 如果你已经在目标项目群里，也可以直接用：
 
 ```text
 /ca project current
-/ca thread create-current <title...>
 /ca thread list-current
 ```
 
-## 现象 6：不带 mention 的群线程消息被忽略
+## 现象 6：不带 mention 的群主时间线消息被忽略
 
 最可能原因：
 
@@ -212,20 +209,22 @@ http://127.0.0.1:3000/ops/threads/<thread-id>
 
 - 项目和线程视图优先走 JSON 接口排查
 
-## 现象 10：`readyz` 正常，但群线程仍不触发
+## 现象 10：`readyz` 正常，但群主时间线仍不触发
 
 最可能原因：
 
-- 服务健康，但飞书线程可见性或群权限不满足
+- 服务健康，但群权限、群绑定或 mention 条件不满足
 
 检查方法：
 
-- 确认机器人能看到该话题
-- 确认消息事件里包含目标线程的 `thread_id`
+- 确认机器人已经加入目标群
+- 确认当前群已绑定项目
+- 确认飞书后台已发布目标群消息权限
 
 处理动作：
 
-- 改用机器人自己创建或已确认可见的话题
+- 改用 `@机器人 /ca status` 验证群 @ 权限链路
+- 需要不带 @ 的普通群消息时，申请并发布“获取群组中所有消息”权限
 
 ## 现象 11：导航卡能显示，但按钮点击后完全没反应
 
@@ -301,7 +300,7 @@ event_msg.task_complete(last_agent_message:null)
 
 最可能原因：
 
-- 桌面 completion 通知无法路由到已绑定话题或项目群，需要退回 DM
+- 桌面 completion 通知无法路由到项目群主时间线，需要退回 DM
 - 当前本地数据库还没有见过任何 DM 用户，且 `allowlist` 为空、`desktopOwnerOpenId` 也为空
 - 或者数据库里已经出现多个 DM 用户，系统无法安全判断该发给谁
 

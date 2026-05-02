@@ -159,7 +159,7 @@ event.sender.sender_id.open_id
 
 如果你只打算先在飞书 DM 里使用，可以先把目标限定在私聊联通，不急着开群聊敏感权限。
 
-如果你还希望把机器人拉进群里，用在“已注册的话题线程”场景里，就需要再确认两件事：
+如果你还希望把机器人拉进群里，用在“已绑定项目群主时间线”场景里，就需要再确认两件事：
 
 1. 飞书后台已经允许机器人接收群消息
 2. 你是否要在项目配置里开启 `feishu.requireGroupMention = true`
@@ -183,7 +183,7 @@ event.sender.sender_id.open_id
 建议：
 
 - 想降低误触发，设为 `true`
-- 想让已注册线程里的消息默认都能进入服务，保留 `false`
+- 想让已绑定项目群主时间线里的消息默认都能进入服务，保留 `false`
 
 ## 7. 图片能力额外检查
 
@@ -242,7 +242,7 @@ reconnectNonceSeconds = 30
 | `App ID` | `feishu.appId` | 是 | 飞书开放平台应用凭据 |
 | `App Secret` | `feishu.appSecret` | 是 | 飞书开放平台应用凭据 |
 | 当前实际使用人的 `open_id`（按需） | `feishu.allowlist` | 否 | 空数组表示不做用户白名单校验；只有配置了非空 `open_id` 列表后，bridge 才会按用户放行 |
-| 当前实际使用人的 `open_id`（按需） | `feishu.desktopOwnerOpenId` | 否 | 用于桌面 completion 无法路由到群或话题时的 DM fallback；这是接收通知的人，不是机器人 ID。若本地只有一个已见 DM 用户、目标线程已绑定 DM，或 `allowlist` 只有一个用户，可留空 |
+| 当前实际使用人的 `open_id`（按需） | `feishu.desktopOwnerOpenId` | 否 | 用于桌面 completion 无法路由到项目群主时间线时的 DM fallback；这是接收通知的人，不是机器人 ID。若本地只有一个已见 DM 用户、目标线程已绑定 DM，或 `allowlist` 只有一个用户，可留空 |
 | 加密密钥 | `feishu.encryptKey` | 按需 | 只有飞书后台启用了加密推送才填 |
 | 群消息是否必须 `@` 机器人 | `feishu.requireGroupMention` | 按需 | 这是项目侧开关，不是飞书后台字段 |
 | 重连次数 | `feishu.reconnectCount` | 否 | `-1` 表示无限重试，建议保留默认值 |
@@ -283,7 +283,7 @@ npm run doctor
 5. 再发送 `test`
 6. 确认服务有最终回复，并且这次 run 会带上刚才暂存的图片
 
-如果你还需要群线程能力，再继续按 [项目总说明](./project-full-overview.md) 里的“推荐验证路径”做线程侧回归。
+如果你还需要群主时间线能力，再继续按 [项目总说明](./project-full-overview.md) 里的“推荐验证路径”做群主时间线回归。当前真实联调不覆盖飞书 topic / 话题 / 群 `thread_id` 主题。
 
 ## 11. 最容易踩的坑
 
@@ -294,7 +294,7 @@ npm run doctor
 - 事件配置或回调配置被误设成了 HTTP，而不是长连接
 - 飞书后台打开了加密推送，但 `config.toml` 里的 `feishu.encryptKey` 仍然为空
 - 想在群里直接发 `/ca`，但应用只开了群 @ 机器人消息权限；这种情况下飞书不会推送未 @ 的群消息，需要申请“获取群组中所有消息”权限，或改成 `@机器人 /ca`
-- 想在群话题线程里使用，但后台没开群消息权限，或者项目里把 `feishu.requireGroupMention` 设成了 `true` 却没有带 mention
+- 想在群主时间线里使用，但后台没开群消息权限，或者项目里把 `feishu.requireGroupMention` 设成了 `true` 却没有带 mention
 - 图片消息能收到，但应用没有“读取消息资源”能力，导致服务拿不到图片文件
 - Codex 已经产出本地图片，但应用没有“上传图片 / 发送图片消息”能力，导致 bridge 只能回文本降级说明
 - 生成图片超过飞书原生图片消息可接受的大小，导致上传失败

@@ -1,5 +1,7 @@
 # Feishu UI Governance And Protocol Refactor Design
 
+> 2026-05-02 状态标注：本文是历史设计文档。文中出现的“已注册飞书线程”“飞书话题(topic)”和桌面 handoff 场景只代表当时的设计语境或底层兼容思路；当前产品化入口和真实 live journey/test 矩阵只覆盖 DM 与已绑定项目群主时间线，不支持飞书 topic / 话题 / 群 `thread_id` 主题。
+
 ## Context
 
 `Coding Anywhere` 现在已经不是单一的 DM 机器人，而是覆盖当前已经产品化、可真实回测的飞书工作面：

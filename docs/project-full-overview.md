@@ -9,7 +9,7 @@
 - 飞书 DM
 - 已绑定项目的飞书群主时间线
 
-飞书“话题(topic)”相关旧实现和底层线程绑定记录不能被视为当前真实 UI 回归 surface；当前没有可用于自动真实回测的专用话题夹具，也没有把话题做成清晰的用户主入口。
+飞书“话题(topic)”、群 `thread_id` 主题相关旧实现和底层线程绑定记录不能被视为当前产品化 surface 或真实 UI 回归 surface；当前没有可用于自动真实回测的专用话题夹具，也没有把话题做成清晰的用户主入口。
 
 它的目标不是做一个通用聊天机器人平台，而是把飞书中的一个明确上下文，稳定映射到一个 Codex 会话，并把运行状态、最终结果和后台观测一起带回来。
 
@@ -21,8 +21,8 @@
 
 - 用户可以在飞书里直接给 Codex 下达任务
 - 长任务有实时状态，不是黑盒
-- 同一个飞书线程可以复用长期存在的 Codex 会话
-- 多个线程可以并行跑，但同一线程内不会并发污染上下文
+- 同一个飞书会话窗口可以复用长期存在的 Codex 会话
+- 多个 Codex 线程可以并行跑，但同一线程内不会并发污染上下文
 - 后台可以从 run、thread、project 三层观察系统状态
 
 ### 2.2 已落地能力
@@ -33,7 +33,7 @@
 2. 已绑定项目群主时间线文本消息接入
 3. `/ca` 命令与普通 prompt 分流
 4. DM 与项目群主时间线级会话绑定
-5. 基于 native `thread_id` 的 DM / 群主时间线 / 群线程执行解析
+5. 基于 native `thread_id` 的 DM / 群主时间线执行解析；飞书话题 / 群 `thread_id` 主题只保留历史底层兼容，不作为产品化入口
 6. 基于 Codex CLI `exec` / `exec resume` 的短生命周期 run worker
 7. 全局并发限制与线程级串行执行
 8. 线程级 run 投递目标持久化
@@ -42,9 +42,9 @@
 11. SQLite 持久化项目、项目群、线程、run、事件
 12. `/ops/*` 后台观测接口
 13. 通过 `/ca project bind` 注册现有项目群
-14. 通过 `/ca thread create` 创建线程记录并发起飞书话题
+14. 保留 `/ca thread create` 等历史线程命令的底层兼容；它不代表当前支持飞书话题作为产品化入口
 15. 在群主时间线通过 `/ca project bind-current` 直接绑定当前群
-16. 在已绑定项目群中通过 `/ca thread create-current`、`/ca thread list-current`，以及普通群消息直接操作当前项目线程
+16. 在已绑定项目群主时间线中通过 `/ca thread create-current`、`/ca thread list-current`，以及普通群消息直接操作当前项目会话
 17. 在群主时间线通过 `/ca project current` 查询当前群绑定到哪个项目
 18. 通过 `/ca` 返回导航卡，集中展示当前上下文、项目概览、线程摘要和按钮化操作入口；`/ca hub` 继续兼容到同一张卡
 19. DM 中的 `project list` 现在会直接读取 Codex `state_*.sqlite`，返回 Codex 派生项目列表卡片，而不是依赖 CA 本地项目清单
@@ -76,8 +76,8 @@
 45. 飞书卡片回调现在显式分成三种模式：导航/设置类动作直接返回 `raw card` 即时替换；`/ca new`、线程切换等有界异步动作先返回 toast，再使用回调 `token` 调用延时更新接口回填终态卡；历史计划表单提交与计划选项点击则先返回 toast，再在当前 surface 下新发一条进度卡消息续跑，不再 patch 被点击的卡
 46. runtime 输出到控制台的日志现在会统一在每一行开头追加本地时间戳，格式精确到毫秒，便于直接比对消息和回调时序
 47. 真正进入 bridge 处理链路的飞书入站消息，以及发往飞书的出站消息，现在都会打印一条简略日志；同一条消息或卡片的连续推送更新会做去重收敛，避免控制台刷屏
-48. 飞书 DM 和已注册群线程现在都可以先发送图片；bridge 会把图片下载为本地受管资产，并按当前飞书 surface 暂存，而不是立刻触发 Codex
-49. 同一个 DM / 线程 surface 上，下一条普通文本消息会自动消费这些待处理图片，并通过 `codex exec -i ...` 或 `codex exec resume -i ...` 一起送入 Codex
+48. 飞书 DM 和已绑定项目群主时间线现在都可以先发送图片；bridge 会把图片下载为本地受管资产，并按当前飞书 surface 暂存，而不是立刻触发 Codex
+49. 同一个 DM / 群主时间线 surface 上，下一条普通文本消息会自动消费这些待处理图片，并通过 `codex exec -i ...` 或 `codex exec resume -i ...` 一起送入 Codex
 50. bridge 现在会把图片附件清单包装进 prompt，明确告诉 Codex 当前带了几张图、文件名和来源消息 ID
 51. assistant 可以通过 `[bridge-image] ... [/bridge-image]` 私有指令声明本地图片路径；bridge 会校验路径后，把图片作为原生飞书图片消息回发
 52. 卡片按钮触发的异步 `/ca` 命令与计划模式链路也不会再静默吞掉图片结果；能发图时会真发图片，不能发图时会退回明确的文本卡说明
@@ -107,8 +107,8 @@
 76. bridge 在需要显式覆盖 Codex 默认行为时，会把飞书侧选中的设置透传给 CLI：创建线程或续跑线程时分别写入 `codex exec -m <model>`、`-c model_reasoning_effort="..."`，以及速度相关的 `-c service_tier="fast"` / `-c features.fast_mode=...` 覆盖
 77. DM 中执行 `/ca project switch <projectKey|name>` 时，如果当前窗口还绑定着旧的 native Codex thread，bridge 现在会先解除这条旧绑定，再把“当前项目”切到目标项目；后续普通消息会在新项目下创建 fresh thread，而不是继续误跑旧项目
 78. 如果 DM 当前保存了“已选项目”和“已绑线程”两个互相冲突的跨项目状态，bridge 现在会优先相信显式项目选择，并自动清理那条旧线程绑定，避免继续把普通消息送进错误项目
-79. Playwright 版真实飞书 live smoke 现在默认锁死到 `coding-anywhere-autotest` 夹具：`test:feishu:live` / `test:feishu:live:dm` 会先把测试 DM 切到该项目，`test:feishu:live:group` 只允许命中已绑定好的测试群 `coding-anywhere-autotest`；`test:feishu:live:dm:ui` 和 `test:feishu:live:group:ui` 会运行完整 UI journey 矩阵；当前真实 UI 回归不支持 `topic` surface，如确实需要覆盖到别的项目或群夹具，必须显式设置危险开关 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
-80. 桌面 completion 通知卡的主按钮文案现在统一为“在飞书继续”，`continue_desktop_thread` 也已经覆盖三种接管路径：DM、已绑定飞书话题和项目群主时间线都会把目标 native Codex thread 接到对应飞书 surface，并统一落到“当前会话已就绪”稳定态主卡；其中项目群主时间线现在不再自动创建飞书话题，而是直接把当前群对话绑定到该 native thread
+79. Playwright 版真实飞书 live smoke 现在默认锁死到 `coding-anywhere-autotest` 夹具：`test:feishu:live` / `test:feishu:live:dm` 会先把测试 DM 切到该项目，`test:feishu:live:group` 只允许命中已绑定好的测试群主时间线 `coding-anywhere-autotest`；`test:feishu:live:dm:ui` 和 `test:feishu:live:group:ui` 会运行完整 UI journey 矩阵；当前真实 UI 回归不支持 `topic`、飞书话题、群 `thread_id` 主题或 handoff 场景，如确实需要覆盖到别的项目或群夹具，必须显式设置危险开关 `FEISHU_LIVE_ALLOW_NON_AUTOTEST=1`
+80. 桌面 completion 通知卡的主按钮文案现在统一为“在飞书继续”，当前产品化接管路径以 DM 和项目群主时间线为准：目标 native Codex thread 会接到对应飞书 surface，并统一落到“当前会话已就绪”稳定态主卡；项目群主时间线不会自动创建飞书话题，而是直接把当前群对话绑定到该 native thread
 81. 飞书已绑定项目群主时间线现在和 DM 保持同一套心智：`切换到此线程` / `在飞书继续` 都会把当前对话窗口直接绑定到一个 native Codex thread，后续普通群消息会继续进入这个线程
 82. 桌面侧原生 Codex thread 已经从“完成后单次通知”升级为完整生命周期通知：runtime 会在新一轮顶层 desktop run 发现 `task_started` 后先发一张 `桌面任务进行中` 卡，并在后续轮询里复用同一 `message_id` patch 最近公开进展与结构化计划清单；卡片会先展示“你最后说了什么”，再展示当前情况，不再额外放一个独立的 `进度 / Ran N commands` 区块；其中“你最后说了什么”会优先从 rollout 的结构化快照中提取，并显式忽略 `<subagent_notification>`、`<turn_aborted>` 这类 synthetic wrapper，避免把系统包装文本误显示成用户输入
 83. 同一轮 desktop run 完成后，bridge 会优先把这张运行态卡原地更新成 `桌面任务已完成`，在同一张卡里直接展示“你最后说了什么”和 `Codex 最终返回了什么` 的正文内容，不再额外补发第二张“完整回复”卡或结果消息；`在飞书继续` 也只会出现在完成态
@@ -145,14 +145,14 @@
 - 桌面侧原生 Codex thread 生命周期通知虽然已经接通“runtime 轮询 + lifecycle observer + 本地路由决策 + 进行中卡创建 / patch + 完成态原卡收口”整条链路，但 history/mute 回调和失败后的自动修复仍未接通
 - 群聊里的“话题承载会话”不是当前产品能力，也不是当前真实 UI 回归 surface；历史线程/话题相关底层实现不能作为新增 live 测试或对外说明的依据
 
-也就是说，当前产品化入口只按 DM 与已绑定项目群主时间线验收；“群聊话题化承载会话”的完整产品方案留待后续单独设计。
+也就是说，当前产品化入口只按 DM 与已绑定项目群主时间线验收；“群聊话题 / topic / 群 `thread_id` 主题承载会话”的完整产品方案留待后续单独设计。
 
 ## 3. 高层架构
 
 当前主链路可以简化为：
 
 ```text
-Feishu DM / Bound Group Chat / Group Thread
+Feishu DM / Bound Group Main Timeline
   -> FeishuWsClient
   -> FeishuAdapter
   -> BridgeService
@@ -292,9 +292,9 @@ Windows 停止入口模块。
 - `publishRunning` 负责创建 `桌面任务进行中` 卡，并把冻结后的 `message_id`、surface 和公开进度写入 `codex_thread_desktop_notification_state`
 - `updateRunning` 负责复用同一 `message_id` patch 运行态卡，只更新公开进展和计划清单
 - `publishCompletion` 优先把运行态卡 patch 成完成态；如果当前没有可 patch 的运行态卡，则退回新发一张完成态卡
-- 按目标类型分别执行 DM、已绑定飞书话题回复和项目群主时间线投递
+- 按目标类型分别执行 DM 和项目群主时间线投递；历史飞书话题回复仅作为底层兼容路径保留
 - 在真正发飞书消息之前先校验 `codex_thread_watch_state` 是否已存在，避免“消息已经发出但 watch-state 持久化才报错”的半成功状态
-- 在已绑定飞书话题中复用路由阶段已经解析好的稳定 `anchorMessageId`，把生命周期卡稳定回复到同一个话题根消息下，避免发送阶段再二次读取可变绑定
+- 在历史飞书话题兼容路径中复用路由阶段已经解析好的稳定 `anchorMessageId`，把生命周期卡稳定回复到同一个话题根消息下，避免发送阶段再二次读取可变绑定；该路径不进入 live journey
 - 当 completion 没有可用的最终正文时，会发送明确的 `body unavailable` 文本回退，而不是落一条空白结果消息
 - 生命周期卡始终展示 `你最后说了什么` 提醒区，优先使用 rollout 里结构化提取的“最后一句顶层人类输入”；拿不到时才回退到最近用户消息或线程标题
 - 完成态卡会把 `Codex 最终返回了什么` 直接内嵌到同一张卡里；若正文过长，则只在这张卡内部做长度收敛，不再额外补发第二条完整结果消息
@@ -310,7 +310,7 @@ Windows 停止入口模块。
 - 可选的用户 allowlist 校验（空 allowlist 时关闭）
 - 文本消息过滤
 - 图片消息下载与 surface 级暂存
-- DM、已绑定项目群主时间线与群线程 surface 识别
+- DM、已绑定项目群主时间线与历史群话题 surface 识别
 - mention-only fallback 过滤
 - 对真正进入 bridge 的飞书入站消息打印简略收包日志
 - 创建状态卡控制器
@@ -340,8 +340,8 @@ Windows 停止入口模块。
 - 为导航卡按钮编码回放命令上下文
 - 在 DM 中执行项目切换时主动解除旧线程绑定，并对“已选项目”和“已绑线程”的跨项目冲突做自动清理
 - 为计划模式开关、诊断卡切换和计划选择按钮编码 bridge 动作上下文
-- 为未来的桌面 completion 通知提供纯本地路由解析：优先 native thread 的首选话题绑定，并把稳定 `anchorMessageId` 一起带入 thread target；其次精确项目绑定或唯一 cwd 命中的项目群，最后 DM fallback；cwd 命中多个项目时不会猜测路由目标
-- 处理桌面 completion 的 continue handoff：DM、已绑定话题和项目群三条路径都会把目标 native thread 接到对应飞书 surface，并统一复用“当前会话已就绪”稳定态主卡；项目群主时间线会直接把当前群对话绑定到目标 thread，而不是创建新话题
+- 为未来的桌面 completion 通知提供纯本地路由解析：优先当前产品化的项目群主时间线或 DM 绑定；历史话题绑定只作为底层兼容信息，不进入 live journey；cwd 命中多个项目时不会猜测路由目标
+- 处理桌面 completion 的 continue 接管：当前产品化路径以 DM 和项目群主时间线为准，都会把目标 native thread 接到对应飞书 surface，并统一复用“当前会话已就绪”稳定态主卡；项目群主时间线会直接把当前群对话绑定到目标 thread，而不是创建新话题
 - root 上下文封装
 - 同 surface 待处理图片的消费与 prompt 附件清单封装
 - run 生命周期组织
@@ -387,7 +387,7 @@ bridge 图片指令解析与路径校验层。
 
 职责：
 
-- 统一编码 `/ca` 命令按钮、计划模式开关、诊断卡切换、计划选择按钮、Codex 设置回调和桌面线程 handoff 按钮的 `value`
+- 统一编码 `/ca` 命令按钮、计划模式开关、诊断卡切换、计划选择按钮、Codex 设置回调和桌面线程接管按钮的 `value`
 - 统一补齐 `chatId`、`surfaceType`、`surfaceRef` 等 surface 上下文字段
 - 供 `BridgeService`、稳定态会话卡、流式状态卡和桌面 completion 卡复用，避免多处手工拼接 callback payload
 
@@ -449,13 +449,13 @@ Codex 本地线程目录读取层。
 
 - 在项目群中发根消息
 - 获取飞书返回的 `message_id` / `thread_id`
-- 为新话题创建 native Codex thread，或把已有 native Codex thread 绑定进新话题
+- 为历史话题兼容路径创建 native Codex thread，或把已有 native Codex thread 绑定进历史话题
 - 创建 `codex_threads` surface 绑定记录
 
 注意：
 
 - 这个服务已经存在
-- 当前已经通过 `/ca thread create` 暴露成可触发入口
+- 当前保留 `/ca thread create` 作为历史兼容入口，不作为产品化 UI 或 live 回归入口
 - 但还没有自动建群或图形化创建流
 
 ### 5.8 `src/feishu-card/streaming-card-controller.ts`
@@ -465,7 +465,7 @@ Codex 本地线程目录读取层。
 职责：
 
 - DM 流式状态优先使用 CardKit，失败时回退到普通 interactive card
-- 线程场景优先通过回复消息在原话题内承载状态
+- 历史话题场景优先通过回复消息在原话题内承载状态；当前产品化群聊入口使用群主时间线
 - 非终态状态卡会直接带“停止任务”按钮，方便在当前运行面板里立刻取消 live run
 - 终态成功时将状态卡收口为摘要卡，完整 assistant 正文继续通过普通消息 / 线程回复回推
 - 终态失败时收口错误卡或直接回复错误
@@ -477,13 +477,13 @@ Codex 本地线程目录读取层。
 职责：
 
 - 为 native Codex thread 在桌面端运行中 / 已完成两种状态构建独立的 JSON 2.0 卡片
-- 统一桌面 lifecycle 通知卡的主按钮文案为“在飞书继续”，并把 DM、已存在话题、项目群主时间线三种 handoff 场景编码进按钮 payload
+- 统一桌面 lifecycle 通知卡的主按钮文案为“在飞书继续”，并把 DM、项目群主时间线接管场景编码进按钮 payload；历史话题仅保留底层兼容
 - 运行态卡会展示项目名、线程名、开始时间、必显的“你最后说了什么”提醒区、最近公开进展和结构化计划清单，且不会显示 `在飞书继续`
 - 完成态卡会展示完成时间、必显的“你最后说了什么”提醒区，以及直接内嵌在同一张卡里的 `Codex 最终返回了什么`
 - 对 project / thread / summary / hint 这类用户或模型衍生文本先做 Markdown 去语法和多行收敛，避免借由 `markdown` 组件改写通知卡结构或摘要预览
 - 对超长结果正文会在同一张完成态卡里做长度收敛，避免 interactive payload 超限，同时不再额外发“完整回复”卡
 - builder 的输入契约通过 `src/types.ts` 暴露，便于后续 runtime、投递与回调链路复用同一份通知卡输入定义
-- 统一产出后续 handoff 会复用的稳定动作名，如 `continue_desktop_thread`、`view_desktop_thread_history`、`mute_desktop_thread`
+- 统一产出后续接管会复用的稳定动作名，如 `continue_desktop_thread`、`view_desktop_thread_history`、`mute_desktop_thread`
 - 当前只负责生命周期卡的展示模型，不在这里重新做 rollout 观察或飞书路由决策
 
 ### 5.9 `src/workspace/session-store.ts`
@@ -511,7 +511,7 @@ SQLite 持久化层。
 
 - 启动迁移时会把旧版遗留表 `workspaces`、`users`、`acp_sessions`、`runs`、`message_links`、`event_offsets` 清理掉
 - 如果数据库里仍只有旧版 `workspaces` 根配置而没有 `bridge_root`，会先把旧根信息迁入 `bridge_root` 再删除旧表
-- 如果数据库里的 `codex_threads` 仍以 `thread_id` 作为主键，启动迁移会自动重建为“按飞书 surface 建模”的新结构，允许多个话题绑定到同一个 native `thread_id`
+- 如果数据库里的 `codex_threads` 仍以 `thread_id` 作为主键，启动迁移会自动重建为“按飞书 surface 建模”的新结构；其中多个话题绑定到同一个 native `thread_id` 只属于历史兼容数据模型
 - `codex_thread_watch_state` 会按 native desktop `thread_id` 持久化观察状态，记录当前 rollout 路径 / mtime、`last_read_offset`、`last_completion_key` 和 `last_notified_completion_key`，用于桌面线程观察与完成通知去重
 - `codex_thread_desktop_notification_state` 会按 native desktop `thread_id` 持久化生命周期卡状态，记录当前 `runKey`、运行态卡 `message_id`、冻结路由、最近公开进展、计划快照、命令计数和 `last_render_hash`，用于跨轮询 / 跨重启继续 patch 同一张桌面任务卡
 - `pending_bridge_assets` 会按飞书 surface 暂存待处理图片，记录本地文件路径、来源消息和当前状态；runtime 维护任务会按 TTL 标记过期图片
@@ -542,7 +542,9 @@ channel + peerId -> codex_thread_id
 
 如果这个 DM surface 上已经先收到过图片，则这些待处理图片会在这条文本消息进入 Codex 前被一并消费，并作为 `-i` 图片参数传给 `codex exec` / `codex exec resume`。
 
-## 6.2 群线程普通消息
+## 6.2 历史群话题链路（非产品化入口）
+
+本小节只记录历史底层模型，避免误把旧实现当作当前能力。当前产品化和真实 live 回归只覆盖 DM 与已绑定项目群主时间线，不覆盖飞书 topic / 话题 / 群 `thread_id` 主题。
 
 ```text
 Feishu group thread text
@@ -555,20 +557,20 @@ Feishu group thread text
   -> 在线程中回复状态 / 结果
 ```
 
-线程场景使用：
+历史话题场景使用：
 
 ```text
 (channel, chat_id, surface_type=thread, surface_ref=thread_id)
 ```
 
-来解析上下文。
+来解析上下文；它不属于当前推荐真实联调 surface。
 
-如果同一个 `(chat_id, thread_id)` 上已经暂存过图片，则下一条线程文本消息会先消费这些图片，再续跑当前 native `thread_id`。
+如果同一个 `(chat_id, thread_id)` 上已经暂存过图片，则下一条历史话题文本消息会先消费这些图片，再续跑当前 native `thread_id`。
 
 ## 6.2.1 图片暂存链路
 
 ```text
-Feishu DM / Group Thread image
+Feishu DM / Bound Group Main Timeline image
   -> FeishuAdapter
   -> FeishuApiClient.downloadMessageResource(type=image)
   -> SessionStore.pending_bridge_assets
@@ -592,15 +594,14 @@ Feishu DM / Group Thread image
 - 若需要已绑定项目群主时间线里的普通消息不带 @ 也进入 Codex，需要申请并发布“获取群组中所有消息”相关权限
 - 长连接订阅方式仍需在开发者后台“事件与回调”里保存为“使用长连接接收事件”
 
-本地收到群消息后，只有满足下面任一条件才会进入 Codex：
+本地收到群消息后，当前产品化路径只有满足下面任一条件才会进入 Codex：
 
-- 是原生话题线程内消息，且能解析出 `chat_id + thread_id`
 - 是群主时间线里的 `/ca` 命令
 - 是已注册项目群主时间线里的普通文本消息
 
 当群消息以 `@机器人` 开头时，飞书事件正文中的文本通常包含 `@_user_n` 这类 mention 占位符。bridge 会使用官方 `message.mentions` 字段识别机器人 mention，并在路由前剥离开头的机器人 mention，因此 `@机器人 /ca project bind-current ...` 会按 `/ca project bind-current ...` 处理，`@机器人 继续处理` 会按 `继续处理` 投递给当前 surface。
 
-若开启 `feishu.requireGroupMention`，则已注册群线程消息必须带 mention 才会进入 Codex；该开关不会让飞书主动推送普通群消息，推送范围仍由飞书后台权限决定。
+若开启 `feishu.requireGroupMention`，则群主时间线消息必须带 mention 才会进入 Codex；该开关不会让飞书主动推送普通群消息，推送范围仍由飞书后台权限决定。
 
 ## 6.4 `/ca` 命令
 
@@ -702,9 +703,9 @@ Feishu DM / Group Thread image
 
 当前采用：
 
-- 一个已注册飞书线程，对应一个 native Codex thread 绑定
-- 同一个线程后续消息继续复用该 `thread_id`
-- 同一个 native Codex thread 可以被多个已注册飞书话题引用；SQLite 以飞书 surface 作为绑定记录主语义
+- 一个已绑定 DM 或项目群主时间线，对应一个 native Codex thread 绑定
+- 同一个飞书会话后续消息继续复用该 native `thread_id`
+- 历史飞书话题可以在底层绑定到 native Codex thread，但这不是当前产品化入口或 live surface；SQLite 仍以飞书 surface 作为绑定记录主语义
 - DM 可以显式切到已有的 Codex 原生线程，也可以单独记录“当前项目”选择；当前项目主要用于在没有 native thread 绑定时决定 `project current`、`thread list-current` 以及首次普通 prompt / `/ca new` 的默认 `cwd`
 - DM 可以在首次普通 prompt 时自动创建新的 native thread
 - `sessionName` 仍作为观测字段保留，但执行真相源已经统一为 native `thread_id`
@@ -822,8 +823,8 @@ channel + peer_id -> codex_thread_id
 - `project_chats` 表示一个项目对应的飞书项目群；当前群从项目列表绑定到另一个未绑定项目时，会先清理该群旧绑定，再写入新绑定，避免一个群同时绑定多个项目
 - `codex_chat_bindings` 表示“群主时间线 surface 到 native Codex thread”的绑定记录，按 `(channel, chat_id)` 唯一
 - `codex_threads` 表示“飞书 surface 到 native Codex thread”的绑定记录
-- `codex_threads` 以 `(chat_id, feishu_thread_id)` 唯一标识一个飞书话题 surface，而不是再把 `thread_id` 当作唯一主键
-- 因此同一个 native `thread_id` 可以被多个飞书话题引用；项目摘要中的线程数按去重后的 native `thread_id` 统计
+- `codex_threads` 在历史话题兼容路径中以 `(chat_id, feishu_thread_id)` 唯一标识一个飞书话题 surface，而不是再把 `thread_id` 当作唯一主键
+- 因此同一个 native `thread_id` 可以被多个历史飞书话题引用；项目摘要中的线程数按去重后的 native `thread_id` 统计
 - `codex_thread_watch_state` 表示 native desktop 线程观察状态，记录 rollout 路径 / mtime、`last_read_offset`、`last_completion_key` 和 `last_notified_completion_key`，用于桌面端线程观察与完成通知去重
 - `codex_thread_desktop_notification_state` 表示 native desktop 生命周期卡状态，记录当前 `runKey`、运行态卡 `message_id`、冻结路由、最近公开进展、计划快照、命令计数和 `last_render_hash`
 - `pending_bridge_assets` 表示某个飞书 surface 上还没被下一条文本 prompt 消费的图片资产；状态支持 `pending / consumed / failed / expired`
@@ -908,11 +909,11 @@ channel + peer_id -> codex_thread_id
   - 缺省或空数组表示不做用户白名单校验
   - 配置了非空列表后，只有命中的用户消息才会进入 bridge
 - `feishu.requireGroupMention`
-  - 群线程兜底模式
-  - 为 `true` 时，只有带 mention 的线程消息才会进入 Codex；mention 依据飞书官方 `message.mentions` 字段识别
+  - 群主时间线兜底模式
+  - 为 `true` 时，只有带 mention 的群主时间线消息才会进入 Codex；mention 依据飞书官方 `message.mentions` 字段识别
   - 该配置只控制本地过滤，不替代飞书后台权限；若应用只有群 @ 机器人消息权限，未 @ 的普通群消息不会被飞书推送到长连接
 - `feishu.desktopOwnerOpenId`
-  - 桌面 completion 通知在无法路由到已有话题或项目群时，用于显式指定 DM fallback 的目标用户 `open_id`
+  - 桌面 completion 通知在无法路由到项目群主时间线时，用于显式指定 DM fallback 的目标用户 `open_id`
   - 这是“接收通知的人”的 `open_id`，不是机器人自身的 App ID 或机器人 ID
   - 可省略场景：目标 native thread 已经绑定过某个 DM、`feishu.allowlist` 只有 1 个 open_id，或本地数据库里只有一个已见 DM 用户
   - 若存在多个 DM 候选且无法通过线程绑定消歧，则仍应配置该字段，避免桌面任务结果发错人
@@ -943,18 +944,18 @@ channel + peer_id -> codex_thread_id
 - `npm run test:feishu:auth` 会启动一个最大化的持久化浏览器 profile，默认打开 `https://feishu.cn/messages/`
 - 登录成功后的页面既可能是 `https://feishu.cn/messages/`，也可能是租户域名下的 `/next/messenger/`
 - 首次执行需要人工完成飞书登录；成功后会在仓库根目录 `.auth/feishu-profile` 保存本地登录态，并写入 `.auth/feishu-live-auth.json`
-- `npm run test:feishu:live` 与 `npm run test:feishu:live:dm` 会复用该 profile 打开真实飞书测试 DM；`npm run test:feishu:live:group` 会复用同一 profile 打开真实飞书测试群；`npm run test:feishu:live:dm:ui` 与 `npm run test:feishu:live:group:ui` 会执行完整 UI journey 矩阵，不再重复自动登录；当前没有 `topic` live 脚本
+- `npm run test:feishu:live` 与 `npm run test:feishu:live:dm` 会复用该 profile 打开真实飞书测试 DM；`npm run test:feishu:live:group` 会复用同一 profile 打开真实飞书测试群主时间线；`npm run test:feishu:live:dm:ui` 与 `npm run test:feishu:live:group:ui` 会执行完整 UI journey 矩阵，不再重复自动登录；当前没有 `topic` live 脚本
 - 真实飞书测试用例的第一目标是贴合用户实际旅程，用来检验 UI 和交互是否合理、功能是否正常；不能把“能通过命令直达某状态”误当成“用户路径已经顺畅”
 - 用例必须明确区分“夹具准备”和“用户主旅程”：`/ca project switch`、`/ca project current`、预置绑定、清理状态这类动作只允许出现在准备阶段或专项测试说明里，不应混入主旅程步骤
-- 常规 DM / group 主旅程应从用户自然入口开始：通常先发送 `/ca`，再根据返回卡片点击 `查看项目`、`当前项目`、`切换线程`、`返回当前会话` 等按钮继续；如果某一步要验证卡片交互，就优先点击卡片按钮，而不是直接发送等价命令
-- 专项 live 测试可以先用 `/ca project switch`、桌面 handoff、预置线程等方式构造上下文，但用例名称和步骤应说明它是在验证特定功能点，而不是普通用户导航路径
+- 常规 DM / group 主时间线旅程应从用户自然入口开始：通常先发送 `/ca`，再根据返回卡片点击 `查看项目`、`当前项目`、`切换线程`、`返回当前会话` 等按钮继续；如果某一步要验证卡片交互，就优先点击卡片按钮，而不是直接发送等价命令
+- 专项 live 测试可以先用 `/ca project switch`、预置会话等方式构造上下文，但用例名称和步骤应说明它是在验证特定功能点，而不是普通用户导航路径；桌面 handoff、topic / 话题和群 `thread_id` 主题不属于当前 live 支持场景
 - 每一步断言必须等待当前动作产生的新可见结果，不能只因为历史消息里已有同名文案就提前通过；否则无法发现卡片未刷新、点击旧卡、延时更新失败这类真实交互问题
-- live smoke 不再只发一条可配置命令，而是按 surface 执行主要用户旅程；其中夹具准备步骤会和用户主旅程分开记录。常规 DM 会先用 `/ca project switch coding-anywhere-autotest` 做夹具准备，然后主旅程从 `/ca` 开始，点击 `查看项目`、从项目列表返回当前会话、点击 `切换线程`，再查看 `/ca status` 与 `/ca session`；常规群聊会先用 `/ca project current` 做夹具自检，然后主旅程从 `/ca` 开始，查看项目列表、点击 `当前项目`、点击 `线程列表` 与查看 `/ca status`
-- 完整 UI journey 可通过 `FEISHU_LIVE_SCENARIOS=all` 或 `*:ui` 脚本触发，会覆盖标准会话卡、`更多信息` 诊断卡、计划模式开关、新会话、线程切换、短任务终态和 `/ops/ui`；这些场景会在 autotest DM / 测试群内创建或复用测试线程，仍禁止自动改绑非测试群
+- live smoke 不再只发一条可配置命令，而是按 surface 执行主要用户旅程；其中夹具准备步骤会和用户主旅程分开记录。常规 DM 会先用 `/ca project switch coding-anywhere-autotest` 做夹具准备，然后主旅程从 `/ca` 开始，点击 `查看项目`、从项目列表返回当前会话、点击 `切换线程` 进入会话选择，再查看 `/ca status` 与 `/ca session`；常规群主时间线会先用 `/ca project current` 做夹具自检，然后主旅程从 `/ca` 开始，查看项目列表、点击 `当前项目`、点击 `线程列表` 进入会话选择与查看 `/ca status`
+- 完整 UI journey 可通过 `FEISHU_LIVE_SCENARIOS=all` 或 `*:ui` 脚本触发，会覆盖标准会话卡、`更多信息` 诊断卡、计划模式开关、新会话、会话切换、短任务终态和 `/ops/ui`；这些场景会在 autotest DM / 测试群主时间线内创建或复用测试会话，仍禁止自动改绑非测试群
 - 做图片链路 live smoke 时，至少要覆盖“先发图片、bridge 回 `[ca] 已收到图片，请继续发送文字说明。`、再发文字消费图片”这条链路；单元回归也需要覆盖图片消息下载方法在真实 API client 实例上不能丢失 `this` 绑定
 - `FEISHU_LIVE_TARGET_URL` 用于指定待测飞书网页入口；兼容旧变量 `FEISHU_LIVE_DM_URL`。未设置时只允许做 auth bootstrap，不允许发消息 smoke
-- `FEISHU_LIVE_SURFACE` 用于显式指定当前 smoke 场景：`dm` 或 `group`；默认是 `dm`。显式传 `topic` 会直接报错，因为当前没有可用于真实 UI 回归的话题夹具
-- `FEISHU_LIVE_SCENARIOS` 可用逗号指定要执行的 UI 场景；常用值为 `main` 或 `all`
+- `FEISHU_LIVE_SURFACE` 用于显式指定当前 smoke 场景：`dm` 或 `group`；这里的 `group` 固定表示已绑定项目群主时间线，不表示飞书 topic / 话题 / 群 `thread_id` 主题。显式传 `topic` 会直接报错，因为当前没有可用于真实 UI 回归的话题夹具
+- `FEISHU_LIVE_SCENARIOS` 可用逗号指定要执行的 UI 场景；常用值为 `main` 或 `all`。`topic`、`handoff` 和飞书话题链路都不是支持场景
 - `FEISHU_LIVE_DM_CONVERSATION_NAME` 可在 DM 只拿到 messenger 根页 URL 时指定左侧机器人 DM 会话名；本机默认测试 DM 是 `渣渣Co`
 - `FEISHU_LIVE_CONVERSATION_NAME` 是通用覆盖项，可在 `FEISHU_LIVE_TARGET_URL` 只能打开 messenger 根页时指定左侧会话名；若 `FEISHU_LIVE_SURFACE=group` 且未显式提供，则默认固定为测试群 `coding-anywhere-autotest`；未开启危险开关时，group smoke 也会拒绝任何其他群名
 - `FEISHU_LIVE_PROJECT_KEY` 默认固定为 `coding-anywhere-autotest`；该值可以是 Codex 真实 `projectKey`，也可以是唯一项目显示名。DM smoke 的夹具准备会先发送 `/ca project switch coding-anywhere-autotest`，由 bridge 解析并保存真实 catalog key；群聊 smoke 的夹具准备只校验当前群已经绑定到该项目，不自动改绑
@@ -992,20 +993,20 @@ channel + peer_id -> codex_thread_id
 
 相对于早期“只有 DM”的版本，当前实现已经有这些实际变化：
 
-- 已注册群线程中的消息可以直接进入 Codex
-- 线程结果不再回 DM，而是在线程里回复
-- 可以对线程使用 `/ca new`
-- 可以直接从飞书命令注册现有项目群并创建线程
-- 可以在已绑定项目群里直接创建线程和查看当前项目线程列表
+- 已绑定项目群主时间线中的消息可以直接进入 Codex
+- 群主时间线结果不再回 DM，而是在当前群会话里回复
+- 可以在 DM 或群主时间线使用 `/ca new` 创建新的 native Codex thread 并切换当前会话
+- 可以直接从飞书命令注册现有项目群
+- 可以在已绑定项目群里查看当前项目线程列表并切换当前会话
 - 可以在群主时间线快速确认当前项目绑定
 - 可以通过导航卡查看当前上下文、项目概览和线程摘要
 - 可以通过结构化列表卡快速浏览项目和线程
 - 在 DM 中切到某个 Codex 原生线程后，可以直接看到该线程“最后 1 条 user + 最后 4 条 assistant”消息的原文预览
 - 在 DM 中切到某个 Codex 原生线程后，点击“当前会话”也可以继续看到同一份最近对话预览
-- 在项目群主时间线把现有 Codex 原生线程绑定进新飞书话题时，回执卡会明确区分“线程已绑定”和“线程已创建”，并显示最近对话预览
+- 在项目群主时间线把现有 Codex 原生线程绑定到当前群会话时，回执卡会明确进入“当前会话已就绪”，并显示最近对话预览
 - 在 DM 中切换项目后，旧线程绑定会被立即解除；这时下一条普通消息会在新项目下创建 fresh thread，而不是继续跑旧项目的上下文
-- 可以在 DM 或已注册飞书线程里直接点击“运行状态”，看到当前 surface 的 live run、耗时、最近工具和摘要；没有 live run 时也能看到空闲态上下文摘要
-- 可以在 DM 或已注册飞书线程里直接点击“停止任务”或发送 `/ca stop`，请求停止当前 surface 上正在执行或排队的任务
+- 可以在 DM 或已绑定项目群主时间线里直接点击“运行状态”，看到当前 surface 的 live run、耗时、最近工具和摘要；没有 live run 时也能看到空闲态上下文摘要
+- 可以在 DM 或已绑定项目群主时间线里直接点击“停止任务”或发送 `/ca stop`，请求停止当前 surface 上正在执行或排队的任务
 - 可以通过摘要卡快速确认当前项目和新建线程结果
 - 桌面生命周期通知卡完成后，会直接在同一张卡里展示 `Codex 最终返回了什么` 的正文内容，不再额外补一张“完整回复”消息
 - 输入未知子命令时也能自动回到导航卡
@@ -1039,7 +1040,7 @@ channel + peer_id -> codex_thread_id
 - 不直接向 `thread_id` 发普通消息，线程回推统一通过回复消息完成
 - 普通对话 run 的终态投递策略当前固定为“终态卡 + 完整正文消息”：终态卡会收敛显示 `Codex 最终返回了什么` 和后续动作，但完整 assistant 正文仍以下方消息承载；如后续确有分场景需求，可再扩展为可配置策略，但当前记为低优先级后续计划
 - 现在的“计划模式”仍然是 bridge 基于 `codex exec` / `codex exec resume` 拼出来的工作流，只是飞书侧入口已经从独立表单卡收敛成会话级单次开关；它依然不等同于官方交互式 CLI `/plan` 原语
-- 桌面 completion 通知虽然已经有本地路由决策、DM owner 配置解析、实际消息发送器、runtime 轮询，以及 DM / group continue handoff，但 history/mute 回调以及“同一 completion 失败后自动修复”还没有接通
+- 桌面 completion 通知虽然已经有本地路由决策、DM owner 配置解析、实际消息发送器、runtime 轮询，以及 DM / group continue 接管，但 history/mute 回调以及“同一 completion 失败后自动修复”还没有接通
 - 当前只支持文本 + 图片；通用文件、语音仍未接通
 - outbound 图片必须位于当前 run `cwd` 或 bridge 受管资产目录下；超出范围的路径会被拒绝并退回文本错误
 - 真实飞书网页版 live smoke 当前采用“首次人工登录 + 持久 profile 复用”模型；如果租户启用了 SSO、验证码或二次验证，登录刷新仍需要人工介入
@@ -1066,30 +1067,21 @@ channel + peer_id -> codex_thread_id
 14. 飞书 DM 或已注册线程里点击 `/ca session`、`/ca status`，再启动一个普通任务，确认三种卡片都会显示当前 `model` / `reasoning effort` / `speed`，并能通过下拉框切换
 15. 切换模型、推理或速度后，再次点击 `/ca status` 或直接续跑当前线程，确认状态卡能展示新的值，且随后的 native Codex run 会按选中的参数执行
 
-### 15.2 群线程回归
+### 15.2 已绑定项目群主时间线回归
 
-前提有两种：
-
-- 数据库中已经存在对应的 `project_chats`、`codex_chat_bindings` 和 `codex_threads` 记录
-- 或者先通过 `/ca project bind` 和 `/ca thread create` 完成注册
-- 或者在群主时间线直接执行 `/ca project bind-current`
-- 或者在群主时间线发送 `/ca`，点击“项目列表”，再点击未绑定项目的“绑定到本群”
-- 或者在已绑定项目群主时间线直接执行 `/ca thread create-current`
-
-1. 在已注册的飞书话题里发普通文本
-2. 若开启 `feishu.requireGroupMention`，或应用只开通了群 @ 机器人消息权限，则带上 `@机器人`；bridge 应移除开头 mention 后再把正文送入 Codex
-3. 观察线程内状态更新与最终结果，确认终态卡会展示 `Codex 最终返回了什么` 的收敛正文，而完整 assistant 正文仍以下方线程内单独回复为准
-4. 检查 `/ops/projects`、`/ops/projects/:id/threads`、`/ops/threads/:id/runs`
-
-### 15.2.1 已绑定项目群主时间线回归
+前提：
 
 - 数据库中已经存在对应的 `project_chats` 记录
+- 或者在群主时间线直接执行 `/ca project bind-current`
+- 或者在群主时间线发送 `/ca`，点击“项目列表”，再点击未绑定项目的“绑定到本群”
 - 如需直接续跑已有 native thread，再额外准备一条 `codex_chat_bindings`
 
 1. 在已绑定项目群主时间线里发送普通文本；若应用没有“获取群组中所有消息”权限，则使用 `@机器人 普通文本`
 2. 观察状态更新与最终结果，确认普通群消息会继续进入当前绑定的 native `thread_id`
 3. 在同一群执行 `/ca thread switch <threadId>`；若只开通群 @ 权限，则使用 `@机器人 /ca thread switch <threadId>`，确认回执为“当前会话已就绪”卡，而不是新话题提示
 4. 再发送一条普通文本，确认实际续跑的是刚切换的 thread
+
+飞书 topic / 话题 / 群 `thread_id` 主题不属于当前推荐真实回归路径，也没有专用 live 夹具；除非先单独设计并确认新夹具，否则不要把它加入 `npm run test:feishu:live*` 或手工真实 UI 回测。
 
 ### 15.2.2 图片链路回归
 
@@ -1126,7 +1118,7 @@ channel + peer_id -> codex_thread_id
 
 1. `npm run test:feishu:auth`
 2. 首次执行时，在打开的浏览器里完成登录，确认已经进入 `feishu.cn/messages` 后回到终端按 Enter
-3. DM 场景执行 `npm run test:feishu:live` 或 `npm run test:feishu:live:dm`；群聊场景执行 `npm run test:feishu:live:group`；当前不提供真实话题 smoke
+3. DM 场景执行 `npm run test:feishu:live` 或 `npm run test:feishu:live:dm`；已绑定项目群主时间线场景执行 `npm run test:feishu:live:group`；当前不提供真实话题 smoke
 4. DM smoke 会复用 `.auth/feishu-profile` 打开真实测试 DM，先执行 `/ca project switch coding-anywhere-autotest` 做夹具准备；随后用户主旅程从 `/ca` 开始，依次点击 `查看项目`、`返回当前会话`、`切换线程`，再检查 `/ca status` 与 `/ca session`
 5. group smoke 会复用同一 profile 打开真实测试群，默认群名固定为 `coding-anywhere-autotest`；脚本会先执行 `/ca project current` 校验当前群已绑定到 `coding-anywhere-autotest`，再从 `/ca` 开始查看项目列表、点击 `当前项目`、点击 `线程列表`、检查 `/ca status`，不会自动改绑
 6. 完整 UI 回归执行 `npm run test:feishu:live:dm:ui`、`npm run test:feishu:live:group:ui` 或设置 `FEISHU_LIVE_SCENARIOS=all`，会额外覆盖稳定态会话卡、诊断卡、计划模式开关、新会话、线程切换、短任务终态和 `/ops/ui`
@@ -1155,11 +1147,11 @@ channel + peer_id -> codex_thread_id
 13. `tests/feishu-card-action-service.test.ts`、`tests/feishu-card-builder.test.ts`、`tests/bridge-service.test.ts` 现在会覆盖计划模式单次开关、诊断卡切换、todo list 展示、待回答计划选择题，以及续跑同一 native thread 的桥接链路
 14. `tests/codex-preferences.test.ts` 会锁定 Codex 模型候选项规则：GPT 家族按数值版本倒序、大小写统一显示为 `GPT-*`，并能把本机 Codex config / profile 中大小写混杂的模型 ID 去重归一
 15. `tests/codex-desktop-completion-observer.test.ts` 与 `tests/codex-desktop-lifecycle-observer.test.ts` 会分别锁定 completion 兼容层和完整 lifecycle observer：既覆盖 offset 读取、`task_complete` 检测、最终 assistant 正文提取和稳定 `completionKey`，也覆盖 `task_started` / `agent_message` / `update_plan` / `shell_command` 组合下的公开进度快照、稳定 `runKey` 和跨轮询累计命令计数
-16. `tests/desktop-completion-routing.test.ts` 会用本地 SQLite store + 小型 catalog double 校验桌面 completion 的本地投递目标解析：同一 native thread 有多个话题绑定时会选择首选绑定；项目群 fallback 会先看精确 `projectKey`，再看唯一 cwd 命中；cwd 命中多个项目时不会猜测，而是退回 DM 或明确报出 DM owner 歧义错误
+16. `tests/desktop-completion-routing.test.ts` 会用本地 SQLite store + 小型 catalog double 校验桌面 completion 的本地投递目标解析：项目群 fallback 会先看精确 `projectKey`，再看唯一 cwd 命中；cwd 命中多个项目时不会猜测，而是退回 DM 或明确报出 DM owner 歧义错误；历史话题绑定只作为底层兼容路由覆盖
 17. `tests/desktop-completion-card-builder.test.ts` 会锁定桌面生命周期卡在运行中 / 已完成两态下的字段顺序、按钮、计划清单和 payload 预算行为：运行态必须先显示“你最后说了什么”再显示当前情况，完成态则必须先显示提醒区、再显示直接内嵌的最终正文，而且不能再冒出独立的 `进度 / Ran N commands` 区块
 18. `tests/config.test.ts`、`tests/doctor.test.ts` 与 `tests/feishu-adapter.test.ts` 现在会额外锁定飞书 allowlist 的新语义：缺省 allowlist 会回退为空数组、`doctor` 不再把“未配置 allowlist”视为阻塞，而空 allowlist 下的消息也能正常进入 bridge
-19. `tests/desktop-completion-notifier.test.ts` 会校验桌面 lifecycle 投递器在 DM / 已绑定话题 / 项目群三种目标下的运行态卡创建、完成态原卡 patch、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及完成态正文直接内嵌在同一张卡里而不是额外补发第二条结果消息
-20. `tests/desktop-completion-dm-handoff.test.ts` 会用真实 `BridgeService` + `FeishuCardActionService` harness 校验 DM 通知卡主按钮 `continue_desktop_thread`：点击后会把 DM 绑定到目标 native thread、回调直接返回标准“当前会话”卡，且下一条普通 DM 文本会续跑同一线程
+19. `tests/desktop-completion-notifier.test.ts` 会校验桌面 lifecycle 投递器在 DM / 项目群主时间线目标下的运行态卡创建、完成态原卡 patch、thread anchor 复用、成功后才推进 `lastNotifiedCompletionKey`，以及完成态正文直接内嵌在同一张卡里而不是额外补发第二条结果消息；历史话题目标只作为兼容路径覆盖
+20. `tests/desktop-completion-dm-handoff.test.ts` 会用真实 `BridgeService` + `FeishuCardActionService` harness 校验 DM 通知卡主按钮 `continue_desktop_thread`：点击后会把 DM 绑定到目标 native thread、回调直接返回标准“当前会话”卡，且下一条普通 DM 文本会续跑同一线程；该测试文件名中的 handoff 是历史命名，不代表 live UI scenario
 21. `tests/runtime-desktop-completion-notifier.test.ts` 会校验 runtime 启动后真的开始轮询本地 rollout：首次 bootstrap watch state 时不会回放历史 run / completion，新的顶层 desktop run 会先创建一张运行态卡、在公开进展变化时 patch，并在真正 `task_complete` 后原地收口为完成态；如果旧 completion 之后又继续出现同一轮顶层公开进展，就必须优先维持进行中态；unchanged `completionKey` 不会重复推送，`sourceInfo.kind = subagent` 的子线程不会触发生命周期通知，近期飞书终态 run 对应的 desktop 回声也不会再额外发卡
 22. `tests/codex-app-directive.test.ts`、`tests/feishu-assistant-message.test.ts` 与 `tests/feishu-adapter.test.ts` 会共同锁定飞书 assistant 最终结果里的 Codex app git directive 渲染：顶层 `::git-*` 行必须被隐藏，Feishu-visible 结果应保留自然语言结论，并在可解析时补上一条 `N 个文件已更改` 的紧凑摘要，同时不暴露文件名或 `+/-` 统计
 
@@ -1169,4 +1161,4 @@ channel + peer_id -> codex_thread_id
 
 这个项目现在已经从“飞书私聊直连 Codex”演进到：
 
-**一个支持 DM / 群话题线程、文本与图片桥接、线程级会话、run 级 worker、线程内回推和项目/线程/run 三层观测的单实例桥接服务。**
+**一个支持 DM / 已绑定项目群主时间线、文本与图片桥接、Codex 线程级会话、run 级 worker、会话回推和项目/线程/run 三层观测的单实例桥接服务。**

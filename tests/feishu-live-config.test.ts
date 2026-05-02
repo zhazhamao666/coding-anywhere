@@ -443,7 +443,7 @@ describe("feishu live user journeys", () => {
       "dm:diagnostics",
       "dm:plan-toggle",
       "dm:new-session",
-      "dm:thread-switch",
+      "dm:conversation-switch",
       "dm:run-basic",
       "dm:ops-ui",
     ]);
@@ -452,10 +452,26 @@ describe("feishu live user journeys", () => {
       "打开更多信息诊断卡",
       "打开计划模式单次开关",
       "从选择卡创建新会话",
-      "切换到一个已有线程",
+      "切换到一个已有会话",
       "发送一条短任务并等待终态卡",
       "打开后台观察面",
     ]));
+  });
+
+  it("uses conversation wording in live journey names while keeping raw commands out of the user-facing matrix", () => {
+    const journeys = buildFeishuLiveJourneys({
+      surface: "group",
+      projectKey: "coding-anywhere-autotest",
+      scenarios: ["all"],
+    });
+    const userFacingNames = journeys.flatMap(journey => [
+      journey.name,
+      ...journey.setupSteps.map(step => step.name),
+      ...journey.steps.map(step => step.name),
+    ]);
+
+    expect(userFacingNames).toContain("group:conversation-switch");
+    expect(userFacingNames.join("\n")).not.toMatch(/线程|话题|handoff|topic/i);
   });
 
   it("does not expose topic journeys in the live UI matrix", () => {
@@ -464,5 +480,13 @@ describe("feishu live user journeys", () => {
       projectKey: "coding-anywhere-autotest",
       scenarios: ["all"],
     })).toThrowError("[ca] Unsupported Feishu live UI surface: topic");
+  });
+
+  it("does not treat handoff as a supported live UI scenario", () => {
+    expect(() => buildFeishuLiveJourneys({
+      surface: "dm",
+      projectKey: "coding-anywhere-autotest",
+      scenarios: ["handoff"],
+    })).toThrowError("[ca] Unsupported Feishu live UI scenario for dm: handoff");
   });
 });

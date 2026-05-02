@@ -46,7 +46,7 @@ export type FeishuLiveScenario =
   | "diagnostics"
   | "plan-toggle"
   | "new-session"
-  | "thread-switch"
+  | "conversation-switch"
   | "run-basic"
   | "ops-ui";
 
@@ -101,7 +101,7 @@ function allScenariosForSurface(surface: string): FeishuLiveScenario[] {
     "diagnostics",
     "plan-toggle",
     "new-session",
-    "thread-switch",
+    "conversation-switch",
     "run-basic",
     "ops-ui",
   ];
@@ -174,7 +174,7 @@ function buildMainJourney(input: {
           expectText: ["当前项目", input.projectKey],
         },
         {
-          name: "从当前项目查看线程列表",
+          name: "从当前项目查看会话列表",
           kind: "click",
           label: "线程列表",
           expectText: ["选择线程"],
@@ -221,7 +221,7 @@ function buildMainJourney(input: {
         expectAnyText: ["当前项目已选择", "当前会话已就绪"],
       },
       {
-        name: "从当前入口查看线程列表",
+        name: "从当前入口查看会话列表",
         kind: "click",
         label: "切换线程",
         expectText: ["选择线程"],
@@ -256,7 +256,7 @@ function buildThreadReadySetupSteps(input: {
         requireFreshText: false,
       },
       {
-        name: "确保测试群已有可交互线程",
+        name: "确保测试群已有可交互会话",
         kind: "command",
         text: "/ca new",
         expectText: ["当前会话已就绪"],
@@ -275,7 +275,7 @@ function buildThreadReadySetupSteps(input: {
       requireFreshText: false,
     },
     {
-      name: "确保测试 DM 已有可交互线程",
+      name: "确保测试 DM 已有可交互会话",
       kind: "command",
       text: "/ca new",
       expectText: ["当前会话已就绪"],
@@ -341,7 +341,7 @@ function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLive
     case "new-session":
       return [
         {
-          name: "打开线程选择卡",
+          name: "打开会话选择卡",
           kind: "command",
           text: "/ca thread list-current",
           expectText: ["选择线程", "新会话"],
@@ -355,17 +355,17 @@ function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLive
           timeoutMs: 90_000,
         },
       ];
-    case "thread-switch":
+    case "conversation-switch":
       return [
         {
-          name: "打开线程选择卡",
+          name: "打开会话选择卡",
           kind: "command",
           text: "/ca thread list-current",
           expectText: ["选择线程", "切换到此线程"],
           requireFreshText: false,
         },
         {
-          name: "切换到一个已有线程",
+          name: "切换到一个已有会话",
           kind: "click",
           label: "切换到此线程",
           expectText: ["当前会话已就绪", "下次任务设置"],
