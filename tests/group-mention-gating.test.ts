@@ -56,7 +56,7 @@ describe("group mention gating", () => {
     expect(bridgeService.handleMessage).not.toHaveBeenCalled();
   });
 
-  it("accepts mentioned group thread messages and removes the leading bot mention", async () => {
+  it("drops mentioned group topic messages before mention-gated routing", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => []),
     };
@@ -95,18 +95,6 @@ describe("group mention gating", () => {
       },
     });
 
-    expect(bridgeService.handleMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "feishu",
-        chatType: "group",
-        chatId: "oc_chat_1",
-        surfaceType: "thread",
-        surfaceRef: "omt_1",
-        text: "continue",
-      }),
-      expect.objectContaining({
-        onProgress: expect.any(Function),
-      }),
-    );
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
   });
 });

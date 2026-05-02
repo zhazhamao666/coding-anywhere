@@ -152,7 +152,7 @@ describe("DM Codex browser", () => {
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
     expect(cardText).toContain("当前项目已切换");
     expect(cardText).toContain("Beta");
-    expect(cardText).toContain("已退出之前绑定的线程");
+    expect(cardText).toContain("已退出之前绑定的会话");
     expect(cardText).not.toContain("Alpha follow-up");
   });
 
@@ -184,7 +184,7 @@ describe("DM Codex browser", () => {
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
     expect(cardText).toContain("当前项目");
     expect(cardText).toContain("Beta");
-    expect(cardText).toContain("当前线程");
+    expect(cardText).toContain("当前会话");
     expect(cardText).toContain("未选择");
     expect(cardText).not.toContain("Alpha follow-up");
   });
@@ -210,7 +210,7 @@ describe("DM Codex browser", () => {
     const projectCardText = JSON.stringify((projectReplies[0] as { card: Record<string, unknown> }).card);
     expect(projectCardText).toContain("当前项目");
     expect(projectCardText).toContain("Alpha");
-    expect(projectCardText).toContain("当前线程");
+    expect(projectCardText).toContain("当前会话");
     expect(projectCardText).toContain("未选择");
 
     const threadReplies = await service.handleMessage({
@@ -219,7 +219,7 @@ describe("DM Codex browser", () => {
       text: "/ca thread list-current",
     });
     const threadCardText = JSON.stringify((threadReplies[0] as { card: Record<string, unknown> }).card);
-    expect(threadCardText).toContain("选择线程");
+    expect(threadCardText).toContain("选择会话");
     expect(threadCardText).toContain("Alpha follow-up");
     expect(threadCardText).toContain("thread-alpha-1");
   });
@@ -250,7 +250,7 @@ describe("DM Codex browser", () => {
     expect(cardText).toContain("Alpha");
     expect(cardText).toContain("未选择");
     expect(cardText).toContain("查看项目");
-    expect(cardText).toContain("切换线程");
+    expect(cardText).toContain("选择会话");
     expect(cardText).toContain("新会话");
     expect(cardText).not.toContain("当前会话已就绪");
     expect(cardText).not.toContain("计划模式");
@@ -382,7 +382,7 @@ describe("DM Codex browser", () => {
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({ kind: "card" });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("选择线程");
+    expect(cardText).toContain("选择会话");
     expect(cardText).toContain("Alpha follow-up");
     expect(cardText).toContain("thread-alpha-1");
     expect(cardText).toContain("/ca thread switch thread-alpha-1");

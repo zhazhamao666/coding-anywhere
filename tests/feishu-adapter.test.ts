@@ -835,28 +835,16 @@ describe("FeishuAdapter", () => {
     });
 
     expect(response).toMatchObject({
-      toast: {
-        type: "info",
+      card: {
+        type: "raw",
       },
     });
-
-    await vi.waitFor(() => {
-      expect(apiClient.uploadImage).toHaveBeenCalledWith({
-        imagePath: "D:/tmp/result.png",
-      });
-      expect(apiClient.replyImageMessage).toHaveBeenCalledWith("om_card_1", "img-uploaded-1");
-      expect(apiClient.sendImageMessage).not.toHaveBeenCalled();
-      expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith(
-        "om_card_1",
-        expect.objectContaining({
-          header: expect.objectContaining({
-            title: expect.objectContaining({
-              content: "图片结果",
-            }),
-          }),
-        }),
-      );
+    expect(apiClient.uploadImage).toHaveBeenCalledWith({
+      imagePath: "D:/tmp/result.png",
     });
+    expect(apiClient.replyImageMessage).toHaveBeenCalledWith("om_card_1", "img-uploaded-1");
+    expect(apiClient.sendImageMessage).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
   it("finalizes the streaming card when a normal message fails after progress has started", async () => {

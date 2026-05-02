@@ -176,8 +176,8 @@ function buildMainJourney(input: {
         {
           name: "从当前项目查看会话列表",
           kind: "click",
-          label: "线程列表",
-          expectText: ["选择线程"],
+          label: "会话列表",
+          expectText: ["选择会话"],
         },
         {
           name: "查看运行状态",
@@ -220,12 +220,12 @@ function buildMainJourney(input: {
         label: "返回当前会话",
         expectAnyText: ["当前项目已选择", "当前会话已就绪"],
       },
-      {
-        name: "从当前入口查看会话列表",
-        kind: "click",
-        label: "切换线程",
-        expectText: ["选择线程"],
-      },
+        {
+          name: "从当前入口查看会话列表",
+          kind: "click",
+          label: "选择会话",
+          expectText: ["切换到此会话"],
+        },
       {
         name: "查看运行状态",
         kind: "command",
@@ -256,9 +256,16 @@ function buildThreadReadySetupSteps(input: {
         requireFreshText: false,
       },
       {
-        name: "确保测试群已有可交互会话",
+        name: "打开测试群会话列表",
         kind: "command",
-        text: "/ca new",
+        text: "/ca thread list-current",
+        expectText: ["切换到此会话"],
+        requireFreshText: false,
+      },
+      {
+        name: "切到一个已有会话",
+        kind: "click",
+        label: "切换到此会话",
         expectText: ["当前会话已就绪"],
         timeoutMs: 90_000,
         requireFreshText: false,
@@ -275,9 +282,16 @@ function buildThreadReadySetupSteps(input: {
       requireFreshText: false,
     },
     {
-      name: "确保测试 DM 已有可交互会话",
+      name: "打开测试 DM 会话列表",
       kind: "command",
-      text: "/ca new",
+      text: "/ca thread list-current",
+      expectText: ["切换到此会话"],
+      requireFreshText: false,
+    },
+    {
+      name: "切到一个已有会话",
+      kind: "click",
+      label: "切换到此会话",
       expectText: ["当前会话已就绪"],
       timeoutMs: 90_000,
       requireFreshText: false,
@@ -294,6 +308,7 @@ function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLive
           kind: "command",
           text: "/ca session",
           expectText: ["当前会话已就绪", "下次任务设置", "模型", "推理", "速度", "计划模式", "作用范围"],
+          requireFreshText: false,
         },
       ];
     case "diagnostics":
@@ -303,6 +318,7 @@ function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLive
           kind: "command",
           text: "/ca session",
           expectText: ["当前会话已就绪", "更多信息"],
+          requireFreshText: false,
         },
         {
           name: "打开更多信息诊断卡",
@@ -324,6 +340,7 @@ function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLive
           kind: "command",
           text: "/ca session",
           expectText: ["当前会话已就绪", "计划模式"],
+          requireFreshText: false,
         },
         {
           name: "打开计划模式单次开关",
@@ -344,15 +361,16 @@ function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLive
           name: "打开会话选择卡",
           kind: "command",
           text: "/ca thread list-current",
-          expectText: ["选择线程", "新会话"],
+          expectText: ["切换到此会话", "新会话"],
           requireFreshText: false,
         },
         {
-          name: "从选择卡创建新会话",
+          name: "从选择卡准备新会话",
           kind: "click",
           label: "新会话",
-          expectText: ["当前会话已就绪", "下次任务设置", "计划模式"],
-          timeoutMs: 90_000,
+          expectText: ["选择会话"],
+          expectAnyText: ["当前项目已选择", "当前群已绑定项目"],
+          requireFreshText: false,
         },
       ];
     case "conversation-switch":
@@ -361,15 +379,16 @@ function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLive
           name: "打开会话选择卡",
           kind: "command",
           text: "/ca thread list-current",
-          expectText: ["选择线程", "切换到此线程"],
+          expectText: ["选择会话", "切换到此会话"],
           requireFreshText: false,
         },
         {
           name: "切换到一个已有会话",
           kind: "click",
-          label: "切换到此线程",
+          label: "切换到此会话",
           expectText: ["当前会话已就绪", "下次任务设置"],
           timeoutMs: 90_000,
+          requireFreshText: false,
         },
       ];
     case "run-basic":

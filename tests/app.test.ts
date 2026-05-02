@@ -317,6 +317,8 @@ describe("buildApp", () => {
     expect(ui.body).toContain("开始时间");
     expect(ui.body).toContain("最近公开进展");
     expect(ui.body).toContain("技术元数据");
+    expect(ui.body).toContain("<label>Codex 线程 ID</label>");
+    expect(ui.body).not.toContain("<label>线程</label>");
     expect(ui.body).toContain("会话快照（次级）");
     expect(ui.body).toContain('"running":"运行中"');
     expect(ui.body).toContain('"tool_call":"工具调用"');

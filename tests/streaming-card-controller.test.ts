@@ -45,7 +45,8 @@ describe("StreamingCardController", () => {
     const terminalCard = (terminalCall as unknown as Array<unknown>)[1] as Record<string, unknown>;
     expect(JSON.stringify(terminalCard)).toContain("Codex 最终返回了什么");
     expect(JSON.stringify(terminalCard)).toContain("新会话");
-    expect(JSON.stringify(terminalCard)).toContain("切换线程");
+    expect(JSON.stringify(terminalCard)).toContain("切换会话");
+    expect(JSON.stringify(terminalCard)).not.toContain("切换线程");
     expect(JSON.stringify(terminalCard)).toContain("更多信息");
     expect(JSON.stringify(terminalCard)).not.toContain("停止任务");
     expect(apiClient.sendInteractiveCard).not.toHaveBeenCalled();
@@ -97,6 +98,8 @@ describe("StreamingCardController", () => {
     expect(runningCall).toBeDefined();
     const runningCard = (runningCall as unknown as Array<unknown>)[1] as Record<string, unknown>;
     expect(JSON.stringify(runningCard)).toContain("停止任务");
+    expect(JSON.stringify(runningCard)).not.toContain("下次任务设置");
+    expect(JSON.stringify(runningCard)).not.toContain("\"tag\":\"select_static\"");
     expect(JSON.stringify(runningCard)).not.toContain("新会话");
     const terminalCall = apiClient.updateInteractiveCard.mock.calls.at(-1);
     expect(terminalCall).toBeDefined();

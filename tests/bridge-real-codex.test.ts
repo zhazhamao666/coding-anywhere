@@ -81,7 +81,7 @@ describe("BridgeService real runner bridge coverage", () => {
       ["exec", "--json", "-"],
       expect.objectContaining({
         cwd: bridgeRootCwd,
-        input: expect.stringContaining("Topic: 请先查看当前目录，然后运行测试"),
+        input: expect.stringContaining("Session: 请先查看当前目录，然后运行测试"),
         reject: false,
       }),
     );

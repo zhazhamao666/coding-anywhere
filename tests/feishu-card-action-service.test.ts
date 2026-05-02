@@ -4,14 +4,127 @@ import { FeishuCardActionService } from "../src/feishu-card-action-service.js";
 import type { BridgeReply, ProgressCardState } from "../src/types.js";
 
 describe("FeishuCardActionService", () => {
-  it("returns a toast for command callbacks and delay-updates the final card asynchronously", async () => {
-    const deferred = createDeferred<BridgeReply[]>();
+  it("inline-returns raw cards for navigation command callbacks", async () => {
     const replyCard = {
       schema: "2.0",
       header: {
         title: {
           tag: "plain_text",
-          content: "Current Project",
+          content: "当前项目",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [
+        { kind: "card", card: replyCard } as unknown as BridgeReply,
+      ]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const result = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_card_1",
+      token: "c-token-demo",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca project current",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca project current",
+    }));
+    expect(result).toMatchObject({
+      card: {
+        type: "raw",
+        data: replyCard,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("命令已提交");
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
+  });
+
+  it("returns a lightweight new-session toast without exposing the command", async () => {
+    const replyCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "当前项目已选择",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [
+        { kind: "card", card: replyCard } as unknown as BridgeReply,
+      ]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const result = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_new_card_1",
+      token: "c-new-token-1",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca new",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca new",
+    }));
+    expect(result).toMatchObject({
+      toast: {
+        type: "info",
+        content: "已准备新会话，下一条消息将开启新的 Codex 会话。",
+      },
+      card: {
+        type: "raw",
+        data: replyCard,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("/ca new");
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
+  });
+
+  it("inline-returns raw cards for status command callbacks", async () => {
+    const replyCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "运行状态",
         },
       },
       body: {
@@ -40,7 +153,9 @@ describe("FeishuCardActionService", () => {
       },
     };
     const bridgeService = {
-      handleMessage: vi.fn(() => deferred.promise),
+      handleMessage: vi.fn(async () => [
+        { kind: "card", card: replyCard } as unknown as BridgeReply,
+      ]),
     };
     const apiClient = createApiClientDouble();
 
@@ -57,46 +172,48 @@ describe("FeishuCardActionService", () => {
       action: {
         tag: "button",
         value: {
-          command: "/ca project current",
+          command: "/ca status",
           chatId: "oc_chat_current",
           cardId: "card-1",
         },
       },
     });
 
-    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca status",
+    }));
     expect(result).toMatchObject({
-      toast: {
-        type: "info",
+      card: {
+        type: "raw",
+        data: replyCard,
       },
     });
-
-    await vi.waitFor(() => {
-      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
-        channel: "feishu",
-        peerId: "ou_demo",
-        chatId: "oc_chat_current",
-        text: "/ca project current",
-      }));
-    });
-    expect(apiClient.updateCardKitCard).not.toHaveBeenCalled();
-
-    deferred.resolve([
-      { kind: "card", card: replyCard } as unknown as BridgeReply,
-    ]);
-
-    await vi.waitFor(() => {
-      expect(apiClient.delayUpdateInteractiveCard).toHaveBeenCalledWith({
-        token: "c-token-demo",
-        card: replyCard,
-      });
-    });
+    expect(JSON.stringify(result)).not.toContain("命令已提交");
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
     expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateCardKitCard).not.toHaveBeenCalled();
   });
 
-  it("does not start async command work before the toast response is returned", async () => {
+  it("inline-runs session command callbacks before returning the raw card", async () => {
+    const replyCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "当前会话已就绪",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
     const bridgeService = {
-      handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+      handleMessage: vi.fn(async () => [
+        { kind: "card", card: replyCard } as unknown as BridgeReply,
+      ]),
     };
     const apiClient = createApiClientDouble();
 
@@ -119,38 +236,41 @@ describe("FeishuCardActionService", () => {
     });
 
     expect(result).toMatchObject({
-      toast: {
-        type: "info",
+      card: {
+        type: "raw",
+        data: replyCard,
       },
     });
-    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
-
-    await vi.waitFor(() => {
-      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
-        channel: "feishu",
-        peerId: "ou_demo",
-        chatId: "oc_chat_current",
-        text: "/ca session",
-      }));
-    });
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca session",
+    }));
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
-  it("falls back to open_message_id patching when no interaction token is available", async () => {
-    const deferred = createDeferred<BridgeReply[]>();
+  it("inline-returns raw cards even when no interaction token is available", async () => {
     const replyCard = {
+      schema: "2.0",
       config: {
         update_multi: true,
       },
       header: {
         title: {
           tag: "plain_text",
-          content: "Current Project",
+          content: "当前项目",
         },
       },
-      elements: [],
+      body: {
+        elements: [],
+      },
     };
     const bridgeService = {
-      handleMessage: vi.fn(() => deferred.promise),
+      handleMessage: vi.fn(async () => [
+        { kind: "card", card: replyCard } as unknown as BridgeReply,
+      ]),
     };
     const apiClient = createApiClientDouble();
 
@@ -171,35 +291,27 @@ describe("FeishuCardActionService", () => {
       },
     });
 
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "/ca project current",
+    }));
     expect(result).toMatchObject({
-      toast: {
-        type: "info",
+      card: {
+        type: "raw",
+        data: replyCard,
       },
     });
-    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
-
-    await vi.waitFor(() => {
-      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
-        channel: "feishu",
-        peerId: "ou_demo",
-        chatId: "oc_chat_current",
-        text: "/ca project current",
-      }));
-    });
-
-    deferred.resolve([
-      { kind: "card", card: replyCard } as unknown as BridgeReply,
-    ]);
-
-    await vi.waitFor(() => {
-      expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith("om_callback_1", replyCard);
-    });
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
-  it("falls back to open_chat_id when command callbacks omit chatId in action value", async () => {
-    const deferred = createDeferred<BridgeReply[]>();
+  it("inline-returns fallback result cards when command callbacks omit chatId in action value", async () => {
     const bridgeService = {
-      handleMessage: vi.fn(() => deferred.promise),
+      handleMessage: vi.fn(async () => [
+        { kind: "system", text: "[ca] current project: fallback" } as BridgeReply,
+      ]),
     };
     const apiClient = createApiClientDouble();
 
@@ -221,44 +333,32 @@ describe("FeishuCardActionService", () => {
       },
     });
 
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_group_fallback",
+      text: "/ca project current",
+    }));
     expect(result).toMatchObject({
-      toast: {
-        type: "info",
-      },
-    });
-    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
-
-    await vi.waitFor(() => {
-      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
-        channel: "feishu",
-        peerId: "ou_demo",
-        chatId: "oc_group_fallback",
-        text: "/ca project current",
-      }));
-    });
-
-    deferred.resolve([
-      { kind: "system", text: "[ca] current project: fallback" } as BridgeReply,
-    ]);
-
-    await vi.waitFor(() => {
-      expect(apiClient.delayUpdateInteractiveCard).toHaveBeenCalledWith({
-        token: "c-token-chat-fallback",
-        card: expect.objectContaining({
+      card: {
+        type: "raw",
+        data: expect.objectContaining({
           header: expect.objectContaining({
             title: expect.objectContaining({
               content: "命令结果",
             }),
           }),
         }),
-      });
+      },
     });
+    expect(JSON.stringify(result)).toContain("[ca] current project: fallback");
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
   it("does not treat Feishu open_chat_id as a group context for p2p command callbacks", async () => {
-    const deferred = createDeferred<BridgeReply[]>();
     const bridgeService = {
-      handleMessage: vi.fn(() => deferred.promise),
+      handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
     };
     const apiClient = createApiClientDouble();
 
@@ -267,7 +367,7 @@ describe("FeishuCardActionService", () => {
       apiClient: apiClient as any,
     });
 
-    await service.handleAction({
+    const result = await service.handleAction({
       open_id: "ou_demo",
       open_chat_id: "oc_callback_dm_chat",
       open_message_id: "om_callback_1",
@@ -281,27 +381,31 @@ describe("FeishuCardActionService", () => {
       },
     });
 
-    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
-
-    await vi.waitFor(() => {
-      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
-        channel: "feishu",
-        peerId: "ou_demo",
-        chatType: "p2p",
-        text: "/ca thread list-current",
-      }));
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatType: "p2p",
+      text: "/ca thread list-current",
+    }));
+    const handleMessageCalls = bridgeService.handleMessage.mock.calls as unknown as Array<[{
+      chatId?: string;
+    }]>;
+    const messageInput = handleMessageCalls[0]![0];
+    expect(messageInput?.chatId).toBeUndefined();
+    expect(result).toMatchObject({
+      card: {
+        type: "raw",
+      },
     });
-
-    deferred.resolve([]);
-    await vi.waitFor(() => {
-      expect(apiClient.delayUpdateInteractiveCard).toHaveBeenCalled();
-    });
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
-  it("wraps system replies in a fallback patched result card when no interaction token is available", async () => {
-    const deferred = createDeferred<BridgeReply[]>();
+  it("wraps system replies in an inline raw result card when no interaction token is available", async () => {
     const bridgeService = {
-      handleMessage: vi.fn(() => deferred.promise),
+      handleMessage: vi.fn(async () => [
+        { kind: "system", text: "[ca] current project: none" } as BridgeReply,
+      ]),
     };
     const apiClient = createApiClientDouble();
     const service = new FeishuCardActionService({
@@ -321,32 +425,21 @@ describe("FeishuCardActionService", () => {
     });
 
     expect(result).toMatchObject({
-      toast: {
-        type: "info",
-      },
-    });
-
-    deferred.resolve([
-      { kind: "system", text: "[ca] current project: none" } as BridgeReply,
-    ]);
-
-    await vi.waitFor(() => {
-      expect(apiClient.updateInteractiveCard).toHaveBeenCalledWith(
-        "om_system_1",
-        expect.objectContaining({
+      card: {
+        type: "raw",
+        data: expect.objectContaining({
           header: expect.objectContaining({
             title: expect.objectContaining({
               content: "命令结果",
             }),
           }),
         }),
-      );
+      },
     });
-
-    const patchedCall = apiClient.updateInteractiveCard.mock.calls.at(-1) as [string, Record<string, unknown>] | undefined;
-    const patchedCard = patchedCall?.[1];
-    expect(JSON.stringify(patchedCard)).toContain("[ca] current project: none");
-    expect(JSON.stringify(patchedCard)).toContain("\"command\":\"/ca\"");
+    expect(JSON.stringify(result)).toContain("[ca] current project: none");
+    expect(JSON.stringify(result)).toContain("\"command\":\"/ca\"");
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
   it("inline-replaces the current session card when plan mode is toggled on", async () => {
@@ -655,32 +748,21 @@ describe("FeishuCardActionService", () => {
     });
   });
 
-  it("passes desktop completion surface context through to continueDesktopThread and returns the refreshed card", async () => {
-    const replyCard = {
-      schema: "2.0",
-      header: {
-        title: {
-          tag: "plain_text",
-          content: "线程已切换",
-        },
-      },
-      body: {
-        elements: [],
-      },
-    };
+  it("returns an unsupported card for legacy Feishu topic continuation mode", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => []),
       continueDesktopThread: vi.fn(async () => ({
         reply: {
-          kind: "card",
-          card: replyCard,
+          kind: "system",
+          text: "[ca] 当前不支持飞书主题入口。请在 DM 或已绑定项目群主时间线继续使用。",
         },
       })),
     };
+    const apiClient = createApiClientDouble();
 
     const service = new FeishuCardActionService({
       bridgeService: bridgeService as any,
-      apiClient: createApiClientDouble() as any,
+      apiClient: apiClient as any,
     });
 
     const result = await service.handleAction({
@@ -712,12 +794,22 @@ describe("FeishuCardActionService", () => {
     expect(result).toMatchObject({
       card: {
         type: "raw",
-        data: replyCard,
+        data: expect.objectContaining({
+          header: expect.objectContaining({
+            title: expect.objectContaining({
+              content: "继续入口不可用",
+            }),
+          }),
+        }),
       },
     });
+    expect(JSON.stringify(result)).toContain("不支持飞书主题入口");
+    expect(apiClient.replyInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
-  it("posts the thread-switched card into the linked topic when continueDesktopThread returns a handoff result", async () => {
+  it("does not post legacy topicReply handoff results for project-group continuation", async () => {
     const statusCard = {
       schema: "2.0",
       header: {
@@ -779,13 +871,16 @@ describe("FeishuCardActionService", () => {
       },
     });
 
-    expect(apiClient.replyInteractiveCard).toHaveBeenCalledWith("om_topic_new", targetCard);
     expect(result).toMatchObject({
       card: {
         type: "raw",
         data: statusCard,
       },
     });
+    expect(apiClient.replyInteractiveCard).not.toHaveBeenCalledWith("om_topic_new", targetCard);
+    expect(apiClient.replyInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
   it("submits a plan form via a fresh progress message instead of patching the clicked card", async () => {
@@ -869,14 +964,13 @@ describe("FeishuCardActionService", () => {
     );
   });
 
-  it("acks /ca new with a toast and delay-updates the original card after the new thread is created", async () => {
-    const deferred = createDeferred<BridgeReply[]>();
-    const sessionCard = {
+  it("acks /ca new with a toast and inline-returns the project entry card", async () => {
+    const projectEntryCard = {
       schema: "2.0",
       header: {
         title: {
           tag: "plain_text",
-          content: "当前会话已就绪",
+          content: "当前项目已选择",
         },
       },
       body: {
@@ -884,12 +978,9 @@ describe("FeishuCardActionService", () => {
       },
     };
     const bridgeService = {
-      handleMessage: vi.fn(async (input: any) => {
-        if (input.text === "/ca session") {
-          return [{ kind: "card", card: sessionCard } as unknown as BridgeReply];
-        }
-        return deferred.promise;
-      }),
+      handleMessage: vi.fn(async () => [
+        { kind: "card", card: projectEntryCard } as unknown as BridgeReply,
+      ]),
     };
     const apiClient = createApiClientDouble();
 
@@ -914,37 +1005,20 @@ describe("FeishuCardActionService", () => {
     expect(result).toMatchObject({
       toast: {
         type: "info",
+        content: "已准备新会话，下一条消息将开启新的 Codex 会话。",
+      },
+      card: {
+        type: "raw",
+        data: projectEntryCard,
       },
     });
-
-    deferred.resolve([
-      { kind: "system", text: "[ca] thread switched to thread-created" } as BridgeReply,
-    ]);
-
-    await vi.waitFor(() => {
-      expect(apiClient.delayUpdateInteractiveCard).toHaveBeenCalledWith({
-        token: "c-new-token-1",
-        card: sessionCard,
-      });
-    });
+    expect(JSON.stringify(result)).not.toContain("/ca new");
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
     expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
-  it("delay-updates risky thread commands when an interaction token is available", async () => {
-    const deferred = createDeferred<BridgeReply[]>();
+  it("inline-returns raw cards for thread switch callbacks", async () => {
     const replyCard = {
-      schema: "2.0",
-      header: {
-        title: {
-          tag: "plain_text",
-          content: "线程已切换",
-        },
-      },
-      body: {
-        elements: [],
-      },
-    };
-    const sessionCard = {
       schema: "2.0",
       header: {
         title: {
@@ -957,12 +1031,9 @@ describe("FeishuCardActionService", () => {
       },
     };
     const bridgeService = {
-      handleMessage: vi.fn(async (input: any) => {
-        if (input.text === "/ca session") {
-          return [{ kind: "card", card: sessionCard } as unknown as BridgeReply];
-        }
-        return deferred.promise;
-      }),
+      handleMessage: vi.fn(async () => [
+        { kind: "card", card: replyCard } as unknown as BridgeReply,
+      ]),
     };
     const apiClient = createApiClientDouble();
 
@@ -985,27 +1056,33 @@ describe("FeishuCardActionService", () => {
     });
 
     expect(result).toMatchObject({
-      toast: {
-        type: "info",
+      card: {
+        type: "raw",
+        data: replyCard,
       },
     });
-
-    deferred.resolve([
-      { kind: "card", card: replyCard } as unknown as BridgeReply,
-    ]);
-
-    await vi.waitFor(() => {
-      expect(apiClient.delayUpdateInteractiveCard).toHaveBeenCalledWith({
-        token: "c-thread-switch-1",
-        card: sessionCard,
-      });
-    });
+    expect(JSON.stringify(result)).not.toContain("命令已提交");
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
+    expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
   it("preserves DM callback context even when Feishu provides open_chat_id", async () => {
-    const deferred = createDeferred<BridgeReply[]>();
+    const replyCard = {
+      schema: "2.0",
+      header: {
+        title: {
+          tag: "plain_text",
+          content: "项目列表",
+        },
+      },
+      body: {
+        elements: [],
+      },
+    };
     const bridgeService = {
-      handleMessage: vi.fn(() => deferred.promise),
+      handleMessage: vi.fn(async () => [
+        { kind: "card", card: replyCard } as unknown as BridgeReply,
+      ]),
     };
     const apiClient = createApiClientDouble();
 
@@ -1030,38 +1107,19 @@ describe("FeishuCardActionService", () => {
     });
 
     expect(result).toMatchObject({
-      toast: {
-        type: "info",
+      card: {
+        type: "raw",
+        data: replyCard,
       },
     });
-    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
-
-    await vi.waitFor(() => {
-      expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
-        channel: "feishu",
-        peerId: "ou_demo",
-        chatId: "oc_dm_card",
-        chatType: "p2p",
-        text: "/ca project list",
-      }));
-    });
-
-    deferred.resolve([
-      { kind: "system", text: "[ca] project list: ok" } as BridgeReply,
-    ]);
-
-    await vi.waitFor(() => {
-      expect(apiClient.delayUpdateInteractiveCard).toHaveBeenCalledWith({
-        token: "c-token-dm",
-        card: expect.objectContaining({
-          header: expect.objectContaining({
-            title: expect.objectContaining({
-              content: "命令结果",
-            }),
-          }),
-        }),
-      });
-    });
+    expect(bridgeService.handleMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_dm_card",
+      chatType: "p2p",
+      text: "/ca project list",
+    }));
+    expect(apiClient.delayUpdateInteractiveCard).not.toHaveBeenCalled();
   });
 
   it("passes group project bind buttons through the token-finalize command callback path", async () => {
@@ -1142,7 +1200,7 @@ describe("FeishuCardActionService", () => {
           await options?.onProgress?.(createSnapshot({
             status: "waiting",
             stage: "waiting",
-            preview: "等待继续当前计划线程",
+            preview: "等待继续当前计划",
           }));
           return new Promise<BridgeReply[]>(() => undefined);
         },

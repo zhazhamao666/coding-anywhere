@@ -92,10 +92,10 @@ function buildThreadRootMessage(title: string): string {
   return `[thread] ${title}`;
 }
 
-function buildNativeThreadBootstrapPrompt(title: string): string {
+function buildNativeThreadBootstrapPrompt(sessionLabel: string): string {
   return [
-    "Initialize a Codex thread for subsequent Feishu bridge messages.",
+    "Initialize a Codex session for subsequent Feishu bridge messages.",
     "Keep the response minimal.",
-    `Topic: ${title}`,
+    `Session: ${sessionLabel}`,
   ].join("\n");
 }

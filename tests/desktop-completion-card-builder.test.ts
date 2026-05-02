@@ -28,6 +28,8 @@ describe("desktop completion card builder", () => {
     expect(visibleText).toContain("桌面任务进行中");
     expect(visibleText).toContain("Alpha Project");
     expect(visibleText).toContain("修复桌面进行中卡");
+    expect(visibleText).toContain("**会话**：修复桌面进行中卡");
+    expect(visibleText).not.toContain("**线程**：修复桌面进行中卡");
     expect(visibleText).toContain("进行中");
     expect(visibleText).toContain("2026-04-22");
     expect(visibleText).toContain("Task 1 已 review 完，我现在补测试和文档。");
@@ -74,6 +76,8 @@ describe("desktop completion card builder", () => {
     expect(visibleText).toContain("桌面任务已完成");
     expect(visibleText).toContain("Alpha Project");
     expect(visibleText).toContain("修复桌面完成通知");
+    expect(visibleText).toContain("**会话**：修复桌面完成通知");
+    expect(visibleText).not.toContain("**线程**：修复桌面完成通知");
     expect(visibleText).toContain("已完成");
     expect(visibleText).toContain("2026-04-20");
     expect(visibleText).toContain("已完成桌面端通知卡的初版实现。");
@@ -142,18 +146,16 @@ describe("desktop completion card builder", () => {
     ]);
   });
 
-  it("uses the same Feishu-first primary label for existing-topic delivery and preserves thread context on all actions", () => {
+  it("uses the same Feishu-first primary label for project-group delivery without topic context", () => {
     const input: DesktopCompletionCardInput = {
-      mode: "thread",
+      mode: "project_group",
       status: "completed",
       projectName: "Gamma Project",
-      threadTitle: "沿用现有话题继续",
+      threadTitle: "群主时间线继续",
       completedAt: "2026-04-20T11:05:00.000Z",
-      summaryLines: ["已有话题里的完成通知应该提示继续当前话题。"],
-      threadId: "thread_native_topic_321",
-      chatId: "oc_group_topic_321",
-      surfaceType: "thread",
-      surfaceRef: "omt_topic_321",
+      summaryLines: ["完成通知应该提示继续当前项目群主时间线。"],
+      threadId: "thread_native_group_guard_321",
+      chatId: "oc_group_321",
     };
 
     const card = buildDesktopCompletionCard(input);
@@ -164,15 +166,19 @@ describe("desktop completion card builder", () => {
         label: "在飞书继续",
         type: "primary",
         value: expect.objectContaining({
-          mode: "thread",
-          threadId: "thread_native_topic_321",
+          mode: "project_group",
+          threadId: "thread_native_group_guard_321",
           chatType: "group",
-          chatId: "oc_group_topic_321",
-          surfaceType: "thread",
-          surfaceRef: "omt_topic_321",
+          chatId: "oc_group_321",
         }),
       }),
     ]);
+    expect(buttons[0]?.value).toEqual(
+      expect.not.objectContaining({
+        surfaceType: expect.anything(),
+        surfaceRef: expect.anything(),
+      }),
+    );
   });
 
   it("normalizes markdown-heavy multiline input to plain text while keeping the final result inline", () => {
@@ -218,13 +224,14 @@ describe("desktop completion card builder", () => {
 
   it("always shows 你离开前的会话 and falls back to the thread title when no recent user reminder exists", () => {
     const input: DesktopCompletionCardInput = {
-      mode: "thread",
+      mode: "project_group",
       status: "completed",
       projectName: "Fallback Project",
       threadTitle: "继续修复桌面通知",
       completedAt: "2026-04-20T11:12:00.000Z",
       summaryLines: ["这张卡应该总是带提醒区。"],
       threadId: "thread_native_fallback_987",
+      chatId: "oc_group_fallback_987",
     };
 
     const card = buildDesktopCompletionCard(input);

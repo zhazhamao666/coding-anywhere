@@ -43,6 +43,17 @@ describe("run delivery target persistence", () => {
       ownerOpenId: "ou_user",
       status: "warm",
     });
+    store.upsertProjectChat({
+      projectId: "proj-a",
+      chatId: "oc_chat_1",
+      groupMessageType: "thread",
+      title: "coding-anywhere",
+    });
+    store.bindCodexChat({
+      channel: "feishu",
+      chatId: "oc_chat_1",
+      codexThreadId: "thread-a",
+    });
   });
 
   afterEach(() => {
@@ -50,7 +61,7 @@ describe("run delivery target persistence", () => {
     rmSync(rootDir, { recursive: true, force: true });
   });
 
-  it("stores the thread delivery target for each run", async () => {
+  it("stores the group mainline delivery target for each run", async () => {
     const service = new BridgeService({
       store,
       runner: {
@@ -69,8 +80,6 @@ describe("run delivery target persistence", () => {
       channel: "feishu",
       peerId: "ou_user",
       chatId: "oc_chat_1",
-      surfaceType: "thread",
-      surfaceRef: "omt_1",
       text: "继续处理",
     });
 
@@ -79,8 +88,8 @@ describe("run delivery target persistence", () => {
       projectId: "proj-a",
       threadId: "thread-a",
       deliveryChatId: "oc_chat_1",
-      deliverySurfaceType: "thread",
-      deliverySurfaceRef: "omt_1",
+      deliverySurfaceType: null,
+      deliverySurfaceRef: null,
       sessionName: "thread-a",
     });
   });
@@ -90,8 +99,6 @@ describe("run delivery target persistence", () => {
       channel: "feishu",
       peerId: "ou_user",
       chatId: "oc_chat_1",
-      surfaceType: "thread",
-      surfaceRef: "omt_1",
       messageId: "om_image_1",
       resourceKey: "img_thread_1",
       localPath: "D:/assets/thread.png",
@@ -119,8 +126,6 @@ describe("run delivery target persistence", () => {
       channel: "feishu",
       peerId: "ou_user",
       chatId: "oc_chat_1",
-      surfaceType: "thread",
-      surfaceRef: "omt_1",
       text: "继续处理图片",
     });
 
@@ -143,16 +148,14 @@ describe("run delivery target persistence", () => {
       projectId: "proj-a",
       threadId: "thread-a",
       deliveryChatId: "oc_chat_1",
-      deliverySurfaceType: "thread",
-      deliverySurfaceRef: "omt_1",
+      deliverySurfaceType: null,
+      deliverySurfaceRef: null,
       sessionName: "thread-a",
     });
     expect(store.listPendingBridgeAssetsForSurface({
       channel: "feishu",
       peerId: "ou_user",
       chatId: "oc_chat_1",
-      surfaceType: "thread",
-      surfaceRef: "omt_1",
     })).toEqual([]);
   });
 });

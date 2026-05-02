@@ -8,8 +8,8 @@ const MAX_PROJECT_NAME_CHARS = 120;
 const MAX_THREAD_TITLE_CHARS = 160;
 const MAX_REMINDER_CHARS = 260;
 const MAX_REMINDER_COMPACT_CHARS = 140;
-const DEFAULT_SUMMARY_FALLBACK = "任务已经在桌面端完成，可继续在飞书追问或查看线程记录。";
-const DEFAULT_RUNNING_PROGRESS_FALLBACK = "桌面端正在继续执行该线程，完成后会在此更新结果。";
+const DEFAULT_SUMMARY_FALLBACK = "任务已经在桌面端完成，可继续在飞书追问或查看会话记录。";
+const DEFAULT_RUNNING_PROGRESS_FALLBACK = "桌面端正在继续执行当前会话，完成后会在此更新结果。";
 const DEFAULT_REMINDER_FALLBACK = "返回飞书继续当前会话。";
 const COMPACT_RESULT_MAX_CHARS = 1600;
 const MINIMAL_RESULT_MAX_CHARS = 900;
@@ -142,7 +142,7 @@ function buildOverviewMarkdown(input: DesktopCompletionCardInput): string {
   const lines = [
     `**${status === "running" ? "桌面任务进行中" : "桌面任务已完成"}**`,
     `**项目**：${input.projectName}`,
-    `**线程**：${input.threadTitle}`,
+    `**会话**：${input.threadTitle}`,
     `**状态**：${status === "running" ? "进行中" : "已完成"}`,
   ];
 

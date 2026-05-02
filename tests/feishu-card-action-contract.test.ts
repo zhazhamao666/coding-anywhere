@@ -3,6 +3,36 @@ import { describe, expect, it } from "vitest";
 import * as actionContract from "../src/feishu-card/action-contract.js";
 
 describe("feishu card action contract", () => {
+  it("classifies navigation commands as inline raw-card callbacks", () => {
+    const classifyCommandActionCallbackMode = (actionContract as any).classifyCommandActionCallbackMode;
+
+    expect(typeof classifyCommandActionCallbackMode).toBe("function");
+    expect(classifyCommandActionCallbackMode?.("/ca")).toBe("inline_raw_card");
+    expect(classifyCommandActionCallbackMode?.("/ca hub")).toBe("inline_raw_card");
+    expect(classifyCommandActionCallbackMode?.("/ca status")).toBe("inline_raw_card");
+    expect(classifyCommandActionCallbackMode?.("/ca project current")).toBe("inline_raw_card");
+    expect(classifyCommandActionCallbackMode?.("/ca project list")).toBe("inline_raw_card");
+    expect(classifyCommandActionCallbackMode?.("/ca project switch project-alpha")).toBe("inline_raw_card");
+    expect(classifyCommandActionCallbackMode?.("/ca session")).toBe("inline_raw_card");
+    expect(classifyCommandActionCallbackMode?.("/ca thread list-current")).toBe("inline_raw_card");
+    expect(classifyCommandActionCallbackMode?.("/ca thread switch thread-native-1")).toBe("inline_raw_card");
+  });
+
+  it("classifies new-session commands as inline card replacement with a lightweight toast", () => {
+    const classifyCommandActionCallbackMode = (actionContract as any).classifyCommandActionCallbackMode;
+
+    expect(typeof classifyCommandActionCallbackMode).toBe("function");
+    expect(classifyCommandActionCallbackMode?.("/ca new")).toBe("toast_with_raw_card");
+    expect(classifyCommandActionCallbackMode?.("/ca new   ")).toBe("toast_with_raw_card");
+  });
+
+  it("keeps non-navigation command callbacks on the async toast path", () => {
+    const classifyCommandActionCallbackMode = (actionContract as any).classifyCommandActionCallbackMode;
+
+    expect(typeof classifyCommandActionCallbackMode).toBe("function");
+    expect(classifyCommandActionCallbackMode?.("/ca thread create-current follow-up")).toBe("async_toast");
+  });
+
   it("builds command action values with surface context", () => {
     expect(actionContract.buildCommandActionValue({
       command: "/ca status",
@@ -98,6 +128,38 @@ describe("feishu card action contract", () => {
       threadId: "thread-native-1",
       mode: "dm",
       chatType: "p2p",
+    });
+
+    expect(actionContract.buildDesktopThreadActionValue("continue_desktop_thread", {
+      threadId: "thread-native-2",
+      mode: "project_group",
+      chatId: "oc_project_group",
+    })).toEqual({
+      actionKind: "continue_thread_action",
+      bridgeAction: "continue_desktop_thread",
+      threadId: "thread-native-2",
+      mode: "project_group",
+      chatType: "group",
+      chatId: "oc_project_group",
+    });
+  });
+
+  it("keeps legacy Feishu topic continuation values explicit for unsupported handling", () => {
+    expect(actionContract.buildDesktopThreadActionValue("continue_desktop_thread", {
+      threadId: "thread-native-topic",
+      mode: "thread",
+      chatId: "oc_project_group",
+      surfaceType: "thread",
+      surfaceRef: "omt_topic",
+    })).toEqual({
+      actionKind: "continue_thread_action",
+      bridgeAction: "continue_desktop_thread",
+      threadId: "thread-native-topic",
+      mode: "thread",
+      chatType: "group",
+      chatId: "oc_project_group",
+      surfaceType: "thread",
+      surfaceRef: "omt_topic",
     });
   });
 });

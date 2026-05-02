@@ -37,8 +37,9 @@ describe("ProjectThreadService", () => {
     );
     expect(runner.createThread).toHaveBeenCalledWith({
       cwd: "D:/repo",
-      prompt: expect.stringContaining("Topic: feishu-nav"),
+      prompt: expect.stringContaining("Session: feishu-nav"),
     });
+    expect(runner.createThread.mock.calls[0]?.[0].prompt).not.toContain("Topic:");
     expect(store.createCodexThread).toHaveBeenCalledWith(
       expect.objectContaining({
         threadId: "thread-native-1",

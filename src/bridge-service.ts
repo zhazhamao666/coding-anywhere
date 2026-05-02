@@ -62,6 +62,10 @@ import { SessionStore } from "./workspace/session-store.js";
 const MAX_CODEX_THREAD_SELECTION_ROWS = 12;
 const MAX_CODEX_THREAD_LIST_TITLE_CHARS = 80;
 const MAX_CODEX_THREAD_LIST_LINE_CHARS = 96;
+const FEISHU_TOPIC_SURFACE_UNAVAILABLE_TEXT =
+  "[ca] 当前不支持飞书主题入口。请在 DM 或已绑定项目群主时间线继续使用。";
+const FEISHU_TOPIC_CREATION_UNAVAILABLE_TEXT =
+  "[ca] 当前不支持创建飞书主题。请在已绑定项目群主时间线使用 /ca new 准备新的 Codex 会话，或使用 /ca thread switch <threadId> 切换到已有 Codex 会话。";
 
 interface BridgeRunner {
   createThread(
@@ -183,10 +187,6 @@ interface DmCodexCatalogSelection {
 
 interface DesktopThreadContinuationResult {
   reply: BridgeReply;
-  topicReply?: {
-    anchorMessageId: string;
-    reply: BridgeReply;
-  };
 }
 
 export class BridgeService {
@@ -211,9 +211,17 @@ export class BridgeService {
     surfaceType?: "thread";
     surfaceRef?: string;
   }): Promise<BridgeReply> {
+    if (this.isUnsupportedFeishuTopicSurface(input)) {
+      return {
+        kind: "system",
+        text: FEISHU_TOPIC_SURFACE_UNAVAILABLE_TEXT,
+      };
+    }
+
     const nextState = this.getSurfaceInteractionState(input);
     if (input.action === "toggle_plan_mode") {
       nextState.sessionMode = nextState.sessionMode === "plan_next_message" ? "normal" : "plan_next_message";
+      nextState.diagnosticsOpen = false;
     } else if (input.action === "open_diagnostics") {
       nextState.diagnosticsOpen = true;
     } else {
@@ -226,7 +234,7 @@ export class BridgeService {
       diagnosticsOpen: nextState.diagnosticsOpen,
     });
 
-    const [reply] = await this.handleMessage({
+    const [reply] = this.handleHubCommand({
       channel: input.channel,
       peerId: input.peerId,
       chatType: input.chatType,
@@ -250,24 +258,6 @@ export class BridgeService {
   }): DesktopCompletionRouteTarget {
     const validateTarget = input.routeValidator ?? (() => true);
     const inferredDmPeerId = this.resolveDesktopCompletionDmPeer(input.threadId);
-    const existingSurface = this.dependencies.store.getPreferredCodexThreadBinding(input.threadId);
-    if (existingSurface?.chatId && existingSurface.feishuThreadId && existingSurface.anchorMessageId) {
-      const threadTarget: DesktopCompletionRouteTarget = {
-        mode: "thread",
-        chatId: existingSurface.chatId,
-        surfaceRef: existingSurface.feishuThreadId,
-        anchorMessageId: existingSurface.anchorMessageId,
-      };
-      if (validateTarget(threadTarget)) {
-        return threadTarget;
-      }
-
-      return buildDesktopCompletionDmTarget({
-        ...input,
-        inferredDmPeerId,
-      });
-    }
-
     const groupTarget = this.resolveDesktopCompletionProjectGroupRoute(input.threadId);
     if (groupTarget) {
       if (validateTarget(groupTarget)) {
@@ -297,7 +287,12 @@ export class BridgeService {
     surfaceRef?: string;
   }): Promise<DesktopThreadContinuationResult> {
     if (input.mode === "thread") {
-      return this.continueDesktopThreadInTopic(input);
+      return {
+        reply: {
+          kind: "system",
+          text: FEISHU_TOPIC_SURFACE_UNAVAILABLE_TEXT,
+        },
+      };
     }
 
     if (input.mode === "project_group") {
@@ -334,69 +329,6 @@ export class BridgeService {
           channel: input.channel,
           peerId: input.peerId,
           chatType: input.chatType,
-          text: `${BRIDGE_COMMAND_PREFIX} thread switch ${selection.thread.threadId}`,
-        },
-        selection.project,
-        selection.thread,
-        selectSwitchCardConversation(recentConversation),
-      ),
-    };
-  }
-
-  private async continueDesktopThreadInTopic(input: {
-    channel: string;
-    peerId: string;
-    threadId: string;
-    chatType?: "p2p" | "group";
-    chatId?: string;
-    surfaceType?: "thread";
-    surfaceRef?: string;
-  }): Promise<DesktopThreadContinuationResult> {
-    const selection = this.lookupCatalogThreadSelection(input.threadId);
-    if (!selection) {
-      return {
-        reply: this.dependencies.codexCatalog?.getThread(input.threadId)
-          ? this.buildCodexProjectUnavailableCardReply({
-              channel: input.channel,
-              peerId: input.peerId,
-              text: `${BRIDGE_COMMAND_PREFIX} session`,
-            })
-          : this.buildCodexThreadUnavailableCardReply({
-              channel: input.channel,
-              peerId: input.peerId,
-              text: `${BRIDGE_COMMAND_PREFIX} session`,
-            }),
-      };
-    }
-
-    if (!input.chatId || input.surfaceType !== "thread" || !input.surfaceRef) {
-      return {
-        reply: {
-          kind: "system",
-          text: "[ca] desktop completion topic surface is unavailable",
-        },
-      };
-    }
-
-    this.dependencies.store.rebindCodexThreadSurface({
-      chatId: input.chatId,
-      feishuThreadId: input.surfaceRef,
-      threadId: selection.thread.threadId,
-      sessionName: selection.thread.threadId,
-      title: selection.thread.title,
-      status: "warm",
-    });
-    const recentConversation = this.dependencies.codexCatalog?.listRecentConversation(selection.thread.threadId) ?? [];
-
-    return {
-      reply: this.buildCodexThreadSwitchedCardReply(
-        {
-          channel: input.channel,
-          peerId: input.peerId,
-          chatType: input.chatType,
-          chatId: input.chatId,
-          surfaceType: "thread",
-          surfaceRef: input.surfaceRef,
           text: `${BRIDGE_COMMAND_PREFIX} thread switch ${selection.thread.threadId}`,
         },
         selection.project,
@@ -480,6 +412,13 @@ export class BridgeService {
   public async handleMessage(input: BridgeMessageInput, options?: {
     onProgress?: (snapshot: ProgressCardState) => Promise<void> | void;
   }): Promise<BridgeReply[]> {
+    if (this.isUnsupportedFeishuTopicSurface(input)) {
+      return [{
+        kind: "system",
+        text: FEISHU_TOPIC_SURFACE_UNAVAILABLE_TEXT,
+      }];
+    }
+
     const routed = routeBridgeInput(input.text);
 
     if (routed.kind === "command") {
@@ -947,6 +886,13 @@ export class BridgeService {
       surfaceRef: input.surfaceRef,
       text: `${BRIDGE_COMMAND_PREFIX} session`,
     };
+    if (this.isUnsupportedFeishuTopicSurface(sessionInput)) {
+      return {
+        kind: "system",
+        text: FEISHU_TOPIC_SURFACE_UNAVAILABLE_TEXT,
+      };
+    }
+
     const resolved = this.resolveContext(sessionInput);
     const target = this.resolveCodexPreferenceTarget(sessionInput, resolved);
     const effectivePreferences = this.resolveEffectiveCodexPreferences(sessionInput, resolved);
@@ -989,6 +935,13 @@ export class BridgeService {
   }, options?: {
     onProgress?: (snapshot: ProgressCardState) => Promise<void> | void;
   }): Promise<BridgeReply[]> {
+    if (this.isUnsupportedFeishuTopicSurface(input)) {
+      return [{
+        kind: "system",
+        text: FEISHU_TOPIC_SURFACE_UNAVAILABLE_TEXT,
+      }];
+    }
+
     const interaction = this.dependencies.store.getPendingPlanInteraction(input.interactionId);
     if (!interaction || interaction.status !== "pending") {
       return [{
@@ -1048,76 +1001,17 @@ export class BridgeService {
   ): Promise<BridgeReply[]> {
     switch (commandName) {
       case "help":
-      case "hub":
+      case "hub": {
+        this.closeSurfaceDiagnostics(input);
         return this.handleHubCommand(input);
+      }
       case "status": {
         const resolved = this.tryResolveContext(input);
         const currentRun = this.findCurrentRunForResolved(resolved);
         return [this.buildRunStatusCardReply(input, resolved, currentRun)];
       }
       case "new": {
-        const resolved = this.resolveContext(input);
-        const effectivePreferences = this.resolveEffectiveCodexPreferences(input, resolved);
-        const currentThread = input.surfaceType === "thread" && input.chatId && input.surfaceRef
-          ? this.dependencies.store.getCodexThreadBySurface(input.chatId, input.surfaceRef)
-          : undefined;
-        const createThreadInput: {
-          cwd: string;
-          prompt: string;
-          model?: string;
-          reasoningEffort?: CodexReasoningEffort;
-          speed?: CodexSpeed;
-        } = {
-          cwd: resolved.context.cwd,
-          prompt: buildNativeThreadBootstrapPrompt(currentThread?.title ?? resolved.threadId ?? resolved.sessionName),
-        };
-        if (effectivePreferences.source !== "default") {
-          createThreadInput.model = effectivePreferences.model;
-          createThreadInput.reasoningEffort = effectivePreferences.reasoningEffort;
-        }
-        if (effectivePreferences.source !== "default" || effectivePreferences.speed === "fast") {
-          createThreadInput.speed = effectivePreferences.speed;
-        }
-        const created = await this.dependencies.runner.createThread(createThreadInput);
-        this.dependencies.store.upsertCodexThreadPreference({
-          threadId: created.threadId,
-          model: effectivePreferences.model,
-          reasoningEffort: effectivePreferences.reasoningEffort,
-          speed: effectivePreferences.speed,
-        });
-
-        if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
-          this.dependencies.store.rebindCodexThreadSurface({
-            chatId: input.chatId,
-            feishuThreadId: input.surfaceRef,
-            threadId: created.threadId,
-            sessionName: created.threadId,
-            title: resolved.threadId ?? resolved.sessionName,
-            status: "warm",
-          });
-          return [this.buildResolvedSessionCardReply(input, this.resolveContext(input))];
-        }
-
-        if (this.isGroupMainlineContext(input) && input.chatId) {
-          const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
-          if (!projectChat) {
-            throw new Error("PROJECT_CHAT_CONTEXT_REQUIRED");
-          }
-
-          this.dependencies.store.bindCodexChat({
-            channel: input.channel,
-            chatId: input.chatId,
-            codexThreadId: created.threadId,
-          });
-          return [this.buildResolvedSessionCardReply(input, this.resolveContext(input))];
-        }
-
-        this.dependencies.store.bindCodexWindow({
-          channel: input.channel,
-          peerId: input.peerId,
-          codexThreadId: created.threadId,
-        });
-        return [this.buildResolvedSessionCardReply(input, this.resolveContext(input))];
+        return [this.prepareNewSession(input)];
       }
       case "stop": {
         const resolved = this.tryResolveContext(input);
@@ -1160,6 +1054,7 @@ export class BridgeService {
         }];
       }
       case "session": {
+        this.closeSurfaceDiagnostics(input);
         return this.handleHubCommand(input);
       }
       case "logs": {
@@ -1171,8 +1066,68 @@ export class BridgeService {
       case "thread":
         return this.handleThreadCommand(input, args);
       default:
+        this.closeSurfaceDiagnostics(input);
         return this.handleHubCommand(input);
     }
+  }
+
+  private prepareNewSession(input: BridgeMessageInput): BridgeReply {
+    const resolved = this.tryResolveContext(input);
+    if (resolved) {
+      this.inheritCurrentPreferencesForNextSession(input, resolved);
+    }
+    this.dependencies.store.deleteSurfaceInteractionState(this.normalizeSurfaceIdentity(input));
+
+    if (this.isDmContext(input)) {
+      const codexSelection = this.lookupDmCodexSelection(input);
+      if (codexSelection) {
+        this.dependencies.store.setCodexProjectSelection({
+          channel: input.channel,
+          peerId: input.peerId,
+          projectKey: codexSelection.project.projectKey,
+        });
+      }
+      const selectedProject = codexSelection?.project ?? this.lookupDmSelectedProject(input);
+      this.dependencies.store.clearCodexWindowBinding(input.channel, input.peerId);
+      return this.buildNewSessionPreparedCardReply(input, selectedProject?.displayName);
+    }
+
+    if (this.isGroupMainlineContext(input) && input.chatId) {
+      const projectChat = this.dependencies.store.getProjectChatByChatId(input.chatId);
+      if (!projectChat) {
+        return this.buildProjectSelectionEntryCardReply(input);
+      }
+      const project = this.dependencies.store.getProject(projectChat.projectId);
+      this.dependencies.store.clearCodexChatBinding(input.channel, input.chatId);
+      return this.buildNewSessionPreparedCardReply(input, project?.name ?? projectChat.projectId);
+    }
+
+    return this.buildProjectSelectionEntryCardReply(input);
+  }
+
+  private buildNewSessionPreparedCardReply(
+    input: BridgeMessageInput,
+    projectLabel?: string,
+  ): BridgeReply {
+    if (!projectLabel) {
+      return this.buildProjectSelectionEntryCardReply(input);
+    }
+
+    return this.buildProjectScopedEntryCardReply(input, projectLabel);
+  }
+
+  private inheritCurrentPreferencesForNextSession(input: BridgeMessageInput, resolved: ResolvedContext): void {
+    const effectivePreferences = this.resolveEffectiveCodexPreferences(input, resolved);
+    if (effectivePreferences.source === "default") {
+      return;
+    }
+
+    this.dependencies.store.upsertCodexSurfacePreference({
+      ...this.normalizeSurfaceIdentity(input),
+      model: effectivePreferences.model,
+      reasoningEffort: effectivePreferences.reasoningEffort,
+      speed: effectivePreferences.speed,
+    });
   }
 
   private handleHubCommand(input: BridgeMessageInput): BridgeReply[] {
@@ -1384,9 +1339,9 @@ export class BridgeService {
     args: string[],
   ): Promise<BridgeReply[]> {
     const [action = "help", ...restArgs] = args;
-    const [projectId, ...rest] = restArgs;
+    const [projectId] = restArgs;
     const threadCommandHelp =
-      `[ca] thread commands: ${BRIDGE_COMMAND_PREFIX} thread create <projectId> <title>, ${BRIDGE_COMMAND_PREFIX} thread create-current <title>, ${BRIDGE_COMMAND_PREFIX} thread list <projectId>, ${BRIDGE_COMMAND_PREFIX} thread list-current`;
+      `[ca] thread commands: ${BRIDGE_COMMAND_PREFIX} thread switch <threadId>, ${BRIDGE_COMMAND_PREFIX} thread list <projectId>, ${BRIDGE_COMMAND_PREFIX} thread list-current`;
 
     if (action === "switch" && this.dependencies.codexCatalog) {
       const threadId = restArgs[0];
@@ -1412,6 +1367,7 @@ export class BridgeService {
           peerId: input.peerId,
           thread,
         });
+        this.closeSurfaceDiagnostics(input);
 
         const recentConversation = this.dependencies.codexCatalog.listRecentConversation(thread.threadId);
         return [
@@ -1424,24 +1380,11 @@ export class BridgeService {
         ];
       }
 
-      if (input.surfaceType === "thread" && input.chatId && input.surfaceRef) {
-        this.dependencies.store.rebindCodexThreadSurface({
-          chatId: input.chatId,
-          feishuThreadId: input.surfaceRef,
-          threadId: thread.threadId,
-          sessionName: thread.threadId,
-          title: thread.title,
-          status: "warm",
-        });
-        const recentConversation = this.dependencies.codexCatalog.listRecentConversation(thread.threadId);
-        return [
-          this.buildCurrentCodexSessionCardReply(
-            input,
-            project,
-            thread,
-            selectSwitchCardConversation(recentConversation),
-          ),
-        ];
+      if (this.isUnsupportedFeishuTopicSurface(input)) {
+        return [{
+          kind: "system",
+          text: FEISHU_TOPIC_SURFACE_UNAVAILABLE_TEXT,
+        }];
       }
 
       if (this.isGroupMainlineContext(input) && input.chatId) {
@@ -1458,6 +1401,7 @@ export class BridgeService {
           chatId: projectChat.chatId,
           thread,
         });
+        this.closeSurfaceDiagnostics(input);
         const recentConversation = this.dependencies.codexCatalog.listRecentConversation(thread.threadId);
         return [
           this.buildCodexThreadSwitchedCardReply(
@@ -1511,40 +1455,18 @@ export class BridgeService {
 
     const isCreateCurrent = action === "create-current";
     const isCreate = action === "create";
-    const hasTitle = isCreateCurrent ? restArgs.length > 0 : rest.length > 0;
-    if ((!isCreateCurrent && !isCreate) || (isCreate && !projectId) || !hasTitle) {
+    if (isCreateCurrent || isCreate) {
+      return [{
+        kind: "system",
+        text: FEISHU_TOPIC_CREATION_UNAVAILABLE_TEXT,
+      }];
+    }
+
+    if (!isCreateCurrent && !isCreate) {
       return [{ kind: "system", text: threadCommandHelp }];
     }
 
-    const projectChat = isCreateCurrent
-      ? this.isGroupMainlineContext(input) && input.chatId
-        ? this.dependencies.store.getProjectChatByChatId(input.chatId)
-        : undefined
-      : this.dependencies.store.getProjectChat(projectId);
-
-    if (!projectChat) {
-      throw new Error(isCreateCurrent ? "PROJECT_CHAT_CONTEXT_REQUIRED" : "PROJECT_CHAT_NOT_CONFIGURED");
-    }
-    if (!this.dependencies.projectThreadService) {
-      throw new Error("PROJECT_THREAD_SERVICE_NOT_CONFIGURED");
-    }
-
-    const effectiveProjectId = isCreateCurrent ? projectChat.projectId : projectId;
-    const project = this.dependencies.store.getProject(effectiveProjectId);
-    if (!project) {
-      throw new Error("PROJECT_NOT_REGISTERED");
-    }
-    const titleParts = isCreateCurrent ? restArgs : rest;
-    const title = titleParts.join(" ").trim();
-    const thread = await this.dependencies.projectThreadService.createThread({
-      projectId: effectiveProjectId,
-      cwd: project.cwd,
-      chatId: projectChat.chatId,
-      ownerOpenId: input.peerId,
-      title,
-    });
-
-    return [this.buildThreadCreatedCardReply(thread)];
+    return [{ kind: "system", text: threadCommandHelp }];
   }
 
   private resolveContext(input: BridgeMessageInput): ResolvedContext {
@@ -1803,8 +1725,8 @@ export class BridgeService {
           {
             title: "下一步",
             items: [
-              "可以先查看这个项目的线程列表，再切换到已有线程。",
-              "也可以直接在本群发送普通消息，在该项目下创建新的 native Codex thread。",
+              "可以先查看这个项目的会话列表，再切换到已有会话。",
+              "也可以直接在本群发送普通消息，在该项目下创建新的 native Codex 会话。",
             ],
           },
         ],
@@ -1819,7 +1741,7 @@ export class BridgeService {
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
           },
           {
-            label: "线程列表",
+            label: "会话列表",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
           {
@@ -1937,7 +1859,7 @@ export class BridgeService {
           : [
               {
                 title: "暂无可浏览项目",
-                items: ["当前 Codex 线程库中没有可用项目。"],
+                items: ["当前 Codex 会话库中没有可用项目。"],
               },
             ],
         rows: projects.map(project => {
@@ -1958,7 +1880,7 @@ export class BridgeService {
           return {
             title: project.displayName,
             lines: [
-              `线程：${project.activeThreadCount}/${project.threadCount}`,
+              `会话：${project.activeThreadCount}/${project.threadCount}`,
               `最近更新：${project.lastUpdatedAt}`,
               `绑定：${formatGroupProjectBinding(binding)}`,
             ],
@@ -2004,16 +1926,16 @@ export class BridgeService {
     return {
       kind: "card",
       card: buildBridgeHubCard({
-        title: "线程列表",
+        title: "会话列表",
         summaryLines: [
-          "**视图**：线程列表",
+          "**视图**：会话列表",
           `**当前项目**：${projectId}`,
-          `**线程数**：${threads.length}`,
+          `**会话数**：${threads.length}`,
         ],
         sections: threads.length > 0
           ? [
               {
-                title: "线程列表",
+                title: "会话列表",
                 items: threads.map(
                   thread => `${thread.threadId} · ${thread.title} · status=${thread.status}`,
                 ),
@@ -2021,8 +1943,8 @@ export class BridgeService {
             ]
           : [
               {
-                title: "暂无线程",
-                items: ["当前项目还没有已注册的线程。"],
+                title: "暂无会话",
+                items: ["当前项目还没有已注册的会话。"],
               },
             ],
         actions: [
@@ -2036,7 +1958,7 @@ export class BridgeService {
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
           },
           {
-            label: "线程列表",
+            label: "会话列表",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
         ],
@@ -2065,7 +1987,7 @@ export class BridgeService {
           {
             title: "当前项目",
             items: [
-              "可直接查看线程列表并切换到已有线程。",
+              "可直接查看会话列表并切换到已有会话。",
               "也可以直接在本群发送普通消息，在当前项目下创建新的 native Codex thread。",
             ],
           },
@@ -2077,7 +1999,7 @@ export class BridgeService {
             value: this.buildCardActionValue({ chatId: input.chatId }, BRIDGE_COMMAND_PREFIX),
           },
           {
-            label: "线程列表",
+            label: "会话列表",
             value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
           {
@@ -2100,19 +2022,19 @@ export class BridgeService {
     return {
       kind: "card",
       card: buildBridgeHubCard({
-        title: "线程已创建",
+        title: "会话已创建",
         summaryLines: [
-          "**视图**：线程已创建",
+          "**视图**：会话已创建",
           `**当前项目**：${input.projectId}`,
-          `**当前线程**：${formatCurrentThreadLabel(input.title, input.threadId)}`,
-          `线程 ID：${input.threadId}`,
+          `**当前会话**：${formatCurrentThreadLabel(input.title, input.threadId)}`,
+          `Codex 线程 ID：${input.threadId}`,
           `**群聊**：${input.chatId}`,
           `**状态**：${input.status ?? "provisioned"}`,
         ],
         sections: [
           {
             title: "下一步",
-            items: ["可以返回导航，或继续查看当前项目和线程列表。"],
+            items: ["可以返回导航，或继续查看当前项目和会话列表。"],
           },
         ],
         actions: [
@@ -2126,111 +2048,12 @@ export class BridgeService {
             value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} project current`),
           },
           {
-            label: "线程列表",
+            label: "会话列表",
             value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
           {
             label: "新会话",
             value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} new`),
-          },
-        ],
-      }),
-    };
-  }
-
-  private buildCodexThreadLinkedCardReply(
-    input: BridgeMessageInput,
-    project: CodexCatalogProject,
-    linkedThread: {
-      threadId: string;
-      chatId: string;
-      title: string;
-      status?: string;
-    },
-    recentConversation: CodexCatalogConversationItem[],
-  ): BridgeReply {
-    const conversationItems = recentConversation.length > 0
-      ? recentConversation.map(item => this.formatConversationPreviewItem(item))
-      : ["暂未读取到可展示的最近对话。"];
-
-    return {
-      kind: "card",
-      card: buildBridgeHubCard({
-        title: "线程已绑定",
-        summaryLines: [
-          "**视图**：线程已绑定",
-          `**当前项目**：${project.displayName}`,
-          `**路径**：${project.cwd}`,
-          `**当前线程**：${formatCurrentThreadLabel(linkedThread.title, linkedThread.threadId)}`,
-          `线程 ID：${linkedThread.threadId}`,
-          `**群聊**：${linkedThread.chatId}`,
-          `**状态**：${linkedThread.status ?? "provisioned"}`,
-        ],
-        sections: [
-          {
-            title: "最近对话",
-            items: conversationItems,
-          },
-          {
-            title: "下一步",
-            items: [
-              "已在本群创建新的飞书话题，并把它绑定到这个现有 Codex 线程。",
-              "进入新话题后直接发送普通消息，后续内容会继续进入这个 Codex 线程。",
-            ],
-          },
-        ],
-        actions: [
-          {
-            label: "导航",
-            type: "primary",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), BRIDGE_COMMAND_PREFIX),
-          },
-          {
-            label: "当前项目",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
-          },
-          {
-            label: "线程列表",
-            value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
-          },
-        ],
-      }),
-    };
-  }
-
-  private buildDesktopContinuationMovedToTopicCardReply(input: {
-    chatId: string;
-    threadId: string;
-    threadTitle: string;
-  }): BridgeReply {
-    return {
-      kind: "card",
-      card: buildBridgeHubCard({
-        title: "已在飞书继续",
-        summaryLines: [
-          "**视图**：已在飞书继续",
-          `**当前线程**：${formatCurrentThreadLabel(input.threadTitle, input.threadId)}`,
-          "已把这个线程接到新的飞书话题。",
-        ],
-        sections: [
-          {
-            title: "下一步",
-            items: ["已在新的飞书话题里发送“线程已切换”卡，请进入该话题继续。"],
-          },
-        ],
-        actions: [
-          {
-            label: "导航",
-            type: "primary",
-            value: this.buildCardActionValue({ chatId: input.chatId }, BRIDGE_COMMAND_PREFIX),
-          },
-          {
-            label: "当前项目",
-            value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} project current`),
-          },
-          {
-            label: "线程列表",
-            value: this.buildCardActionValue({ chatId: input.chatId }, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
         ],
       }),
@@ -2253,13 +2076,13 @@ export class BridgeService {
           : [
               {
                 title: "当前没有可用项目",
-                items: ["当前 Codex 线程库中没有可用项目。"],
+                items: ["当前 Codex 会话库中没有可用项目。"],
               },
             ],
         rows: projects.map(project => ({
           title: project.displayName,
           lines: [
-            `线程：${project.activeThreadCount}/${project.threadCount} · 最近更新：${project.lastUpdatedAt}`,
+            `会话：${project.activeThreadCount}/${project.threadCount} · 最近更新：${project.lastUpdatedAt}`,
           ],
           buttonLabel: "进入项目",
           value: this.buildCardActionValue(
@@ -2286,24 +2109,24 @@ export class BridgeService {
     return {
       kind: "card",
       card: buildBridgeHubCard({
-        title: "选择线程",
+        title: "选择会话",
         summaryLines: [
           `**项目**：${project.displayName}`,
-          `**线程总数**：${threads.length}`,
+          `**会话总数**：${threads.length}`,
           ...(isTruncated ? [`**已显示**：${visibleThreads.length} / ${threads.length}`] : []),
         ],
         sections: threads.length > 0
           ? []
           : [
               {
-                title: "暂无线程",
-                items: ["当前项目下没有可切换的 Codex 线程。"],
+                title: "暂无会话",
+                items: ["当前项目下没有可切换的 Codex 会话。"],
               },
             ],
         rows: visibleThreads.map(thread => ({
           title: formatCodexThreadListTitle(thread),
           lines: formatCodexThreadListLines(thread, threadById),
-          buttonLabel: "切换到此线程",
+          buttonLabel: "切换到此会话",
           value: this.buildCardActionValue(
             this.buildCardActionContext(input),
             `${BRIDGE_COMMAND_PREFIX} thread switch ${thread.threadId}`,
@@ -2328,7 +2151,7 @@ export class BridgeService {
           "**视图**：当前项目",
           `**项目**：${project.displayName}`,
           `**路径**：${project.cwd}`,
-          `**当前线程**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`,
+          `**当前会话**：${formatCurrentThreadLabel(thread.title, thread.threadId)}`,
         ],
         sections: [],
         actions: [
@@ -2342,7 +2165,7 @@ export class BridgeService {
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} session`),
           },
           {
-            label: "线程列表",
+            label: "会话列表",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
         ],
@@ -2362,13 +2185,13 @@ export class BridgeService {
           "**视图**：当前项目",
           `**项目**：${project.displayName}`,
           `**路径**：${project.cwd}`,
-          "**当前线程**：未选择",
+          "**当前会话**：未选择",
         ],
         sections: [
           {
             title: "下一步",
             items: [
-              "可以先查看这个项目的线程列表。",
+              "可以先查看这个项目的会话列表。",
               "也可以直接发送普通消息，在该项目下创建新的 native Codex thread。",
             ],
           },
@@ -2384,7 +2207,7 @@ export class BridgeService {
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project list`),
           },
           {
-            label: "线程列表",
+            label: "会话列表",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
           {
@@ -2407,7 +2230,7 @@ export class BridgeService {
   ): BridgeReply {
     const nextStepItems = [
       `当前项目：${project.displayName}`,
-      ...(clearedPreviousThread ? ["已退出之前绑定的线程，避免继续误跑旧项目。"] : []),
+      ...(clearedPreviousThread ? ["已退出之前绑定的会话，避免继续误跑旧项目。"] : []),
       "下一条普通消息会在该项目下创建新会话。",
     ];
 
@@ -2433,7 +2256,7 @@ export class BridgeService {
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} project current`),
           },
           {
-            label: "线程列表",
+            label: "会话列表",
             value: this.buildCardActionValue(this.buildCardActionContext(input), `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
           {
@@ -2463,7 +2286,7 @@ export class BridgeService {
       projectLabel: project.displayName,
       threadLabel: thread.title,
       statusLabel: currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲",
-      scopeLabel: "当前线程",
+      scopeLabel: "当前会话",
       nextRunSettings: {
         model: effectivePreferences.model,
         reasoningEffort: effectivePreferences.reasoningEffort,
@@ -2474,11 +2297,11 @@ export class BridgeService {
         ? "当前任务仍在运行；如需查看细节可打开更多信息。"
         : surfaceInteractionState.sessionMode === "plan_next_message"
           ? "直接发送你的需求，我会按计划模式处理"
-          : "直接发送下一条消息继续当前线程",
+          : "直接发送下一条消息继续当前会话",
     });
     const summaryLines = [
       `**项目**：${model.projectLabel}`,
-      `**线程**：${model.threadLabel}`,
+      `**会话**：${model.threadLabel}`,
       `**状态**：${model.statusLabel}`,
       `**作用范围**：${model.scopeLabel}`,
     ];
@@ -2524,7 +2347,7 @@ export class BridgeService {
         actions: [
           {
             id: "switch_thread",
-            label: "切换线程",
+            label: "切换会话",
             value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
           {
@@ -2548,7 +2371,7 @@ export class BridgeService {
         title: isGroup ? "当前群未绑定项目" : "开始使用",
         summaryLines: [
           "**项目**：未选择",
-          `**线程**：${threadLabel}`,
+          `**会话**：${threadLabel}`,
           "**状态**：空闲",
           `**作用范围**：${scopeLabel}`,
         ],
@@ -2580,17 +2403,17 @@ export class BridgeService {
         title: isGroup ? "当前群已绑定项目" : "当前项目已选择",
         summaryLines: [
           `**项目**：${projectLabel}`,
-          `**线程**：${threadLabel}`,
+          `**会话**：${threadLabel}`,
           "**状态**：空闲",
           `**作用范围**：${scopeLabel}`,
         ],
         sections: [{
           title: "下一步",
-          items: ["选择已有线程，或直接发送消息创建新会话"],
+          items: ["选择已有会话，或直接发送消息创建新会话"],
         }],
         actions: [
           {
-            label: "切换线程",
+            label: "选择会话",
             type: "primary",
             value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
@@ -2617,9 +2440,9 @@ export class BridgeService {
     const contextItems = this.buildContextSummaryItems(input, resolved, currentRun);
     const surfaceInteractionState = this.getSurfaceInteractionState(input);
     const stableContextItems = contextItems.filter(item =>
-      !item.startsWith("线程 ID：") &&
+      !item.startsWith("Codex 线程 ID：") &&
       !item.startsWith("群聊 ID：") &&
-      !item.startsWith("话题 ID：")
+      !item.startsWith("飞书 surface ID：")
     );
     const readableContext = this.resolveReadableContext(input, resolved, currentRun);
     const actionContext = this.buildCardActionContext(input);
@@ -2627,7 +2450,7 @@ export class BridgeService {
       projectLabel: readableContext.projectLabel ?? "未选择",
       threadLabel: readableContext.threadLabel ?? (this.isDmContext(input) ? "未选择" : "未绑定"),
       statusLabel: currentRun ? formatRuntimeStatusLabel(currentRun.status) : "空闲",
-      scopeLabel: preferenceTarget.kind === "thread" ? "当前线程" : "当前会话入口",
+      scopeLabel: preferenceTarget.kind === "thread" ? "当前会话" : "当前会话入口",
       nextRunSettings: {
         model: effectivePreferences.model,
         reasoningEffort: effectivePreferences.reasoningEffort,
@@ -2639,14 +2462,14 @@ export class BridgeService {
         : surfaceInteractionState.sessionMode === "plan_next_message"
           ? "直接发送你的需求，我会按计划模式处理"
         : readableContext.threadId
-          ? "直接发送下一条消息继续当前线程"
+          ? "直接发送下一条消息继续当前会话"
           : readableContext.projectLabel
-            ? "选择已有线程，或直接发送消息创建新会话"
+            ? "选择已有会话，或直接发送消息创建新会话"
             : "先选择项目，再开始任务",
     });
     const summaryLines = [
       `**项目**：${model.projectLabel}`,
-      `**线程**：${model.threadLabel}`,
+      `**会话**：${model.threadLabel}`,
       `**状态**：${model.statusLabel}`,
       `**作用范围**：${model.scopeLabel}`,
     ];
@@ -2694,7 +2517,7 @@ export class BridgeService {
         actions: [
           {
             id: "switch_thread",
-            label: "切换线程",
+            label: "切换会话",
             value: this.buildCardActionValue(actionContext, `${BRIDGE_COMMAND_PREFIX} thread list-current`),
           },
           {
@@ -2795,12 +2618,12 @@ export class BridgeService {
       items.push(`当前项目：${context.projectLabel}`);
     }
     if (context.threadLabel) {
-      items.push(`当前线程：${context.threadLabel}`);
+      items.push(`当前会话：${context.threadLabel}`);
     } else if (this.isDmContext(input)) {
-      items.push("当前线程：未选择");
+      items.push("当前会话：未选择");
     }
     if (context.threadId) {
-      items.push(`线程 ID：${context.threadId}`);
+      items.push(`Codex 线程 ID：${context.threadId}`);
     }
     if (context.deliveryLabel) {
       items.push(`投递位置：${context.deliveryLabel}`);
@@ -2809,7 +2632,7 @@ export class BridgeService {
       items.push(`群聊 ID：${context.deliveryChatId}`);
     }
     if (context.deliverySurfaceRef) {
-      items.push(`话题 ID：${context.deliverySurfaceRef}`);
+      items.push(`飞书 surface ID：${context.deliverySurfaceRef}`);
     }
 
     return items;
@@ -2846,8 +2669,8 @@ export class BridgeService {
     return {
       kind: "card",
       card: buildBridgeHubCard({
-        title: "线程不可用",
-        summaryLines: ["**线程不可用**", "选中的 Codex 线程已不存在或无法读取。"],
+        title: "会话不可用",
+        summaryLines: ["**会话不可用**", "选中的 Codex 会话已不存在或无法读取。"],
         sections: [],
         actions: [
           {
@@ -2992,7 +2815,7 @@ export class BridgeService {
       `当前模型：${getCodexModelLabel(effectivePreferences.model)}`,
       `推理：${getCodexReasoningLabel(effectivePreferences.reasoningEffort)}`,
       `速度：${getCodexSpeedLabel(effectivePreferences.speed)}`,
-      `生效范围：${target.kind === "thread" ? "当前线程" : "当前会话入口"}`,
+      `生效范围：${target.kind === "thread" ? "当前会话" : "当前会话入口"}`,
     ];
   }
 
@@ -3011,8 +2834,8 @@ export class BridgeService {
         content: [
           "**Codex 设置**",
           input.effectivePreferences.source === "thread"
-            ? "当前选择会直接作用于这个线程的后续运行。"
-            : "当前选择会作用于这个飞书会话入口；新线程会继承它。",
+            ? "当前选择会直接作用于这个会话的后续运行。"
+            : "当前选择会作用于这个飞书会话入口；新会话会继承它。",
         ].join("\n"),
       },
       {
@@ -3137,6 +2960,27 @@ export class BridgeService {
       diagnosticsOpen: false,
       updatedAt: new Date(0).toISOString(),
     };
+  }
+
+  private closeSurfaceDiagnostics(input: {
+    channel: string;
+    peerId: string;
+    chatType?: "p2p" | "group";
+    chatId?: string;
+    surfaceType?: "thread";
+    surfaceRef?: string;
+  }): void {
+    const normalizedSurface = this.normalizeSurfaceIdentity(input);
+    const currentState = this.dependencies.store.getSurfaceInteractionState(normalizedSurface);
+    if (!currentState?.diagnosticsOpen) {
+      return;
+    }
+
+    this.dependencies.store.upsertSurfaceInteractionState({
+      ...normalizedSurface,
+      sessionMode: currentState.sessionMode,
+      diagnosticsOpen: false,
+    });
   }
 
   private wrapPromptAsSingleUsePlanMessage(prompt: string): string {
@@ -3298,8 +3142,8 @@ export class BridgeService {
       contextRows: [
         `项目：${input.projectLabel}`,
         `项目路径：${input.projectPath}`,
-        `线程：${input.threadLabel}`,
-        ...(input.threadId ? [`threadId：${input.threadId}`] : []),
+        `会话：${input.threadLabel}`,
+        ...(input.threadId ? [`Codex 线程 ID：${input.threadId}`] : []),
         `作用范围：${input.scopeLabel}`,
         `surface：${this.describeSurface(input.input)}`,
       ],
@@ -3439,12 +3283,12 @@ export class BridgeService {
       lines.push(`**当前项目**：${context.projectLabel}`);
     }
     if (context.threadLabel) {
-      lines.push(`**当前线程**：${context.threadLabel}`);
+      lines.push(`**当前会话**：${context.threadLabel}`);
     } else if (this.isDmContext(input)) {
-      lines.push("**当前线程**：未选择");
+      lines.push("**当前会话**：未选择");
     }
     if (context.threadId) {
-      lines.push(`线程 ID：${context.threadId}`);
+      lines.push(`Codex 线程 ID：${context.threadId}`);
     }
 
     return lines;
@@ -3499,7 +3343,7 @@ export class BridgeService {
       ?? (this.isGroupMainlineContext(input) ? input.chatId ?? null : null);
     const deliverySurfaceRef = currentRun?.deliverySurfaceRef ?? resolved?.deliverySurfaceRef ?? input.surfaceRef ?? null;
     const deliveryLabel = deliverySurfaceRef
-      ? "当前飞书线程"
+      ? "当前飞书会话"
       : deliveryChatId
         ? "当前群聊"
         : "当前私聊";
@@ -3550,6 +3394,12 @@ export class BridgeService {
       surfaceType: input.surfaceType ?? null,
       surfaceRef: input.surfaceRef ?? null,
     };
+  }
+
+  private isUnsupportedFeishuTopicSurface(input: {
+    surfaceType?: "thread";
+  }): boolean {
+    return input.surfaceType === "thread";
   }
 
   private isDmContext(input: {
@@ -3857,7 +3707,7 @@ export class BridgeService {
         feishuThreadId: input.surfaceRef,
         threadId: created.threadId,
         sessionName: created.threadId,
-        title: resolved.context.threadTitle ?? created.threadId,
+        title: resolved.context.threadTitle ?? prompt,
         status: "warm",
       });
     } else if (this.isGroupMainlineContext(input) && input.chatId) {
@@ -4063,7 +3913,7 @@ function buildGroupProjectButtons(input: {
 function formatCodexPreferenceSourceLabel(source: EffectiveCodexPreferences["source"]): string {
   switch (source) {
     case "thread":
-      return "当前线程";
+      return "当前会话";
     case "surface":
       return "当前会话入口";
     case "default":
@@ -4178,7 +4028,7 @@ function formatCodexThreadListLines(
   if (sourceInfo.kind === "subagent") {
     return [
       truncateCardLineText(
-        `子 agent · 父线程：${formatParentThreadLabel(sourceInfo.parentThreadId, threadById)}${formatSubagentDepth(sourceInfo)}`,
+        `子 agent · 父会话：${formatParentThreadLabel(sourceInfo.parentThreadId, threadById)}${formatSubagentDepth(sourceInfo)}`,
         MAX_CODEX_THREAD_LIST_LINE_CHARS,
       ),
       ...(formatSubagentIdentity(sourceInfo) !== "未命名"
@@ -4189,7 +4039,7 @@ function formatCodexThreadListLines(
   }
 
   return [
-    "主线程",
+    "主会话",
     `最近更新：${thread.updatedAt}`,
   ];
 }
@@ -4247,11 +4097,11 @@ function selectSwitchCardConversation(
   return items.filter(item => item === latestUser || latestAssistants.includes(item));
 }
 
-function buildNativeThreadBootstrapPrompt(topic: string): string {
+function buildNativeThreadBootstrapPrompt(sessionLabel: string): string {
   return [
-    "Initialize a Codex thread for subsequent Feishu bridge messages.",
+    "Initialize a Codex session for subsequent Feishu bridge messages.",
     "Keep the response minimal.",
-    `Topic: ${topic}`,
+    `Session: ${sessionLabel}`,
   ].join("\n");
 }
 

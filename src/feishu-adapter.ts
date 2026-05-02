@@ -181,6 +181,10 @@ export class FeishuAdapter {
       });
     }
 
+    if (message.chat_type === "group" && message.thread_id) {
+      return;
+    }
+
     if (message.message_type === "image") {
       try {
         await this.handleInboundImage({
@@ -217,30 +221,19 @@ export class FeishuAdapter {
       ? message.chat_type
       : undefined;
     const isDm = message.chat_type === "p2p";
-    const isGroupThread = message.chat_type === "group" && !!message.thread_id && !!message.chat_id;
     const isRegisteredGroupChat =
       message.chat_type === "group" &&
       !!message.chat_id &&
-      !message.thread_id &&
       (this.dependencies.isCodexGroupChat?.(message.chat_id) ?? false);
     const isGroupCommand =
       message.chat_type === "group" &&
       !!message.chat_id &&
-      !message.thread_id &&
       isBridgeCommandMessage(normalizedText.commandText ?? normalizedText.text);
     const bridgeText = isGroupCommand
       ? normalizedText.commandText ?? normalizedText.text
       : normalizedText.text;
 
-    if (!isDm && !isGroupThread && !isGroupCommand && !isRegisteredGroupChat) {
-      return;
-    }
-
-    if (
-      isGroupThread &&
-      this.dependencies.requireGroupMention &&
-      !normalizedText.hasMention
-    ) {
+    if (!isDm && !isGroupCommand && !isRegisteredGroupChat) {
       return;
     }
 
@@ -259,24 +252,14 @@ export class FeishuAdapter {
     let replies: BridgeReply[];
     try {
       replies = await this.dependencies.bridgeService.handleMessage(
-        isGroupThread
+        (isGroupCommand || isRegisteredGroupChat)
           ? {
               channel: "feishu",
               peerId,
               chatType: normalizedChatType,
               chatId: message.chat_id,
-              surfaceType: "thread",
-              surfaceRef: message.thread_id,
               text: bridgeText,
             }
-          : (isGroupCommand || isRegisteredGroupChat)
-            ? {
-                channel: "feishu",
-                peerId,
-                chatType: normalizedChatType,
-                chatId: message.chat_id,
-                text: bridgeText,
-              }
           : {
               channel: "feishu",
               peerId,
@@ -358,6 +341,9 @@ export class FeishuAdapter {
 
     const isDm = message.chat_type === "p2p";
     const isGroupSurface = message.chat_type === "group" && !!message.chat_id;
+    if (message.chat_type === "group" && message.thread_id) {
+      return;
+    }
     if (!isDm && !isGroupSurface) {
       return;
     }

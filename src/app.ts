@@ -427,7 +427,7 @@ function buildOpsUiHtml(): string {
     <main>
       <div>
         <h1>Backend Observability</h1>
-        <p class="subtle">任务级后台观测页面，核心数据来源于 <code>/ops/overview</code>、<code>/ops/runtime</code>、<code>/ops/runs</code>、<code>/ops/runs/:id</code>、<code>/ops/sessions</code>，项目与线程补充视图可通过 <code>/ops/projects</code> 与 <code>/ops/threads/:id</code> 获取。</p>
+        <p class="subtle">任务级后台观测页面，核心数据来源于 <code>/ops/overview</code>、<code>/ops/runtime</code>、<code>/ops/runs</code>、<code>/ops/runs/:id</code>、<code>/ops/sessions</code>，项目与 Codex 线程 ID 补充视图可通过 <code>/ops/projects</code> 与 <code>/ops/threads/:id</code> 获取。</p>
       </div>
 
       <section class="overview" id="overview"></section>
@@ -633,7 +633,7 @@ function buildOpsUiHtml(): string {
             <div class="detail-grid">
               <div class="kv"><label>状态</label><div><span class="\${statusBadgeClass(run.status)}">\${renderStatusPair(run.status, run.stage)}</span></div></div>
               <div class="kv"><label>项目</label><div><code>\${escapeHtml(run.projectId || "-")}</code></div></div>
-              <div class="kv"><label>线程</label><div><code>\${escapeHtml(run.threadId || "-")}</code></div></div>
+              <div class="kv"><label>Codex 线程 ID</label><div><code>\${escapeHtml(run.threadId || "-")}</code></div></div>
               <div class="kv"><label>开始时间</label><div>\${escapeHtml(run.startedAt || "-")}</div></div>
               <div class="kv"><label>更新时间</label><div>\${escapeHtml(run.updatedAt || "-")}</div></div>
               <div class="kv"><label>结束时间</label><div>\${escapeHtml(run.finishedAt || "-")}</div></div>

@@ -73,23 +73,23 @@ describe("BridgeService", () => {
       cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
     });
-    store.createCodexThread({
-      threadId: "thread-current",
-      projectId: "proj-current",
-      feishuThreadId: "omt_current",
-      chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-current",
-      title: "follow-up",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-current",
     });
 
     const runner = createRunnerDouble();
     const service = new BridgeService({
       store,
       runner,
+      codexCatalog: createSingleThreadCatalog({
+        projectKey: "proj-current",
+        displayName: "Current Project",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        threadId: "thread-current",
+        title: "follow-up",
+      }),
       codexPreferences: {
         defaultModel: "gpt-5.4",
         defaultReasoningEffort: "xhigh",
@@ -103,9 +103,6 @@ describe("BridgeService", () => {
     const sessionReplies = await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "/ca session",
     });
     const sessionCard = (sessionReplies[0] as { card: Record<string, unknown> }).card;
@@ -113,7 +110,7 @@ describe("BridgeService", () => {
     expect(sessionCardText).toContain("当前会话已就绪");
     expect(sessionCardText).toContain("下次任务设置");
     expect(sessionCardText).toContain("计划模式");
-    expect(sessionCardText).toContain("切换线程");
+    expect(sessionCardText).toContain("切换会话");
     expect(sessionCardText).toContain("更多信息");
     expect(sessionCardText).toContain("GPT-5.4");
     expect(sessionCardText).toContain("推理");
@@ -121,7 +118,7 @@ describe("BridgeService", () => {
     expect(sessionCardText).toContain("速度");
     expect(sessionCardText).toContain("标准");
     expect(sessionCardText).not.toContain("**视图**：当前会话");
-    expect(sessionCardText).not.toContain("线程 ID：");
+    expect(sessionCardText).not.toContain("Codex 线程 ID：");
     expect(sessionCardText).toContain("\"bridgeAction\":\"set_codex_model\"");
     expect(sessionCardText).toContain("\"bridgeAction\":\"set_reasoning_effort\"");
     expect(sessionCardText).toContain("\"bridgeAction\":\"set_codex_speed\"");
@@ -136,9 +133,6 @@ describe("BridgeService", () => {
     const updatedReply = await service.updateCodexPreferences({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       model: "gpt-5.4-mini",
       reasoningEffort: "medium",
       speed: "fast",
@@ -155,9 +149,6 @@ describe("BridgeService", () => {
     const statusReplies = await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "/ca status",
     });
     const statusCard = (statusReplies[0] as { card: Record<string, unknown> }).card;
@@ -170,9 +161,6 @@ describe("BridgeService", () => {
     await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "继续处理这个线程",
     });
 
@@ -198,30 +186,27 @@ describe("BridgeService", () => {
       cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
     });
-    store.createCodexThread({
-      threadId: "thread-current",
-      projectId: "proj-current",
-      feishuThreadId: "omt_current",
-      chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-current",
-      title: "follow-up",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-current",
     });
     const service = new BridgeService({
       store,
       runner: createRunnerDouble(),
+      codexCatalog: createSingleThreadCatalog({
+        projectKey: "proj-current",
+        displayName: "Current Project",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        threadId: "thread-current",
+        title: "follow-up",
+      }),
     });
 
     const reply = await service.handleSessionCardUiAction({
       channel: "feishu",
       peerId: "ou_demo",
       action: "toggle_plan_mode",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
     });
 
     expect(reply).toMatchObject({
@@ -242,24 +227,14 @@ describe("BridgeService", () => {
       cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
     });
-    store.createCodexThread({
-      threadId: "thread-current",
-      projectId: "proj-current",
-      feishuThreadId: "omt_current",
-      chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-current",
-      title: "follow-up",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-current",
     });
     store.upsertSurfaceInteractionState({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       sessionMode: "plan_next_message",
       diagnosticsOpen: false,
     });
@@ -268,14 +243,18 @@ describe("BridgeService", () => {
     const service = new BridgeService({
       store,
       runner,
+      codexCatalog: createSingleThreadCatalog({
+        projectKey: "proj-current",
+        displayName: "Current Project",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        threadId: "thread-current",
+        title: "follow-up",
+      }),
     });
 
     await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "先帮我梳理这个重构方案",
     });
 
@@ -291,9 +270,6 @@ describe("BridgeService", () => {
     const sessionReplies = await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "/ca session",
     });
     const cardText = JSON.stringify((sessionReplies[0] as { card: Record<string, unknown> }).card);
@@ -308,30 +284,27 @@ describe("BridgeService", () => {
       cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
     });
-    store.createCodexThread({
-      threadId: "thread-current",
-      projectId: "proj-current",
-      feishuThreadId: "omt_current",
-      chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-current",
-      title: "follow-up",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-current",
     });
     const service = new BridgeService({
       store,
       runner: createRunnerDouble(),
+      codexCatalog: createSingleThreadCatalog({
+        projectKey: "proj-current",
+        displayName: "Current Project",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        threadId: "thread-current",
+        title: "follow-up",
+      }),
     });
 
     const diagnosticsReply = await service.handleSessionCardUiAction({
       channel: "feishu",
       peerId: "ou_demo",
       action: "open_diagnostics",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
     });
     const diagnosticsText = JSON.stringify((diagnosticsReply as { card: Record<string, unknown> }).card);
     expect(diagnosticsText).toContain("上下文");
@@ -343,14 +316,66 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       action: "close_diagnostics",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
     });
     const sessionText = JSON.stringify((sessionReply as { card: Record<string, unknown> }).card);
     expect(sessionText).toContain("当前会话已就绪");
     expect(sessionText).toContain("下次任务设置");
     expect(sessionText).not.toContain("返回当前会话");
+  });
+
+  it("closes diagnostics when the user reopens the session card or toggles plan mode", async () => {
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+      repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
+    });
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-current",
+    });
+    const service = new BridgeService({
+      store,
+      runner: createRunnerDouble(),
+      codexCatalog: createSingleThreadCatalog({
+        projectKey: "proj-current",
+        displayName: "Current Project",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        threadId: "thread-current",
+        title: "follow-up",
+      }),
+    });
+
+    await service.handleSessionCardUiAction({
+      channel: "feishu",
+      peerId: "ou_demo",
+      action: "open_diagnostics",
+    });
+
+    const [sessionReply] = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca session",
+    });
+    const sessionText = JSON.stringify((sessionReply as { card: Record<string, unknown> }).card);
+    expect(sessionText).toContain("下次任务设置");
+    expect(sessionText).not.toContain("返回当前会话");
+
+    await service.handleSessionCardUiAction({
+      channel: "feishu",
+      peerId: "ou_demo",
+      action: "open_diagnostics",
+    });
+    const toggledReply = await service.handleSessionCardUiAction({
+      channel: "feishu",
+      peerId: "ou_demo",
+      action: "toggle_plan_mode",
+    });
+    const toggledText = JSON.stringify((toggledReply as { card: Record<string, unknown> }).card);
+    expect(toggledText).toContain("计划模式 [开]");
+    expect(toggledText).toContain("直接发送你的需求，我会按计划模式处理");
+    expect(toggledText).not.toContain("返回当前会话");
   });
 
   it("removes legacy open_plan_form from hub cards now that plan mode is a one-shot session toggle", async () => {
@@ -360,17 +385,10 @@ describe("BridgeService", () => {
       cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
     });
-    store.createCodexThread({
-      threadId: "thread-current",
-      projectId: "proj-current",
-      feishuThreadId: "omt_current",
-      chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-current",
-      title: "follow-up",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-current",
     });
 
     const service = new BridgeService({
@@ -382,8 +400,6 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "/ca",
     });
     expect(hubReplies[0]).toMatchObject({ kind: "card" });
@@ -484,17 +500,11 @@ describe("BridgeService", () => {
       cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
     });
-    store.createCodexThread({
-      threadId: "thread-current",
+    bindGroupMainlineCodexThread(store, {
       projectId: "proj-current",
-      feishuThreadId: "omt_current",
       chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-current",
-      title: "follow-up",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+      threadId: "thread-current",
+      projectName: "Current Project",
     });
 
     let rejectRun: ((error: Error) => void) | undefined;
@@ -529,14 +539,18 @@ describe("BridgeService", () => {
       store,
       runner,
       workerManager,
+      codexCatalog: createSingleThreadCatalog({
+        projectKey: "proj-current",
+        displayName: "Current Project",
+        cwd: path.join(bridgeRootCwd, "coding-anywhere"),
+        threadId: "thread-current",
+        title: "follow-up",
+      }),
     });
 
     const runPromise = service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "继续处理这个线程",
     });
 
@@ -547,9 +561,6 @@ describe("BridgeService", () => {
     const statusReplies = await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "/ca status",
     });
 
@@ -563,16 +574,13 @@ describe("BridgeService", () => {
     expect(statusCardText).toContain("still working");
     expect(statusCardText).toContain("运行中");
     expect(statusCardText).toContain("停止任务");
-    expect(readCardSummaryMarkdown(statusCard)).toContain("当前线程");
+    expect(readCardSummaryMarkdown(statusCard)).toContain("当前会话");
     expect(readCardSummaryMarkdown(statusCard)).not.toContain("Session");
     expect(statusCardText).not.toContain("**明确待办**");
 
     const hubReplies = await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "/ca",
     });
     const hubCard = (hubReplies[0] as { card: Record<string, unknown> }).card;
@@ -586,22 +594,16 @@ describe("BridgeService", () => {
     const sessionReplies = await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "/ca session",
     });
     const sessionCard = (sessionReplies[0] as { card: Record<string, unknown> }).card;
     expect(JSON.stringify(sessionCard)).not.toContain("停止任务");
-    expect(readCardSummaryMarkdown(sessionCard)).toContain("当前线程");
+    expect(readCardSummaryMarkdown(sessionCard)).toContain("当前会话");
     expect(readCardSummaryMarkdown(sessionCard)).not.toContain("Session");
 
     const stopReplies = await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "/ca stop",
     });
 
@@ -668,7 +670,7 @@ describe("BridgeService", () => {
     expect(cardText).toContain("Current Project");
     expect(cardText).toContain("未绑定");
     expect(cardText).toContain("查看项目");
-    expect(cardText).toContain("切换线程");
+    expect(cardText).toContain("选择会话");
     expect(cardText).toContain("新会话");
     expect(cardText).not.toContain("更多信息");
     expect(cardText).not.toContain("下次任务设置");
@@ -718,7 +720,7 @@ describe("BridgeService", () => {
     expect(cardText).not.toContain("停止任务");
     expect(cardText).not.toContain("计划模式");
     expect(cardText).not.toContain("下次任务设置");
-    expect(cardText).not.toContain("切换线程");
+    expect(cardText).not.toContain("切换会话");
   });
 
   it("returns a project-selection entry card in a new group chat before any project is bound", async () => {
@@ -744,7 +746,7 @@ describe("BridgeService", () => {
     expect(cardText).toContain("查看项目");
     expect(cardText).toContain("/ca project list");
     expect(cardText).not.toContain("当前会话已就绪");
-    expect(cardText).not.toContain("切换线程");
+    expect(cardText).not.toContain("切换会话");
     expect(cardText).not.toContain("新会话");
     expect(cardText).not.toContain("计划模式");
     expect(cardText).not.toContain("下次任务设置");
@@ -816,13 +818,13 @@ describe("BridgeService", () => {
     });
     const card = (replies[0] as { card: Record<string, unknown> }).card;
     const cardText = JSON.stringify(card);
-    expect(cardText).toContain("**线程**：native follow-up");
+    expect(cardText).toContain("**会话**：native follow-up");
     expect(readCardSummaryMarkdown(card)).not.toContain("Session");
     expect(cardText).not.toContain("thread-native-current");
-    expect(cardText).not.toContain("**线程**：thread-native-current · native follow-up");
+    expect(cardText).not.toContain("**会话**：thread-native-current · native follow-up");
   });
 
-  it("shows only the thread title in the registered thread current-session card when the session id already points at the same native thread", async () => {
+  it("rejects registered Feishu topic session cards instead of treating them as supported UI", async () => {
     store.createProject({
       projectId: "proj-current",
       name: "Current Project",
@@ -856,16 +858,10 @@ describe("BridgeService", () => {
       text: "/ca",
     });
 
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toMatchObject({
-      kind: "card",
-    });
-    const card = (replies[0] as { card: Record<string, unknown> }).card;
-    const cardText = JSON.stringify(card);
-    expect(cardText).toContain("**线程**：follow-up");
-    expect(readCardSummaryMarkdown(card)).not.toContain("Session");
-    expect(cardText).not.toContain("thread-current");
-    expect(cardText).not.toContain("**线程**：thread-current · follow-up");
+    expect(replies).toEqual([{
+      kind: "system",
+      text: expect.stringContaining("不支持飞书主题入口"),
+    }]);
   });
 
   it("keeps DM session-card state on the same surface even when DM callbacks carry chatId", async () => {
@@ -965,9 +961,13 @@ describe("BridgeService", () => {
     expect(runner.createThread).toHaveBeenCalledWith(
       {
         cwd: bridgeRootCwd,
-        prompt: expect.stringContaining("Topic: 请先查看当前目录，然后运行测试"),
+        prompt: expect.stringContaining("Session: 请先查看当前目录，然后运行测试"),
       },
     );
+    const createThreadCalls = runner.createThread.mock.calls as unknown as Array<[{
+      prompt: string;
+    }]>;
+    expect(createThreadCalls[0]![0].prompt).not.toContain("Topic:");
     expect(runner.ensureSession).toHaveBeenCalledWith({
       targetKind: "codex_thread",
       threadId: "thread-created",
@@ -1126,24 +1126,16 @@ describe("BridgeService", () => {
       cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
     });
-    store.createCodexThread({
-      threadId: "thread-created",
+    bindGroupMainlineCodexThread(store, {
       projectId: "proj-current",
-      feishuThreadId: "omt_current",
       chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-created",
-      title: "image-thread",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+      threadId: "thread-created",
+      projectName: "Current Project",
     });
     store.savePendingBridgeAsset({
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       messageId: "om_image_1",
       resourceKey: "img_dm_1",
       localPath: "D:/assets/one.png",
@@ -1155,8 +1147,6 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       messageId: "om_image_2",
       resourceKey: "img_dm_2",
       localPath: "D:/assets/two.png",
@@ -1178,8 +1168,6 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "请结合刚才的图片继续分析",
     });
 
@@ -1203,16 +1191,12 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
     })).toEqual([]);
 
     await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "再继续一次",
     });
 
@@ -1228,24 +1212,16 @@ describe("BridgeService", () => {
       cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
     });
-    store.createCodexThread({
-      threadId: "thread-created",
+    bindGroupMainlineCodexThread(store, {
       projectId: "proj-current",
-      feishuThreadId: "omt_current",
       chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-created",
-      title: "image-thread",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+      threadId: "thread-created",
+      projectName: "Current Project",
     });
     store.savePendingBridgeAsset({
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       messageId: "om_image_1",
       resourceKey: "img_dm_1",
       localPath: "D:/assets/one.png",
@@ -1276,8 +1252,6 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "请结合刚才的图片继续分析",
     })).rejects.toThrow("CODEX_LAUNCH_FAILED");
 
@@ -1285,8 +1259,6 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
     })).toEqual([
       expect.objectContaining({
         status: "pending",
@@ -1308,17 +1280,11 @@ describe("BridgeService", () => {
       cwd: projectCwd,
       repoRoot: projectCwd,
     });
-    store.createCodexThread({
-      threadId: "thread-created",
+    bindGroupMainlineCodexThread(store, {
       projectId: "proj-current",
-      feishuThreadId: "omt_current",
       chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-created",
-      title: "image-thread",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+      threadId: "thread-created",
+      projectName: "Current Project",
     });
 
     const directiveText = [
@@ -1345,8 +1311,6 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "请返回结果图",
     });
 
@@ -1374,17 +1338,11 @@ describe("BridgeService", () => {
       cwd: projectCwd,
       repoRoot: projectCwd,
     });
-    store.createCodexThread({
-      threadId: "thread-created",
+    bindGroupMainlineCodexThread(store, {
       projectId: "proj-current",
-      feishuThreadId: "omt_current",
       chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-created",
-      title: "image-thread",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+      threadId: "thread-created",
+      projectName: "Current Project",
     });
 
     const directiveText = [
@@ -1411,8 +1369,6 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       text: "请返回结果图",
     });
 
@@ -1435,17 +1391,11 @@ describe("BridgeService", () => {
       cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
     });
-    store.createCodexThread({
-      threadId: "thread-created",
+    bindGroupMainlineCodexThread(store, {
       projectId: "proj-current",
-      feishuThreadId: "omt_current",
       chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-created",
-      title: "plan-thread",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+      threadId: "thread-created",
+      projectName: "Current Project",
     });
 
     const runner = createRunnerDouble([
@@ -1500,8 +1450,6 @@ describe("BridgeService", () => {
         channel: "feishu",
         peerId: "ou_demo",
         chatId: "oc_chat_current",
-        surfaceType: "thread",
-        surfaceRef: "omt_current",
         text: "/plan 帮我先梳理改造方案，不要直接改代码",
       },
       {
@@ -1541,8 +1489,6 @@ describe("BridgeService", () => {
         channel: "feishu",
         peerId: "ou_demo",
         chatId: "oc_chat_current",
-        surfaceType: "thread",
-        surfaceRef: "omt_current",
       }),
     ).toMatchObject({
       threadId: "thread-created",
@@ -1610,10 +1556,10 @@ describe("BridgeService", () => {
     expect(cardText).toContain("开始使用");
     expect(cardText).not.toContain("CA Hub");
     expect(cardText).toContain("查看项目");
-    expect(cardText).not.toContain("切换线程");
+    expect(cardText).not.toContain("切换会话");
   });
 
-  it("creates and rebinds a fresh native thread when /ca new is used inside a feishu thread", async () => {
+  it("rejects /ca new inside a Feishu topic without creating a pending session", async () => {
     store.createProject({
       projectId: "proj-a",
       name: "coding-anywhere",
@@ -1650,20 +1596,95 @@ describe("BridgeService", () => {
 
     const updatedThread = store.getCodexThreadBySurface("oc_chat_1", "omt_1");
 
-    expect(runner.createThread).toHaveBeenCalledWith(
-      {
-        cwd: path.join(rootDir, "coding-anywhere"),
-        prompt: expect.stringContaining("Topic: feishu-nav"),
-      },
-    );
+    expect(runner.createThread).not.toHaveBeenCalled();
+    expect(runner.ensureSession).not.toHaveBeenCalled();
+    expect(runner.submitVerbatim).not.toHaveBeenCalled();
     expect(runner.close).not.toHaveBeenCalled();
-    expect(updatedThread?.threadId).toBe("thread-created");
+    expect(updatedThread?.threadId).toBe("thread-a");
+    expect(updatedThread?.title).toBe("feishu-nav");
+    expect(replies).toEqual([{
+      kind: "system",
+      text: expect.stringContaining("不支持飞书主题入口"),
+    }]);
+  });
+
+  it("prepares a fresh DM session on /ca new without starting a Codex run", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    store.createProject({
+      projectId: "proj-current",
+      name: "coding-anywhere",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    store.bindCodexWindow({
+      channel: "feishu",
+      peerId: "ou_demo",
+      codexThreadId: "thread-old",
+    });
+
+    const runner = createRunnerDouble();
+    const service = new BridgeService({
+      store,
+      runner,
+      codexCatalog: {
+        listProjects: vi.fn(() => []),
+        getProject: vi.fn((projectKey: string) => projectKey === "proj-current"
+          ? {
+              projectKey: "proj-current",
+              cwd: projectCwd,
+              displayName: "coding-anywhere",
+              threadCount: 1,
+              activeThreadCount: 1,
+              lastUpdatedAt: "2026-03-28T00:00:00.000Z",
+              gitBranch: "main",
+            }
+          : undefined),
+        listThreads: vi.fn(() => []),
+        getThread: vi.fn((threadId: string) => threadId === "thread-old"
+          ? {
+              threadId: "thread-old",
+              projectKey: "proj-current",
+              cwd: projectCwd,
+              displayName: "coding-anywhere",
+              title: "old conversation",
+              source: "vscode",
+              archived: false,
+              updatedAt: "2026-03-28T00:00:00.000Z",
+              createdAt: "2026-03-27T00:00:00.000Z",
+              gitBranch: "main",
+              cliVersion: "0.116.0",
+              rolloutPath: "D:/rollout",
+            }
+          : undefined),
+        listRecentConversation: vi.fn(() => []),
+      },
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "/ca new",
+    });
+
+    expect(runner.createThread).not.toHaveBeenCalled();
+    expect(runner.ensureSession).not.toHaveBeenCalled();
+    expect(runner.submitVerbatim).not.toHaveBeenCalled();
+    expect(store.getCodexWindowBinding("feishu", "ou_demo")).toBeUndefined();
+    expect(store.getCodexProjectSelection("feishu", "ou_demo")).toMatchObject({
+      projectKey: "proj-current",
+    });
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("当前会话已就绪");
+    expect(cardText).toContain("当前项目已选择");
+    expect(cardText).toContain("**会话**：未选择");
+    expect(cardText).toContain("选择已有会话，或直接发送消息创建新会话");
+    expect(cardText).toContain("选择会话");
+    expect(cardText).toContain("新会话");
+    expect(cardText).toContain("查看项目");
+    expect(cardText).not.toContain("线程已切换");
   });
 
   it("binds a project chat from a CA command", async () => {
@@ -2202,7 +2223,7 @@ describe("BridgeService", () => {
     expect(cardText).toContain(path.join(bridgeRootCwd, "coding-anywhere").replaceAll("\\", "\\\\"));
   });
 
-  it("creates a thread in the bound project chat from a CA command", async () => {
+  it("rejects Feishu topic creation from /ca thread create", async () => {
     store.createProject({
       projectId: "proj-a",
       name: "Demo Project",
@@ -2242,25 +2263,18 @@ describe("BridgeService", () => {
       text: "/ca thread create proj-a feishu-nav",
     });
 
-    expect(projectThreadService.createThread).toHaveBeenCalledWith({
-      projectId: "proj-a",
-      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
-      chatId: "oc_chat_1",
-      ownerOpenId: "ou_demo",
-      title: "feishu-nav",
-    });
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toMatchObject({
-      kind: "card",
-    });
-    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("线程已创建");
-    expect(cardText).toContain("thread-native-a");
-    expect(cardText).toContain("feishu-nav");
-    expect(cardText).toContain("thread-native-a");
+    expect(projectThreadService.createThread).not.toHaveBeenCalled();
+    expect(replies).toEqual([
+      {
+        kind: "system",
+        text: expect.stringContaining("飞书主题"),
+      },
+    ]);
+    expect(replies[0]?.kind === "system" ? replies[0].text : "").toContain("不支持");
+    expect(replies[0]?.kind === "system" ? replies[0].text : "").toContain("/ca new");
   });
 
-  it("creates a thread from the current bound project chat without requiring a project id", async () => {
+  it("rejects Feishu topic creation from /ca thread create-current", async () => {
     store.createProject({
       projectId: "proj-current",
       name: "Current Project",
@@ -2301,22 +2315,15 @@ describe("BridgeService", () => {
       text: "/ca thread create-current follow-up",
     });
 
-    expect(projectThreadService.createThread).toHaveBeenCalledWith({
-      projectId: "proj-current",
-      cwd: path.join(bridgeRootCwd, "coding-anywhere"),
-      chatId: "oc_chat_current",
-      ownerOpenId: "ou_demo",
-      title: "follow-up",
-    });
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toMatchObject({
-      kind: "card",
-    });
-    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("线程已创建");
-    expect(cardText).toContain("thread-native-current");
-    expect(cardText).toContain("follow-up");
-    expect(cardText).toContain("thread-native-current");
+    expect(projectThreadService.createThread).not.toHaveBeenCalled();
+    expect(replies).toEqual([
+      {
+        kind: "system",
+        text: expect.stringContaining("飞书主题"),
+      },
+    ]);
+    expect(replies[0]?.kind === "system" ? replies[0].text : "").toContain("不支持");
+    expect(replies[0]?.kind === "system" ? replies[0].text : "").toContain("/ca new");
   });
 
   it("lists native threads for the current bound project chat without requiring a project id", async () => {
@@ -2388,12 +2395,12 @@ describe("BridgeService", () => {
       kind: "card",
     });
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("选择线程");
+    expect(cardText).toContain("选择会话");
     expect(cardText).toContain("coding-anywhere");
     expect(cardText).toContain("follow-up");
-    expect(cardText).toContain("主线程");
-    expect(cardText).toContain("切换到此线程");
-    expect(cardText).not.toContain("线程 ID：thread-native-current");
+    expect(cardText).toContain("主会话");
+    expect(cardText).toContain("切换到此会话");
+    expect(cardText).not.toContain("Codex 线程 ID：thread-native-current");
     expect(cardText).not.toContain("来源");
     expect(cardText).not.toContain("分支");
     expect(cardText).toContain("新会话");
@@ -2459,7 +2466,7 @@ describe("BridgeService", () => {
     const cardText = JSON.stringify(card);
     expect(cardText).toContain("当前项目已切换");
     expect(cardText).toContain("当前项目：coding-anywhere");
-    expect(cardText).toContain("已退出之前绑定的线程");
+    expect(cardText).toContain("已退出之前绑定的会话");
     expect(cardText).toContain("下一条普通消息会在该项目下创建新会话");
     expect(cardText).not.toContain("已记录项目切换");
     expect(store.getCodexWindowBinding("feishu", "ou_demo")).toBeUndefined();
@@ -2554,7 +2561,7 @@ describe("BridgeService", () => {
         projectKey: "proj-native",
         cwd: path.join(bridgeRootCwd, "coding-anywhere"),
         displayName: "coding-anywhere",
-        title: "缺失父线程的子任务",
+        title: "缺失父会话的子任务",
         source: JSON.stringify({
           subagent: {
             thread_spawn: {
@@ -2619,13 +2626,13 @@ describe("BridgeService", () => {
     });
 
     const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("选择线程");
-    expect(cardText).toContain("线程总数");
-    expect(cardText).toContain("主线程");
+    expect(cardText).toContain("选择会话");
+    expect(cardText).toContain("会话总数");
+    expect(cardText).toContain("主会话");
     expect(cardText).toContain("└ 配置 social-link-ingest 运行环境");
-    expect(cardText).toContain("子 agent · 父线程：导入小红书优化版Karpthy知识库分享（thread-parent） · 层级：1");
+    expect(cardText).toContain("子 agent · 父会话：导入小红书优化版Karpthy知识库分享（thread-parent） · 层级：1");
     expect(cardText).toContain("身份：Gauss / worker");
-    expect(cardText).toContain("子 agent · 父线程：thread-missing（不在当前列表） · 层级：2");
+    expect(cardText).toContain("子 agent · 父会话：thread-missing（不在当前列表） · 层级：2");
     expect(cardText).toContain("身份：Meitner / explorer");
     expect(cardText).toContain("/ca thread switch thread-child");
     expect(cardText).toContain("/ca thread switch thread-orphan-child");
@@ -2727,7 +2734,7 @@ describe("BridgeService", () => {
     expect(cardText).not.toContain(veryLongTitle);
   });
 
-  it("rebinds a registered Feishu thread to a selected native thread", async () => {
+  it("rejects switching a registered Feishu topic to a native thread", async () => {
     store.createProject({
       projectId: "proj-current",
       name: "Current Project",
@@ -2794,16 +2801,14 @@ describe("BridgeService", () => {
     });
 
     expect(store.getCodexThreadBySurface("oc_chat_current", "omt_current")).toMatchObject({
-      threadId: "thread-native-current",
-      sessionName: "thread-native-current",
-      title: "native follow-up",
+      threadId: "thread-legacy",
+      sessionName: "codex-proj-current-thread-current",
+      title: "follow-up",
     });
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toMatchObject({
-      kind: "card",
-    });
-    const cardText = JSON.stringify((replies[0] as { card: Record<string, unknown> }).card);
-    expect(cardText).toContain("当前会话已就绪");
+    expect(replies).toEqual([{
+      kind: "system",
+      text: expect.stringContaining("不支持飞书主题入口"),
+    }]);
   });
 
   it("resumes the same native thread when a pending plan choice is selected", async () => {
@@ -2828,8 +2833,6 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      surfaceType: "thread",
-      surfaceRef: "omt_current",
       threadId: "thread-created",
       sessionName: "thread-created",
       question: "你希望我下一步先做哪件事？",
@@ -2852,17 +2855,11 @@ describe("BridgeService", () => {
       cwd: path.join(bridgeRootCwd, "coding-anywhere"),
       repoRoot: path.join(bridgeRootCwd, "coding-anywhere"),
     });
-    store.createCodexThread({
-      threadId: "thread-created",
+    bindGroupMainlineCodexThread(store, {
       projectId: "proj-current",
-      feishuThreadId: "omt_current",
       chatId: "oc_chat_current",
-      anchorMessageId: "om_current",
-      latestMessageId: "om_current",
-      sessionName: "thread-created",
-      title: "plan-thread",
-      ownerOpenId: "ou_demo",
-      status: "warm",
+      threadId: "thread-created",
+      projectName: "Current Project",
     });
 
     const replies = await service.handlePlanChoice(
@@ -2870,8 +2867,6 @@ describe("BridgeService", () => {
         channel: "feishu",
         peerId: "ou_demo",
         chatId: "oc_chat_current",
-        surfaceType: "thread",
-        surfaceRef: "omt_current",
         interactionId: interaction.interactionId,
         choiceId: "tests",
       },
@@ -2896,7 +2891,7 @@ describe("BridgeService", () => {
       expect.stringContaining("先补测试和验证路径，不要直接改代码。"),
       expect.any(Function),
     );
-    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("[user-message]");
+    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("先补测试和验证路径，不要直接改代码。");
     expect(replies).toEqual([
       {
         kind: "assistant",
@@ -3035,7 +3030,7 @@ describe("BridgeService", () => {
     expect(cardText).toContain("第四条应展示的助手回复");
     expect(cardText).toContain("第五条应展示的助手回复");
     expect(cardText).not.toContain("更早的助手回复，不应展示");
-    expect(cardText).toContain("直接发送下一条消息继续当前线程");
+    expect(cardText).toContain("直接发送下一条消息继续当前会话");
   });
 
   it("resumes the same native thread on the next plain group message after switching the current project chat", async () => {
@@ -3131,6 +3126,68 @@ describe("BridgeService", () => {
     ]);
   });
 });
+
+function bindGroupMainlineCodexThread(
+  store: SessionStore,
+  input: {
+    projectId: string;
+    projectName?: string;
+    chatId: string;
+    threadId: string;
+  },
+): void {
+  store.upsertProjectChat({
+    projectId: input.projectId,
+    chatId: input.chatId,
+    groupMessageType: "thread",
+    title: `Codex | ${input.projectName ?? input.projectId}`,
+  });
+  store.bindCodexChat({
+    channel: "feishu",
+    chatId: input.chatId,
+    codexThreadId: input.threadId,
+  });
+}
+
+function createSingleThreadCatalog(input: {
+  projectKey: string;
+  displayName: string;
+  cwd: string;
+  threadId: string;
+  title: string;
+}) {
+  const project = {
+    projectKey: input.projectKey,
+    cwd: input.cwd,
+    displayName: input.displayName,
+    threadCount: 1,
+    activeThreadCount: 1,
+    lastUpdatedAt: "2026-03-30T00:00:00.000Z",
+    gitBranch: "main",
+  };
+  const thread: CodexCatalogThread = {
+    threadId: input.threadId,
+    projectKey: input.projectKey,
+    cwd: input.cwd,
+    displayName: input.displayName,
+    title: input.title,
+    source: "vscode",
+    archived: false,
+    updatedAt: "2026-03-30T00:00:00.000Z",
+    createdAt: "2026-03-29T00:00:00.000Z",
+    gitBranch: "main",
+    cliVersion: "0.116.0",
+    rolloutPath: "D:/rollout",
+  };
+
+  return {
+    listProjects: vi.fn(() => [project]),
+    getProject: vi.fn((projectKey: string) => projectKey === input.projectKey ? project : undefined),
+    listThreads: vi.fn(() => [thread]),
+    getThread: vi.fn((threadId: string) => threadId === input.threadId ? thread : undefined),
+    listRecentConversation: vi.fn(() => []),
+  };
+}
 
 function createRunnerDouble(
   events: RunnerEvent[] = [

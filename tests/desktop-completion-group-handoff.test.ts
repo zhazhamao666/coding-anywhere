@@ -23,7 +23,7 @@ describe("desktop completion group/topic handoff", () => {
     }
   });
 
-  it("keeps an existing Feishu topic on the same surface and returns the standard session card", async () => {
+  it("returns an unsupported-entry card for a Feishu topic continuation target", async () => {
     const harness = createHarness(harnesses);
     seedExistingTopicBinding(harness.store);
 
@@ -43,13 +43,17 @@ describe("desktop completion group/topic handoff", () => {
       },
     });
 
+    expect(harness.apiClient.sendTextMessageToChat).not.toHaveBeenCalled();
     expect(harness.apiClient.replyInteractiveCard).not.toHaveBeenCalled();
     const cardText = JSON.stringify(response);
-    expect(cardText).toContain("当前会话已就绪");
-    expect(cardText).toContain("Alpha follow-up");
-    expect(cardText).toContain("最近上下文");
-    expect(cardText).toContain("直接发送下一条消息继续当前线程");
-    expect(cardText).toContain("下次任务设置");
+    expect(cardText).toContain("继续入口不可用");
+    expect(cardText).toContain("当前不支持飞书主题入口");
+    expect(cardText).toContain("DM");
+    expect(cardText).toContain("已绑定项目群主时间线");
+    expect(cardText).not.toContain("当前会话已就绪");
+    expect(cardText).not.toContain("Alpha follow-up");
+    expect(cardText).not.toContain("最近上下文");
+    expect(cardText).not.toContain("直接发送下一条消息继续当前线程");
     expect(cardText).not.toContain("命令已提交");
   });
 
@@ -81,7 +85,7 @@ describe("desktop completion group/topic handoff", () => {
     expect(cardText).toContain("当前会话已就绪");
     expect(cardText).toContain("Alpha follow-up");
     expect(cardText).toContain("最近上下文");
-    expect(cardText).toContain("直接发送下一条消息继续当前线程");
+    expect(cardText).toContain("直接发送下一条消息继续当前会话");
     expect(cardText).toContain("下次任务设置");
     expect(cardText).not.toContain("新的飞书话题");
     expect(cardText).not.toContain("已在飞书继续");

@@ -20,6 +20,52 @@ export type StableCardBridgeAction =
   | "open_diagnostics"
   | "close_diagnostics";
 
+export type CommandActionCallbackMode =
+  | "inline_raw_card"
+  | "toast_with_raw_card"
+  | "async_toast";
+
+export function classifyCommandActionCallbackMode(command: string): CommandActionCallbackMode {
+  const parts = command.trim().replace(/\s+/g, " ").split(" ");
+  if (parts[0] !== "/ca") {
+    return "async_toast";
+  }
+
+  const commandName = parts[1] ?? "";
+  const subCommand = parts[2] ?? "";
+  if (commandName === "new") {
+    return "toast_with_raw_card";
+  }
+
+  if (
+    commandName === "" ||
+    commandName === "help" ||
+    commandName === "hub" ||
+    commandName === "session" ||
+    commandName === "status"
+  ) {
+    return "inline_raw_card";
+  }
+
+  if (commandName === "project" && (
+    subCommand === "list" ||
+    subCommand === "current" ||
+    subCommand === "switch"
+  )) {
+    return "inline_raw_card";
+  }
+
+  if (commandName === "thread" && (
+    subCommand === "list" ||
+    subCommand === "list-current" ||
+    subCommand === "switch"
+  )) {
+    return "inline_raw_card";
+  }
+
+  return "async_toast";
+}
+
 export function buildCommandActionValue(input: {
   command: string;
   context: CardSurfaceContext;

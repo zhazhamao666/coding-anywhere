@@ -1,4 +1,5 @@
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
+import { classifyCommandActionCallbackMode } from "./feishu-card/action-contract.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
 import { StreamingCardController } from "./feishu-card/streaming-card-controller.js";
 import type { FeishuApiClientLike, StreamingCardControllerLike } from "./feishu-adapter.js";
@@ -6,10 +7,6 @@ import type { BridgeReply } from "./types.js";
 
 interface DesktopThreadContinuationResult {
   reply: BridgeReply;
-  topicReply?: {
-    anchorMessageId: string;
-    reply: BridgeReply;
-  };
 }
 
 interface CardActionValue {
@@ -225,7 +222,7 @@ export class FeishuCardActionService {
       const mode = actionValue?.mode;
       if (!threadId || !mode || !this.dependencies.bridgeService.continueDesktopThread) {
         return this.buildRawCardResponse(this.buildInfoCard("继续入口不可用", [
-          "当前环境暂时无法继续这个桌面线程。",
+          "当前环境暂时无法继续这个桌面会话。",
         ], actionValue));
       }
 
@@ -240,34 +237,11 @@ export class FeishuCardActionService {
         surfaceRef: actionValue?.surfaceRef,
       });
 
-      const legacyHandoff = continuationResult as {
-        kind?: string;
-        card?: Record<string, unknown>;
-        targetCard?: Record<string, unknown>;
-        targetMessageId?: string;
-      };
-      if (
-        legacyHandoff.kind === "desktop_thread_handoff" &&
-        legacyHandoff.card &&
-        legacyHandoff.targetCard &&
-        legacyHandoff.targetMessageId
-      ) {
-        await this.deliverReplyToAnchor(legacyHandoff.targetMessageId, {
-          kind: "card",
-          card: legacyHandoff.targetCard,
-        } as BridgeReply);
-        return this.buildRawCardResponse(legacyHandoff.card);
-      }
-
       const reply = isDesktopThreadContinuationResult(continuationResult)
         ? continuationResult
         : {
             reply: continuationResult as BridgeReply,
           };
-
-      if (reply.topicReply) {
-        await this.deliverReplyToAnchor(reply.topicReply.anchorMessageId, reply.topicReply.reply);
-      }
 
       if (reply.reply.kind === "card") {
         return this.buildRawCardResponse(reply.reply.card);
@@ -276,15 +250,15 @@ export class FeishuCardActionService {
       return this.buildRawCardResponse(this.buildInfoCard("继续入口不可用", [
         reply.reply.kind === "system" || reply.reply.kind === "assistant"
           ? reply.reply.text
-          : "当前环境暂时无法继续这个桌面线程。",
+          : "当前环境暂时无法继续这个桌面会话。",
       ], actionValue));
     }
 
     if (bridgeAction === "view_desktop_thread_history" || bridgeAction === "mute_desktop_thread") {
       return this.buildRawCardResponse(this.buildInfoCard("功能暂未接通", [
         bridgeAction === "view_desktop_thread_history"
-          ? "查看桌面线程记录稍后接入。"
-          : "桌面线程静音稍后接入。",
+          ? "查看桌面会话记录稍后接入。"
+          : "桌面会话静音稍后接入。",
       ], actionValue));
     }
 
@@ -349,7 +323,7 @@ export class FeishuCardActionService {
         });
       });
 
-      return this.buildToastResponse("计划选项已提交，正在继续当前计划线程。");
+      return this.buildToastResponse("计划选项已提交，正在继续当前计划。");
     }
 
     if (!command || !routedCommand || routedCommand.kind !== "command") {
@@ -367,6 +341,57 @@ export class FeishuCardActionService {
         "feishu card action rejected",
       );
       return this.buildRawCardResponse(invalidCard);
+    }
+
+    const callbackMode = classifyCommandActionCallbackMode(command);
+    if (callbackMode === "inline_raw_card" || callbackMode === "toast_with_raw_card") {
+      try {
+        const replies = await this.dependencies.bridgeService.handleMessage({
+          channel: "feishu",
+          peerId: event.open_id,
+          chatType: actionChatType,
+          chatId: effectiveChatId,
+          surfaceType: actionValue?.surfaceType,
+          surfaceRef: actionValue?.surfaceRef,
+          text: command,
+        });
+        await this.deliverImageReplies({
+          replies,
+          peerId: event.open_id,
+          existingMessageId: patchTargetMessageId,
+        });
+        const card = this.buildCommandResultCard({
+          replies,
+          command,
+          actionValue,
+          openId: event.open_id,
+          openMessageId: event.open_message_id,
+          patchTargetCardId,
+          patchTargetMessageId,
+        });
+        const response = this.buildRawCardResponse(card);
+        return callbackMode === "toast_with_raw_card"
+          ? {
+              toast: {
+                type: "info",
+                content: "已准备新会话，下一条消息将开启新的 Codex 会话。",
+              },
+              ...response,
+            }
+          : response;
+      } catch (error) {
+        const errorCard = this.buildInfoCard("命令执行失败", [normalizeActionError(error)], actionValue);
+        const response = this.buildRawCardResponse(errorCard);
+        return callbackMode === "toast_with_raw_card"
+          ? {
+              toast: {
+                type: "error",
+                content: "新会话暂时无法准备。",
+              },
+              ...response,
+            }
+          : response;
+      }
     }
 
     this.dependencies.logger?.info?.(
@@ -881,7 +906,7 @@ function isSuccessfulThreadSwitchReply(replies: BridgeReply[]): boolean {
   if (reply.kind === "card") {
     const header = reply.card.header as { title?: { content?: string } } | undefined;
     const title = header?.title?.content?.trim() ?? "";
-    return title === "线程已切换";
+    return title === "当前会话已就绪";
   }
 
   return false;

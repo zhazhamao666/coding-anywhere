@@ -50,7 +50,7 @@ describe("desktop completion DM handoff", () => {
     expect(cardText).toContain("当前会话已就绪");
     expect(cardText).toContain("Alpha follow-up");
     expect(cardText).toContain("最近上下文");
-    expect(cardText).toContain("直接发送下一条消息继续当前线程");
+    expect(cardText).toContain("直接发送下一条消息继续当前会话");
     expect(cardText).toContain("下次任务设置");
     expect(cardText).not.toContain("命令已提交");
   });

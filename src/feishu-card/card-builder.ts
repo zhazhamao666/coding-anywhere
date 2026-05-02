@@ -30,7 +30,7 @@ export function buildStreamingShellCard(state: ProgressCardState): Record<string
         content: summaryText,
         element_id: STREAMING_ELEMENT_ID,
       },
-      ...buildCodexPreferenceControlElements(state),
+      ...(isTerminalStatus(state.status) ? buildCodexPreferenceControlElements(state) : []),
       ...buildStopButtonElements(state),
     ],
   });
@@ -70,7 +70,6 @@ export function buildBridgeCard(state: ProgressCardState): Record<string, unknow
       tag: "markdown",
       content: buildStreamingCardMarkdown(state),
     },
-    ...buildCodexPreferenceControlElements(state),
   ];
 
   if (state.planTodos && state.planTodos.length > 0) {
@@ -128,6 +127,7 @@ export function buildBridgeCard(state: ProgressCardState): Record<string, unknow
   }
 
   if (isTerminalStatus(state.status)) {
+    elements.push(...buildCodexPreferenceControlElements(state));
     elements.push({
       tag: "hr",
     });
@@ -471,7 +471,7 @@ function buildTerminalActionElements(state: ProgressCardState): Array<Record<str
             tag: "button",
             text: {
               tag: "plain_text",
-              content: "切换线程",
+              content: "切换会话",
             },
             value: buildCommandActionValue({
               command: "/ca thread list-current",

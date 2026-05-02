@@ -20,8 +20,14 @@ describe("desktop completion routing", () => {
     }
   });
 
-  it("routes an exactly bound native thread to the preferred Feishu topic even when a project group binding also exists", () => {
-    const harness = createRoutingHarness(harnesses);
+  it("ignores existing Feishu topic bindings and routes the native thread to the project group timeline", () => {
+    const harness = createRoutingHarness(harnesses, {
+      catalogThread: {
+        threadId: "thread-native-1",
+        projectKey: "proj-a",
+        cwd: "D:/repo-one",
+      },
+    });
     seedProjectBinding(harness.store, {
       projectId: "proj-a",
       name: "Repo One",
@@ -46,20 +52,25 @@ describe("desktop completion routing", () => {
       updatedAt: "2026-04-20T12:00:00.000Z",
     });
 
+    const validatedModes: string[] = [];
     const target = harness.bridge.resolveDesktopCompletionRoute({
       threadId: "thread-native-1",
       allowlist: ["ou_owner"],
+      routeValidator: candidate => {
+        validatedModes.push(candidate.mode);
+        expect(candidate.mode).not.toBe("thread");
+        return true;
+      },
     });
 
     expect(target).toEqual({
-      mode: "thread",
+      mode: "project_group",
       chatId: "oc_group_1",
-      surfaceRef: "omt_topic_999",
-      anchorMessageId: "om_anchor_omt_topic_999",
     });
+    expect(validatedModes).toEqual(["project_group"]);
   });
 
-  it("routes to the project group timeline when the native thread has no topic binding", () => {
+  it("routes to the project group timeline for a native thread", () => {
     const harness = createRoutingHarness(harnesses, {
       catalogThread: {
         threadId: "thread-native-1",
@@ -143,7 +154,7 @@ describe("desktop completion routing", () => {
     });
   });
 
-  it("falls back to a DM target when no topic or project group binding exists", () => {
+  it("falls back to a DM target when no project group binding exists", () => {
     const harness = createRoutingHarness(harnesses, {
       catalogThread: {
         threadId: "thread-native-1",
@@ -251,7 +262,7 @@ describe("desktop completion routing", () => {
 
   it.each([
     {
-      name: "an invalid exact topic binding",
+      name: "a stale exact topic binding",
       setup: (harness: RoutingHarness) => {
         seedProjectBinding(harness.store, {
           projectId: "proj-a",
@@ -300,7 +311,10 @@ describe("desktop completion routing", () => {
       threadId: "thread-native-1",
       allowlist: ["ou_first", "ou_second"],
       desktopOwnerOpenId: "ou_desktop_owner",
-      routeValidator: (candidate: { mode: string }) => candidate.mode === "dm",
+      routeValidator: (candidate: { mode: string }) => {
+        expect(candidate.mode).not.toBe("thread");
+        return candidate.mode === "dm";
+      },
     });
 
     expect(target).toEqual({

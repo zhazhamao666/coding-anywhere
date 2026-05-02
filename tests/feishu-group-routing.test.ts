@@ -1,41 +1,22 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-
 import { describe, expect, it, vi } from "vitest";
 
 import { FeishuAdapter } from "../src/feishu-adapter.js";
 import type {
   BridgeAssetRecord,
   BridgeReply,
-  ProgressCardState,
 } from "../src/types.js";
 
 describe("FeishuAdapter group thread routing", () => {
-  it("routes thread messages with chat_id and thread_id to CA", async () => {
+  it("drops group topic text messages before they enter CA", async () => {
     const bridgeService = {
-      handleMessage: vi.fn(
-        async (
-          _input: {
-            channel: string;
-            peerId?: string;
-            chatId?: string;
-            chatType?: string;
-            surfaceType?: string;
-            surfaceRef?: string;
-            text: string;
-          },
-          _options?: {
-            onProgress?: (snapshot: ProgressCardState) => Promise<void> | void;
-          },
-        ) => [] satisfies BridgeReply[],
-      ),
+      handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
     };
 
+    const apiClient = createApiClientDouble();
     const adapter = new FeishuAdapter({
       allowlist: ["ou_user"],
       bridgeService,
-      apiClient: createApiClientDouble(),
+      apiClient,
     });
 
     await adapter.handleEnvelope({
@@ -53,20 +34,52 @@ describe("FeishuAdapter group thread routing", () => {
       },
     } as any);
 
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+    expect(apiClient.replyTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("routes plain text from a registered group mainline without a topic surface", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(
+        async () => [{ kind: "system", text: "[ca] mainline ok" } satisfies BridgeReply],
+      ),
+    };
+
+    const apiClient = createApiClientDouble();
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_user"],
+      bridgeService,
+      apiClient,
+      isCodexGroupChat: chatId => chatId === "oc_chat_1",
+    });
+
+    await adapter.handleEnvelope({
+      header: { event_id: "evt-mainline-plain-1" },
+      event: {
+        sender: { sender_id: { open_id: "ou_user" } },
+        message: {
+          message_id: "om_mainline_plain_1",
+          chat_id: "oc_chat_1",
+          chat_type: "group",
+          message_type: "text",
+          content: JSON.stringify({ text: "继续当前群会话" }),
+        },
+      },
+    } as any);
+
     expect(bridgeService.handleMessage).toHaveBeenCalledWith(
       {
         channel: "feishu",
         peerId: "ou_user",
         chatId: "oc_chat_1",
         chatType: "group",
-        surfaceType: "thread",
-        surfaceRef: "omt_thread_1",
-        text: "@bot continue",
+        text: "继续当前群会话",
       },
       {
         onProgress: expect.any(Function),
       },
     );
+    expect(apiClient.replyTextMessage).toHaveBeenCalledWith("om_mainline_plain_1", "[ca] mainline ok");
   });
 
   it("routes group mainline CA commands with the current chat_id", async () => {
@@ -161,76 +174,42 @@ describe("FeishuAdapter group thread routing", () => {
     expect(apiClient.replyTextMessage).toHaveBeenCalledWith("om_at_command_1", "[ca] mentioned ok");
   });
 
-  it("stages thread image messages on the exact thread surface and replies inline", async () => {
-    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-thread-image-"));
+  it("drops group topic image messages without downloading or staging assets", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+    };
+    const apiClient = createApiClientDouble();
+    const pendingAssetStore = createPendingAssetStoreDouble();
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_user"],
+      bridgeService,
+      apiClient,
+      pendingAssetStore,
+      inboundAssetRootDir: "D:/tmp/bridge-assets",
+    });
 
-    try {
-      const bridgeService = {
-        handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
-      };
-      const apiClient = createApiClientDouble({
-        downloadMessageResource: vi.fn(async () => ({
-          resourceKey: "img_thread_1",
-          localPath: path.join(rootDir, "img_thread_1.png"),
-          fileName: "img_thread_1.png",
-          mimeType: "image/png",
-          fileSize: 4096,
-        })),
-      });
-      const pendingAssetStore = createPendingAssetStoreDouble();
-      const adapter = new FeishuAdapter({
-        allowlist: ["ou_user"],
-        bridgeService,
-        apiClient,
-        pendingAssetStore,
-        inboundAssetRootDir: rootDir,
-      });
-
-      await adapter.handleEnvelope({
-        header: { event_id: "evt-image-thread-1" },
-        event: {
-          sender: { sender_id: { open_id: "ou_user" } },
-          message: {
-            message_id: "om_thread_image_1",
-            chat_id: "oc_chat_1",
-            chat_type: "group",
-            message_type: "image",
-            thread_id: "omt_thread_1",
-            content: JSON.stringify({ image_key: "img_thread_1" }),
-          },
+    await adapter.handleEnvelope({
+      header: { event_id: "evt-image-thread-1" },
+      event: {
+        sender: { sender_id: { open_id: "ou_user" } },
+        message: {
+          message_id: "om_thread_image_1",
+          chat_id: "oc_chat_1",
+          chat_type: "group",
+          message_type: "image",
+          thread_id: "omt_thread_1",
+          content: JSON.stringify({ image_key: "img_thread_1" }),
         },
-      } as any);
+      },
+    } as any);
 
-      expect(bridgeService.handleMessage).not.toHaveBeenCalled();
-      expect(apiClient.downloadMessageResource).toHaveBeenCalledWith(
-        expect.objectContaining({
-          messageId: "om_thread_image_1",
-          fileKey: "img_thread_1",
-          type: "image",
-          downloadDir: expect.stringContaining(rootDir),
-        }),
-      );
-      expect(pendingAssetStore.savePendingBridgeAsset).toHaveBeenCalledWith(
-        expect.objectContaining({
-          channel: "feishu",
-          peerId: "ou_user",
-          chatId: "oc_chat_1",
-          surfaceType: "thread",
-          surfaceRef: "omt_thread_1",
-          messageId: "om_thread_image_1",
-          resourceKey: "img_thread_1",
-        }),
-      );
-      expect(apiClient.replyTextMessage).toHaveBeenCalledWith(
-        "om_thread_image_1",
-        "[ca] 已收到图片，请继续发送文字说明。",
-      );
-    } finally {
-      rmSync(rootDir, { recursive: true, force: true });
-    }
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+    expect(apiClient.downloadMessageResource).not.toHaveBeenCalled();
+    expect(pendingAssetStore.savePendingBridgeAsset).not.toHaveBeenCalled();
+    expect(apiClient.replyTextMessage).not.toHaveBeenCalled();
   });
 
-  it("replies with native image messages inside the current group thread", async () => {
+  it("does not send bridge replies for group topic text messages", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => [
         { kind: "image", localPath: "D:/tmp/thread-result.png" } satisfies BridgeReply,
@@ -259,10 +238,9 @@ describe("FeishuAdapter group thread routing", () => {
       },
     } as any);
 
-    expect(apiClient.uploadImage).toHaveBeenCalledWith({
-      imagePath: "D:/tmp/thread-result.png",
-    });
-    expect(apiClient.replyImageMessage).toHaveBeenCalledWith("om_thread_text_1", "img-uploaded-1");
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+    expect(apiClient.uploadImage).not.toHaveBeenCalled();
+    expect(apiClient.replyImageMessage).not.toHaveBeenCalled();
     expect(apiClient.sendImageMessage).not.toHaveBeenCalled();
   });
 });

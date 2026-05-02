@@ -10,7 +10,7 @@ import { buildBridgeHubCard as buildNavigationCard } from "../src/feishu-card/na
 import type { ProgressCardState } from "../src/types.js";
 
 describe("feishu card builder", () => {
-  it("builds a thinking card with CA status, root and session", () => {
+  it("builds a thinking card with CA status, root and session without interactive next-task controls", () => {
     const card = buildBridgeCard(createState({
       status: "preparing",
       stage: "ensuring_session",
@@ -35,9 +35,10 @@ describe("feishu card builder", () => {
     expect(JSON.stringify(card)).toContain("准备中");
     expect(JSON.stringify(card)).toContain("codex-main");
     expect(JSON.stringify(card)).toContain("main");
-    expect(JSON.stringify(card)).toContain("\"bridgeAction\":\"set_codex_model\"");
-    expect(JSON.stringify(card)).toContain("\"bridgeAction\":\"set_reasoning_effort\"");
-    expect(JSON.stringify(card)).toContain("\"bridgeAction\":\"set_codex_speed\"");
+    expect(JSON.stringify(card)).not.toContain("下次任务设置");
+    expect(JSON.stringify(card)).not.toContain("\"bridgeAction\":\"set_codex_model\"");
+    expect(JSON.stringify(card)).not.toContain("\"bridgeAction\":\"set_reasoning_effort\"");
+    expect(JSON.stringify(card)).not.toContain("\"bridgeAction\":\"set_codex_speed\"");
   });
 
   it("adds a stop button to non-terminal streaming cards with the current surface context", () => {
@@ -71,7 +72,8 @@ describe("feishu card builder", () => {
 
     const serialized = JSON.stringify(card);
     expect(serialized).toContain("\"command\":\"/ca stop\"");
-    expect(serialized).toContain("\"bridgeAction\":\"set_codex_model\"");
+    expect(serialized).not.toContain("下次任务设置");
+    expect(serialized).not.toContain("\"bridgeAction\":\"set_codex_model\"");
     expect(serialized).toContain("\"chatType\":\"p2p\"");
     expect(serialized).not.toContain("\"chatId\"");
   });
@@ -94,9 +96,10 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("streaming_mode");
     expect(serialized).toContain("停止任务");
     expect(serialized).toContain("\"command\":\"/ca stop\"");
-    expect(serialized).toContain("\"bridgeAction\":\"set_codex_model\"");
-    expect(serialized).toContain("\"bridgeAction\":\"set_reasoning_effort\"");
-    expect(serialized).toContain("\"bridgeAction\":\"set_codex_speed\"");
+    expect(serialized).not.toContain("下次任务设置");
+    expect(serialized).not.toContain("\"bridgeAction\":\"set_codex_model\"");
+    expect(serialized).not.toContain("\"bridgeAction\":\"set_reasoning_effort\"");
+    expect(serialized).not.toContain("\"bridgeAction\":\"set_codex_speed\"");
   });
 
   it("builds streaming markdown with display labels and strips raw markdown markers from preview text", () => {
@@ -157,12 +160,13 @@ describe("feishu card builder", () => {
     expect(serialized).not.toContain("第四段：这行不应该完整出现在终态卡中。");
     expect(serialized).toContain("完整结果见下方消息");
     expect(serialized).toContain("新会话");
-    expect(serialized).toContain("切换线程");
+    expect(serialized).toContain("切换会话");
+    expect(serialized).not.toContain("切换线程");
     expect(serialized).toContain("更多信息");
     expect(serialized).not.toContain("停止任务");
   });
 
-  it("renders running cards with only the stop action and next-task settings controls", () => {
+  it("renders running cards with only the stop action and no interactive next-task settings controls", () => {
     const card = buildBridgeCard(createState({
       status: "running",
       stage: "text",
@@ -177,10 +181,12 @@ describe("feishu card builder", () => {
     }));
 
     const serialized = JSON.stringify(card);
-    expect(serialized).toContain("下次任务设置");
     expect(serialized).toContain("停止任务");
+    expect(serialized).not.toContain("下次任务设置");
+    expect(serialized).not.toContain("\"tag\":\"select_static\"");
+    expect(serialized).not.toContain("\"bridgeAction\":\"set_codex_model\"");
     expect(serialized).not.toContain("新会话");
-    expect(serialized).not.toContain("切换线程");
+    expect(serialized).not.toContain("切换会话");
     expect(serialized).not.toContain("更多信息");
   });
 
@@ -389,7 +395,7 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("\"bridgeAction\":\"open_diagnostics\"");
   });
 
-  it("orders completed card actions as 新会话 | 切换线程 | 更多信息", () => {
+  it("orders completed card actions as 新会话 | 切换会话 | 更多信息", () => {
     const card = buildNavigationCard({
       title: "任务已完成",
       summaryLines: ["**Root**：main", "**当前会话**：codex-main"],
@@ -408,7 +414,7 @@ describe("feishu card builder", () => {
         },
         {
           id: "switch_thread",
-          label: "切换线程",
+          label: "切换会话",
           type: "default",
           value: {
             command: "/ca thread list-current",
@@ -427,7 +433,7 @@ describe("feishu card builder", () => {
 
     const serialized = JSON.stringify(card);
     const newSessionIndex = serialized.indexOf("新会话");
-    const switchThreadIndex = serialized.indexOf("切换线程");
+    const switchThreadIndex = serialized.indexOf("切换会话");
     const moreInfoIndex = serialized.indexOf("更多信息");
 
     expect(newSessionIndex).toBeGreaterThanOrEqual(0);
@@ -438,7 +444,7 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("\"bridgeAction\":\"open_diagnostics\"");
   });
 
-  it("orders failed card actions as 新会话 | 切换线程 | 更多信息", () => {
+  it("orders failed card actions as 新会话 | 切换会话 | 更多信息", () => {
     const card = buildNavigationCard({
       title: "任务出错",
       summaryLines: ["**Root**：main", "**当前会话**：codex-main"],
@@ -457,7 +463,7 @@ describe("feishu card builder", () => {
         },
         {
           id: "switch_thread",
-          label: "切换线程",
+          label: "切换会话",
           type: "default",
           value: {
             command: "/ca thread list-current",
@@ -476,7 +482,7 @@ describe("feishu card builder", () => {
 
     const serialized = JSON.stringify(card);
     const newSessionIndex = serialized.indexOf("新会话");
-    const switchThreadIndex = serialized.indexOf("切换线程");
+    const switchThreadIndex = serialized.indexOf("切换会话");
     const moreInfoIndex = serialized.indexOf("更多信息");
 
     expect(newSessionIndex).toBeGreaterThanOrEqual(0);
@@ -487,7 +493,7 @@ describe("feishu card builder", () => {
     expect(serialized).toContain("\"bridgeAction\":\"open_diagnostics\"");
   });
 
-  it("orders stopped card actions as 新会话 | 切换线程 | 更多信息", () => {
+  it("orders stopped card actions as 新会话 | 切换会话 | 更多信息", () => {
     const card = buildNavigationCard({
       title: "任务已停止",
       summaryLines: ["**Root**：main", "**当前会话**：codex-main"],
@@ -506,7 +512,7 @@ describe("feishu card builder", () => {
         },
         {
           id: "switch_thread",
-          label: "切换线程",
+          label: "切换会话",
           type: "default",
           value: {
             command: "/ca thread list-current",
@@ -525,7 +531,7 @@ describe("feishu card builder", () => {
 
     const serialized = JSON.stringify(card);
     const newSessionIndex = serialized.indexOf("新会话");
-    const switchThreadIndex = serialized.indexOf("切换线程");
+    const switchThreadIndex = serialized.indexOf("切换会话");
     const moreInfoIndex = serialized.indexOf("更多信息");
 
     expect(newSessionIndex).toBeGreaterThanOrEqual(0);

@@ -368,11 +368,11 @@ describe("feishu live user journeys", () => {
         label: "返回当前会话",
         expectAnyText: ["当前项目已选择", "当前会话已就绪"],
       },
-      {
-        kind: "click",
-        label: "切换线程",
-        expectText: ["选择线程"],
-      },
+        {
+          kind: "click",
+          label: "选择会话",
+          expectText: ["切换到此会话"],
+        },
       {
         kind: "command",
         text: "/ca status",
@@ -417,11 +417,11 @@ describe("feishu live user journeys", () => {
         label: "当前项目",
         expectText: ["当前项目", "coding-anywhere-autotest"],
       },
-      {
-        kind: "click",
-        label: "线程列表",
-        expectText: ["选择线程"],
-      },
+        {
+          kind: "click",
+          label: "会话列表",
+          expectText: ["选择会话"],
+        },
       {
         kind: "command",
         text: "/ca status",
@@ -451,10 +451,19 @@ describe("feishu live user journeys", () => {
       "查看标准会话卡",
       "打开更多信息诊断卡",
       "打开计划模式单次开关",
-      "从选择卡创建新会话",
+      "从选择卡准备新会话",
       "切换到一个已有会话",
       "发送一条短任务并等待终态卡",
       "打开后台观察面",
+    ]));
+    expect(journeys.flatMap(journey => journey.setupSteps).filter(step =>
+      step.kind === "command" && step.text === "/ca new"
+    )).toEqual([]);
+    expect(journeys.flatMap(journey => journey.setupSteps)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "click",
+        label: "切换到此会话",
+      }),
     ]));
   });
 

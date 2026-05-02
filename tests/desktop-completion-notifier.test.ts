@@ -212,29 +212,34 @@ describe("DesktopCompletionNotifier", () => {
     expect(markdownContent).not.toContain("The user interrupted the previous turn on purpose.");
   });
 
-  it("replies only a completion card into an existing Feishu topic via the stored thread anchor", async () => {
+  it("posts to the project-group timeline without reusing stale Feishu topic context", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
       threadId: "thread-native-1",
     });
+    seedThreadBinding(harness.store, {
+      threadId: "thread-native-1",
+      projectId: "project-key-1",
+      chatId: "oc_group_1",
+      feishuThreadId: "omt_topic_1",
+      anchorMessageId: "om_anchor_topic_1",
+    });
 
     await harness.notifier.publish({
       completion: createCompletion({
-        finalAssistantText: "线程内结果已经就位。",
+        finalAssistantText: "项目群里的结果已经就位。",
       }),
       target: {
-        mode: "thread",
+        mode: "project_group",
         chatId: "oc_group_1",
-        surfaceRef: "omt_topic_1",
-        anchorMessageId: "om_anchor_topic_1",
       },
     });
 
-    const notificationCard = harness.apiClient.replyInteractiveCard.mock.calls[0]?.[1] as Record<string, unknown>;
+    const notificationCard = harness.apiClient.sendInteractiveCardToChat.mock.calls[0]?.[1] as Record<string, unknown>;
     const notificationButtons = collectButtons(notificationCard);
 
-    expect(harness.apiClient.replyInteractiveCard).toHaveBeenCalledWith(
-      "om_anchor_topic_1",
+    expect(harness.apiClient.sendInteractiveCardToChat).toHaveBeenCalledWith(
+      "oc_group_1",
       expect.objectContaining({
         header: expect.objectContaining({
           title: expect.objectContaining({
@@ -243,27 +248,33 @@ describe("DesktopCompletionNotifier", () => {
         }),
       }),
     );
+    expect(harness.apiClient.replyInteractiveCard).not.toHaveBeenCalled();
     expect(notificationButtons).toEqual([
       expect.objectContaining({
         label: "在飞书继续",
         type: "primary",
         value: expect.objectContaining({
+          mode: "project_group",
           chatId: "oc_group_1",
-          surfaceType: "thread",
-          surfaceRef: "omt_topic_1",
         }),
       }),
     ]);
-    expect(collectButtons(notificationCard)).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          label: "在群里开话题继续",
-        }),
-      ]),
+    expect(notificationButtons[0]?.value).toEqual(
+      expect.not.objectContaining({
+        surfaceType: expect.anything(),
+        surfaceRef: expect.anything(),
+      }),
     );
     expect(harness.apiClient.replyTextMessage).not.toHaveBeenCalled();
     expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
       lastNotifiedCompletionKey: "thread-native-1:completion-new",
+    });
+    expect(harness.store.getCodexThreadDesktopNotificationState("thread-native-1")).toMatchObject({
+      deliveryMode: "project_group",
+      chatId: "oc_group_1",
+      surfaceType: null,
+      surfaceRef: null,
+      anchorMessageId: null,
     });
   });
 
@@ -454,7 +465,7 @@ describe("DesktopCompletionNotifier", () => {
     expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
   });
 
-  it("uses the stable thread anchor carried in the target instead of re-reading mutable store bindings", async () => {
+  it("stores a running project-group route without re-reading a mutable topic binding", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
       threadId: "thread-native-1",
@@ -467,23 +478,34 @@ describe("DesktopCompletionNotifier", () => {
       anchorMessageId: "om_mutated_other_anchor",
     });
 
-    await harness.notifier.publish({
-      completion: createCompletion({
-        finalAssistantText: "使用预解析锚点发送。",
-      }),
+    await harness.notifier.publishRunning({
+      threadId: "thread-native-1",
+      progress: createProgressSnapshot(),
       target: {
-        mode: "thread",
+        mode: "project_group",
         chatId: "oc_group_1",
-        surfaceRef: "omt_topic_1",
-        anchorMessageId: "om_stable_anchor",
       },
     });
 
-    expect(harness.apiClient.replyInteractiveCard).toHaveBeenCalledWith(
-      "om_stable_anchor",
-      expect.any(Object),
+    expect(harness.apiClient.sendInteractiveCardToChat).toHaveBeenCalledWith(
+      "oc_group_1",
+      expect.objectContaining({
+        header: expect.objectContaining({
+          title: expect.objectContaining({
+            content: "桌面任务进行中",
+          }),
+        }),
+      }),
     );
+    expect(harness.apiClient.replyInteractiveCard).not.toHaveBeenCalled();
     expect(harness.apiClient.replyTextMessage).not.toHaveBeenCalled();
+    expect(harness.store.getCodexThreadDesktopNotificationState("thread-native-1")).toMatchObject({
+      deliveryMode: "project_group",
+      chatId: "oc_group_1",
+      surfaceType: null,
+      surfaceRef: null,
+      anchorMessageId: null,
+    });
   });
 });
 
