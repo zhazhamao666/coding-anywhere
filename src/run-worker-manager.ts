@@ -85,10 +85,17 @@ export class RunWorkerManager {
     const active = this.activeByRunId.get(runId);
     if (active) {
       if (input.concurrencyKey && input.concurrencyKey !== active.concurrencyKey) {
+        const previousConcurrencyKey = active.concurrencyKey;
         if (!this.guard.replace(active.concurrencyKey, input.concurrencyKey)) {
           throw new Error(`RUN_CONCURRENCY_KEY_CONFLICT:${input.concurrencyKey}`);
         }
         active.concurrencyKey = input.concurrencyKey;
+        for (const queued of this.queue) {
+          if (queued.concurrencyKey === previousConcurrencyKey) {
+            queued.concurrencyKey = input.concurrencyKey;
+            queued.descriptor.concurrencyKey = input.concurrencyKey;
+          }
+        }
       }
       if (input.projectId !== undefined) {
         active.projectId = input.projectId;
@@ -295,7 +302,7 @@ export class RunWorkerManager {
         .finally(() => {
           this.activeCount -= 1;
           this.activeByRunId.delete(next.runId);
-          this.guard.release(next.concurrencyKey);
+          this.guard.release(activeRecord.concurrencyKey);
           this.pumpQueue();
         });
     }

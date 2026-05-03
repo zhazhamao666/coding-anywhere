@@ -113,7 +113,11 @@ async function executeJourneyStep(input: {
   }
 
   if (expectedTexts.length > 0 && expectFresh && input.step.requireFreshText !== false) {
-    await expectFreshText(input.page, expectedTexts, beforeCounts, input.step.timeoutMs);
+    if (input.step.expectAnyText) {
+      await expectFreshAnyText(input.page, expectedTexts, beforeCounts, input.step.timeoutMs);
+    } else {
+      await expectFreshText(input.page, expectedTexts, beforeCounts, input.step.timeoutMs);
+    }
   }
   if (input.step.expectText) {
     await expectText(input.page, input.step.expectText, input.step.timeoutMs);
@@ -138,6 +142,8 @@ async function uploadJourneyFile(
     mimeType: step.mimeType,
     buffer: Buffer.from(step.content, "utf8"),
   };
+
+  await ensureFeishuMessageTab(page);
 
   if (await fileInput.count() > 0) {
     await fileInput.setInputFiles(filePayload);
@@ -172,13 +178,16 @@ async function openFeishuFileChooser(page: Page): Promise<FileChooser> {
     return chooser;
   }
 
-  const menuLabels = ["上传文件", "文件", "本地文件", "从本地上传"];
+  const menuLabels = ["本地文件", "上传文件", "从本地上传", "文件"];
   for (const label of menuLabels) {
-    const item = page.getByText(label, { exact: true }).last();
-    if (await item.isVisible().catch(() => false)) {
-      const menuChooser = page.waitForEvent("filechooser", { timeout: 10_000 });
-      await item.click();
-      return menuChooser;
+    const item = await findLowerVisibleExactText(page, label);
+    if (item) {
+      const menuChooser = page.waitForEvent("filechooser", { timeout: 10_000 }).catch(() => null);
+      await item.locator.click();
+      const chooser = await menuChooser;
+      if (chooser) {
+        return chooser;
+      }
     }
   }
 
@@ -196,6 +205,95 @@ async function clickDefaultFeishuAttachEntry(page: Page): Promise<void> {
   const offsetY = Number.parseInt(process.env.FEISHU_LIVE_ATTACH_BUTTON_OFFSET_Y ?? "58", 10);
 
   await page.mouse.click(viewport.width - offsetX, viewport.height - offsetY);
+}
+
+async function ensureFeishuMessageTab(page: Page): Promise<void> {
+  const messageTab = await findConversationHeaderText(page, "消息");
+  if (messageTab) {
+    await messageTab.locator.click();
+    await page.waitForTimeout(500);
+  }
+
+  const viewport = await page.evaluate(() => ({
+    width: window.innerWidth,
+  }));
+  await page.mouse.click(Math.round(viewport.width * 0.425), 99);
+  await page.waitForTimeout(750);
+}
+
+async function findConversationHeaderText(
+  page: Page,
+  text: string,
+): Promise<{ locator: ReturnType<Page["locator"]> } | null> {
+  const viewport = await page.evaluate(() => ({
+    width: window.innerWidth,
+  }));
+  const locator = page.getByText(text, { exact: false });
+  const count = await locator.count();
+  const candidates: Array<{
+    locator: ReturnType<Page["locator"]>;
+    x: number;
+    y: number;
+    index: number;
+  }> = [];
+  for (let index = 0; index < count; index += 1) {
+    const item = locator.nth(index);
+    if (!await item.isVisible().catch(() => false)) {
+      continue;
+    }
+    const box = await item.boundingBox();
+    if (!box) {
+      continue;
+    }
+    if (box.x < viewport.width * 0.3 || box.y < 80 || box.y > 230) {
+      continue;
+    }
+    candidates.push({
+      locator: item,
+      x: box.x,
+      y: box.y,
+      index,
+    });
+  }
+
+  return candidates.sort((left, right) =>
+    left.y - right.y || left.x - right.x || right.index - left.index
+  )[0] ?? null;
+}
+
+async function findLowerVisibleExactText(
+  page: Page,
+  text: string,
+): Promise<{ locator: ReturnType<Page["locator"]> } | null> {
+  const viewport = await page.evaluate(() => ({
+    height: window.innerHeight,
+  }));
+  const locator = page.getByText(text, { exact: true });
+  const count = await locator.count();
+  const candidates: Array<{
+    locator: ReturnType<Page["locator"]>;
+    y: number;
+    index: number;
+  }> = [];
+  for (let index = 0; index < count; index += 1) {
+    const item = locator.nth(index);
+    if (!await item.isVisible().catch(() => false)) {
+      continue;
+    }
+    const box = await item.boundingBox();
+    if (!box || box.y < viewport.height * 0.45) {
+      continue;
+    }
+    candidates.push({
+      locator: item,
+      y: box.y,
+      index,
+    });
+  }
+
+  return candidates.sort((left, right) =>
+    left.y - right.y || right.index - left.index
+  )[0] ?? null;
 }
 
 async function ensurePlanModeToggle(page: Page, targetState: "on" | "off"): Promise<boolean> {
@@ -245,6 +343,41 @@ async function findLatestVisibleExactText(
   return candidates.sort((left, right) => right.y - left.y || right.index - left.index)[0] ?? null;
 }
 
+async function findRightmostVisibleExactText(
+  page: Page,
+  texts: string[],
+): Promise<{ text: string; locator: ReturnType<Page["locator"]> } | null> {
+  const candidates: Array<{
+    text: string;
+    locator: ReturnType<Page["locator"]>;
+    right: number;
+    y: number;
+    index: number;
+  }> = [];
+  for (const text of texts) {
+    const locator = page.getByText(text, { exact: true });
+    const count = await locator.count();
+    for (let index = 0; index < count; index += 1) {
+      const item = locator.nth(index);
+      if (!await item.isVisible().catch(() => false)) {
+        continue;
+      }
+      const box = await item.boundingBox();
+      candidates.push({
+        text,
+        locator: item,
+        right: (box?.x ?? 0) + (box?.width ?? 0),
+        y: box?.y ?? 0,
+        index,
+      });
+    }
+  }
+
+  return candidates.sort((left, right) =>
+    right.right - left.right || right.y - left.y || right.index - left.index
+  )[0] ?? null;
+}
+
 async function countVisibleTexts(
   page: Page,
   texts: string[],
@@ -274,6 +407,17 @@ async function countVisibleText(
 }
 
 async function expectFreshText(
+  page: Page,
+  texts: string[],
+  beforeCounts: Map<string, number>,
+  timeoutMs = 45_000,
+): Promise<void> {
+  for (const text of texts.filter(Boolean)) {
+    await expectFreshAnyText(page, [text], beforeCounts, timeoutMs);
+  }
+}
+
+async function expectFreshAnyText(
   page: Page,
   texts: string[],
   beforeCounts: Map<string, number>,

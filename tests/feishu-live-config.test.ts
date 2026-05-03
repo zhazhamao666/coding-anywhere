@@ -455,6 +455,7 @@ describe("feishu live user journeys", () => {
       "从选择卡准备新会话",
       "切换到一个已有会话",
       "发送一条短任务并等待终态卡",
+      "准备干净新会话",
       "上传 Markdown 附件",
       "要求 Codex 读取刚才附件",
       "要求 Codex 返回桥接资源",
@@ -511,31 +512,40 @@ describe("feishu live user journeys", () => {
     });
     expect(dmJourney.steps).toMatchObject([
       {
+        kind: "command",
+        text: "/ca new",
+        expectAnyText: ["当前项目已选择", "当前群已绑定项目"],
+      },
+      {
         kind: "upload_file",
-        fileName: "live-inbound-file.md",
+        fileName: expect.stringMatching(/^live-inbound-file-[a-z0-9-]+\.md$/),
         mimeType: "text/markdown",
         content: expect.stringContaining("live-inbound-file-ok"),
-        expectText: ["已收到文件", "live-inbound-file.md"],
+        expectText: [
+          "已收到文件",
+          expect.stringMatching(/^live-inbound-file-[a-z0-9-]+\.md$/),
+        ],
       },
       {
         kind: "command",
         text: expect.not.stringContaining("live-inbound-file-ok"),
-        expectText: ["live-inbound-file-ok"],
+        expectText: [expect.stringMatching(/^live-inbound-file-ok-[a-z0-9-]+$/)],
       },
       {
         kind: "command",
         text: expect.stringContaining("[bridge-assets]"),
         expectText: [
-          "live-outbound-assets-ok",
-          "live-outbound-assets.md",
-          "live-outbound-assets.drawio",
+          expect.stringMatching(/^live-outbound-assets-ok-[a-z0-9-]+$/),
+          expect.stringMatching(/^live-outbound-assets-[a-z0-9-]+\.md$/),
+          expect.stringMatching(/^live-outbound-assets-[a-z0-9-]+\.drawio$/),
         ],
       },
     ]);
 
-    const outboundStep = dmJourney.steps[2];
+    const outboundStep = dmJourney.steps[3];
     expect(outboundStep.kind).toBe("command");
     if (outboundStep.kind === "command") {
+      expect(outboundStep.text).not.toMatch(/[\r\n]/);
       for (const expectedText of outboundStep.expectText ?? []) {
         expect(outboundStep.text).not.toContain(expectedText);
       }

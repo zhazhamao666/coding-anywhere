@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
 import Database from "better-sqlite3";
@@ -2494,6 +2494,55 @@ export class SessionStore {
     return result.changes;
   }
 
+  public cleanupBridgeAssetFiles(input: {
+    rootDir: string;
+    cutoff: string;
+  }): number {
+    const rootRealPath = tryRealpath(input.rootDir);
+    if (!rootRealPath) {
+      return 0;
+    }
+
+    const rows = this.db.prepare(`
+      SELECT
+        asset_id,
+        run_id,
+        channel,
+        peer_id,
+        chat_id,
+        surface_type,
+        surface_ref,
+        message_id,
+        resource_type,
+        resource_key,
+        local_path,
+        file_name,
+        mime_type,
+        file_size,
+        status,
+        error_text,
+        created_at,
+        updated_at,
+        consumed_at,
+        failed_at,
+        expired_at
+      FROM pending_bridge_assets
+      WHERE status IN ('expired', 'failed', 'consumed')
+        AND created_at < @cutoff
+    `).all({
+      cutoff: input.cutoff,
+    }) as BridgeAssetRow[];
+
+    let deletedCount = 0;
+    for (const row of rows) {
+      if (deleteBridgeAssetFileWithinRoot(row.local_path, rootRealPath)) {
+        deletedCount += 1;
+      }
+    }
+
+    return deletedCount;
+  }
+
   public purgeOldObservabilityEvents(maxAgeDays = 7): void {
     const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
 
@@ -3466,6 +3515,37 @@ function rowToBridgeAsset(row: BridgeAssetRow): BridgeAssetRecord {
     failedAt: row.failed_at,
     expiredAt: row.expired_at,
   };
+}
+
+function deleteBridgeAssetFileWithinRoot(localPath: string, rootRealPath: string): boolean {
+  if (!existsSync(localPath)) {
+    return false;
+  }
+
+  let fileRealPath: string;
+  try {
+    fileRealPath = realpathSync(localPath);
+    if (!isPathWithinRoot(fileRealPath, rootRealPath) || !statSync(fileRealPath).isFile()) {
+      return false;
+    }
+    rmSync(fileRealPath, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function tryRealpath(inputPath: string): string | undefined {
+  try {
+    return realpathSync(inputPath);
+  } catch {
+    return undefined;
+  }
+}
+
+function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function buildBridgeAssetId(input: {

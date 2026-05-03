@@ -244,4 +244,138 @@ describe("RunWorkerManager", () => {
     releaseRun?.();
     await run;
   });
+
+  it("releases the materialized thread key after a rebound run finishes", async () => {
+    const manager = new RunWorkerManager({ maxConcurrentRuns: 1 });
+    let releaseRun: (() => void) | undefined;
+
+    const runA = manager.schedule({
+      runId: "run-a",
+      concurrencyKey: "pending:feishu:ou_demo",
+      channel: "feishu",
+      peerId: "ou_demo",
+      projectId: null,
+      threadId: null,
+      deliveryChatId: null,
+      deliverySurfaceType: null,
+      deliverySurfaceRef: null,
+      sessionName: "codex-main",
+      rootId: "main",
+      latestPreview: "[ca] received",
+    }, async () => {
+      await new Promise<void>(resolve => {
+        releaseRun = resolve;
+      });
+    });
+
+    await Promise.resolve();
+    manager.rebindRun("run-a", {
+      concurrencyKey: "codex-thread:thread-created",
+      projectId: "proj-created",
+      threadId: "thread-created",
+      sessionName: "thread-created",
+    });
+
+    releaseRun?.();
+    await runA;
+
+    let startedRunB = false;
+    const runB = manager.schedule({
+      runId: "run-b",
+      concurrencyKey: "codex-thread:thread-created",
+      channel: "feishu",
+      peerId: "ou_demo",
+      projectId: "proj-created",
+      threadId: "thread-created",
+      deliveryChatId: null,
+      deliverySurfaceType: null,
+      deliverySurfaceRef: null,
+      sessionName: "thread-created",
+      rootId: "main",
+      latestPreview: "[ca] received",
+    }, async () => {
+      startedRunB = true;
+      return "ok";
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(startedRunB).toBe(true);
+    await expect(runB).resolves.toBe("ok");
+    expect(manager.getRuntimeSnapshot()).toMatchObject({
+      activeCount: 0,
+      queuedCount: 0,
+      locks: [],
+    });
+  });
+
+  it("moves queued runs from the pending key to the materialized thread key", async () => {
+    const manager = new RunWorkerManager({ maxConcurrentRuns: 2 });
+    let releaseRunA: (() => void) | undefined;
+    let startedRunB = false;
+
+    const runA = manager.schedule({
+      runId: "run-a",
+      concurrencyKey: "pending:feishu:ou_demo",
+      channel: "feishu",
+      peerId: "ou_demo",
+      projectId: null,
+      threadId: null,
+      deliveryChatId: null,
+      deliverySurfaceType: null,
+      deliverySurfaceRef: null,
+      sessionName: "codex-main",
+      rootId: "main",
+      latestPreview: "[ca] received",
+    }, async () => {
+      await new Promise<void>(resolve => {
+        releaseRunA = resolve;
+      });
+    });
+
+    const runB = manager.schedule({
+      runId: "run-b",
+      concurrencyKey: "pending:feishu:ou_demo",
+      channel: "feishu",
+      peerId: "ou_demo",
+      projectId: null,
+      threadId: null,
+      deliveryChatId: null,
+      deliverySurfaceType: null,
+      deliverySurfaceRef: null,
+      sessionName: "codex-main",
+      rootId: "main",
+      latestPreview: "[ca] received",
+    }, async () => {
+      startedRunB = true;
+    });
+
+    await Promise.resolve();
+    manager.rebindRun("run-a", {
+      concurrencyKey: "codex-thread:thread-created",
+      projectId: "proj-created",
+      threadId: "thread-created",
+      sessionName: "thread-created",
+    });
+    await Promise.resolve();
+
+    expect(startedRunB).toBe(false);
+    expect(manager.getRuntimeSnapshot()).toMatchObject({
+      activeCount: 1,
+      queuedCount: 1,
+      locks: ["codex-thread:thread-created"],
+      queuedRuns: [
+        expect.objectContaining({
+          runId: "run-b",
+          concurrencyKey: "codex-thread:thread-created",
+        }),
+      ],
+    });
+
+    releaseRunA?.();
+    await runA;
+    await runB;
+    expect(startedRunB).toBe(true);
+  });
 });

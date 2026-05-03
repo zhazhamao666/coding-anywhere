@@ -27,7 +27,8 @@
 - 支持导航卡、会话卡、运行状态卡、计划模式单次开关，以及 Codex 模型(model)、推理强度(reasoning effort)、速度(speed)下拉设置。
 - 使用 `codex exec --json` 创建新 Codex 原生线程，使用 `codex exec resume --json <thread_id>` 续跑已有线程。
 - 同一个线程串行执行，不同线程可以并发，全局并发由 `scheduler.maxConcurrentRuns` 控制。
-- 支持文本和图片桥接：图片先暂存到当前工作面，下一条文本消息自动带入 Codex；assistant 也可以通过受控 `[bridge-image]` 指令回发原生飞书图片。
+- 支持图片和文件桥接：图片/文件先暂存到当前工作面，下一条文本消息自动带入 Codex；assistant 可以通过受控 `[bridge-assets]` 指令回发原生飞书图片或文件，旧 `[bridge-image]` 继续兼容。
+- 支持 Markdown(`.md` / `.markdown`) 和 draw.io(`.drawio` / `.drawio.xml`) 源文件的入站识别、Codex 读取提示和出站文件回传。
 - 支持桌面 Codex 线程生命周期通知，并可通过“在飞书继续”接管到 DM 或已绑定项目群主时间线。
 - 支持 `/healthz`、`/readyz`、`/metrics`、`/ops/ui`、`/ops/overview`、`/ops/runtime` 等运维入口。
 - Windows 下提供 `start-coding-anywhere.cmd` 和 `stop-coding-anywhere.cmd` 一键启停脚本。
@@ -124,6 +125,8 @@ npm run test:feishu:live:dm
 npm run test:feishu:live:group
 npm run test:feishu:live:dm:ui
 npm run test:feishu:live:group:ui
+node scripts/feishu-live.mjs dm bridge-assets
+node scripts/feishu-live.mjs group bridge-assets
 ```
 
 ## 运维入口
@@ -149,8 +152,9 @@ http://127.0.0.1:3000/ops/projects
 - `/ops/ui` 主要服务 run 控制、告警排查和历史详情，不是完整项目/线程管理后台。
 - 没有完整 DM Hub。
 - 当前“计划模式”是 bridge 基于 Codex CLI 拼出的飞书侧工作流，不等同于官方交互式 CLI 原语。
-- 当前只支持文本和图片；通用文件、语音未接通。
-- outbound 图片路径必须位于当前 run `cwd` 或 bridge 受管资产目录内。
+- 当前支持文本、图片和普通文件；语音未接通。
+- `.md` 和 `.drawio` 支持源文件传输与语义标记；自动 Markdown 预览卡、draw.io 渲染预览仍是后续增强。
+- outbound 资源路径必须位于当前 run/desktop completion 专属输出目录，或是本轮已消费入站附件的 exact `local_path`；不允许直接外发任意项目 `cwd` 文件。
 - 真实飞书网页登录 smoke 依赖首次人工登录和持久 profile；SSO、验证码或二次验证仍需要人工介入。
 - 不支持多实例集群部署。
 

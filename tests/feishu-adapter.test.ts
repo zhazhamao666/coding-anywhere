@@ -406,6 +406,7 @@ describe("FeishuAdapter", () => {
         event: {
           message: {
             message_id: "om_image_1",
+            chat_id: "oc_dm_1",
             chat_type: "p2p",
             message_type: "image",
             content: JSON.stringify({ image_key: "img_dm_1" }),
@@ -617,6 +618,7 @@ describe("FeishuAdapter", () => {
         event: {
           message: {
             message_id: "om_file_1",
+            chat_id: "oc_dm_1",
             chat_type: "p2p",
             message_type: "file",
             content: JSON.stringify({
@@ -1004,6 +1006,7 @@ describe("FeishuAdapter", () => {
         allowlist: ["ou_demo"],
         bridgeService,
         apiClient,
+        isCodexGroupChat: chatId => chatId === "oc_group_1",
       });
 
       await adapter.handleEnvelope({
@@ -1036,6 +1039,329 @@ describe("FeishuAdapter", () => {
         "ou_demo",
         "图片超过原生图片限制，已作为文件发送。",
       );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to file delivery when native outbound image upload fails", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-image-fallback-"));
+    const imagePath = path.join(rootDir, "result.png");
+    writeFileSync(imagePath, "png");
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [
+          { kind: "image", localPath: imagePath, caption: "结果图" } satisfies BridgeReply,
+          { kind: "assistant", text: "后续文本仍然发送" } satisfies BridgeReply,
+        ]),
+      };
+      const apiClient = createApiClientDouble({
+        uploadImage: vi.fn(async () => {
+          throw new Error("FEISHU_IMAGE_UPLOAD_FAILED");
+        }),
+      });
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+        isCodexGroupChat: chatId => chatId === "oc_group_1",
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-image-upload-fallback-1",
+        },
+        event: {
+          message: {
+            chat_type: "p2p",
+            message_type: "text",
+            content: JSON.stringify({ text: "请返回结果图" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath: imagePath,
+        fileName: "result.png",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(apiClient.sendFileMessage).toHaveBeenCalledWith("ou_demo", "file-uploaded-1");
+      expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+        "ou_demo",
+        "图片原生发送失败，已作为文件发送。",
+      );
+      expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", "后续文本仍然发送");
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to file delivery when native outbound image upload is unavailable", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-image-unavailable-"));
+    const imagePath = path.join(rootDir, "result.png");
+    writeFileSync(imagePath, "png");
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [
+          { kind: "image", localPath: imagePath, caption: "结果图" } satisfies BridgeReply,
+        ]),
+      };
+      const apiClient = createApiClientDouble();
+      apiClient.uploadImage = undefined as unknown as typeof apiClient.uploadImage;
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-image-upload-unavailable-1",
+        },
+        event: {
+          message: {
+            chat_type: "p2p",
+            message_type: "text",
+            content: JSON.stringify({ text: "请返回结果图" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath: imagePath,
+        fileName: "result.png",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(apiClient.sendFileMessage).toHaveBeenCalledWith("ou_demo", "file-uploaded-1");
+      expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+        "ou_demo",
+        "图片原生发送不可用，已作为文件发送。",
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to file delivery when native outbound image upload returns an empty key", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-image-empty-key-"));
+    const imagePath = path.join(rootDir, "result.png");
+    writeFileSync(imagePath, "png");
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [
+          { kind: "image", localPath: imagePath } satisfies BridgeReply,
+        ]),
+      };
+      const apiClient = createApiClientDouble({
+        uploadImage: vi.fn(async () => ""),
+      });
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-image-upload-empty-key-1",
+        },
+        event: {
+          message: {
+            chat_type: "p2p",
+            message_type: "text",
+            content: JSON.stringify({ text: "请返回结果图" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath: imagePath,
+        fileName: "result.png",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(apiClient.sendFileMessage).toHaveBeenCalledWith("ou_demo", "file-uploaded-1");
+      expect(apiClient.sendImageMessage).not.toHaveBeenCalled();
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to file delivery when native DM image sending is unavailable", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-image-send-unavailable-"));
+    const imagePath = path.join(rootDir, "result.png");
+    writeFileSync(imagePath, "png");
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [
+          { kind: "image", localPath: imagePath } satisfies BridgeReply,
+        ]),
+      };
+      const apiClient = createApiClientDouble();
+      apiClient.sendImageMessage = undefined as unknown as typeof apiClient.sendImageMessage;
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-image-send-unavailable-1",
+        },
+        event: {
+          message: {
+            chat_type: "p2p",
+            message_type: "text",
+            content: JSON.stringify({ text: "请返回结果图" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath: imagePath,
+        fileName: "result.png",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(apiClient.sendFileMessage).toHaveBeenCalledWith("ou_demo", "file-uploaded-1");
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to anchored file delivery when reply image sending is unavailable", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-image-anchor-unavailable-"));
+    const imagePath = path.join(rootDir, "result.png");
+    writeFileSync(imagePath, "png");
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [
+          { kind: "image", localPath: imagePath } satisfies BridgeReply,
+        ]),
+      };
+      const apiClient = createApiClientDouble();
+      apiClient.replyImageMessage = undefined as unknown as typeof apiClient.replyImageMessage;
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+        isCodexGroupChat: chatId => chatId === "oc_group_1",
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-image-anchor-unavailable-1",
+        },
+        event: {
+          message: {
+            message_id: "om_group_anchor_1",
+            chat_id: "oc_group_1",
+            chat_type: "group",
+            message_type: "text",
+            content: JSON.stringify({ text: "请返回结果图" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(apiClient.sendImageMessage).not.toHaveBeenCalled();
+      expect(apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath: imagePath,
+        fileName: "result.png",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(apiClient.replyFileMessage).toHaveBeenCalledWith("om_group_anchor_1", "file-uploaded-1");
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to file delivery when native outbound image sending throws", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-image-send-throws-"));
+    const imagePath = path.join(rootDir, "result.png");
+    writeFileSync(imagePath, "png");
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [
+          { kind: "image", localPath: imagePath } satisfies BridgeReply,
+        ]),
+      };
+      const apiClient = createApiClientDouble({
+        sendImageMessage: vi.fn(async () => {
+          throw new Error("FEISHU_IMAGE_SEND_FAILED");
+        }),
+      });
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-image-send-throws-1",
+        },
+        event: {
+          message: {
+            chat_type: "p2p",
+            message_type: "text",
+            content: JSON.stringify({ text: "请返回结果图" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath: imagePath,
+        fileName: "result.png",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(apiClient.sendFileMessage).toHaveBeenCalledWith("ou_demo", "file-uploaded-1");
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
     }

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
@@ -228,6 +229,7 @@ export class DesktopCompletionNotifier {
     const completionAssets = buildCompletionBridgeAssetReplies({
       finalAssistantText: input.completion.finalAssistantText,
       cwd: thread?.cwd,
+      outputRootDir: buildDesktopCompletionOutputRootDir(input.completion.threadId, input.completion.completionKey),
     });
     const resultText = resolveCompletionResultText(completionAssets.cleanedText);
     const reminderText = resolveLastHumanUserText(
@@ -483,6 +485,7 @@ type CompletionBridgeAssetReply = Extract<BridgeReply, { kind: "image" | "file" 
 function buildCompletionBridgeAssetReplies(input: {
   finalAssistantText: string;
   cwd?: string;
+  outputRootDir: string;
 }): {
   cleanedText: string;
   replies: CompletionBridgeAssetReply[];
@@ -506,6 +509,7 @@ function buildCompletionBridgeAssetReplies(input: {
       kind: asset.kind,
       candidatePath: asset.path,
       cwd,
+      allowedRootDirs: [input.outputRootDir],
       fileName: asset.fileName,
       caption: asset.caption,
       presentation: asset.presentation,
@@ -545,6 +549,20 @@ function buildCompletionBridgeAssetReplies(input: {
     replies,
     visibleTexts,
   };
+}
+
+function buildDesktopCompletionOutputRootDir(threadId: string, completionKey: string): string {
+  return path.join(
+    tmpdir(),
+    "coding-anywhere",
+    "desktop-completion-outbound",
+    sanitizePathSegment(threadId),
+    sanitizePathSegment(completionKey),
+  );
+}
+
+function sanitizePathSegment(value: string): string {
+  return value.trim().replace(/[^a-zA-Z0-9._-]+/g, "_") || "asset";
 }
 
 export function buildDesktopNotificationRenderHash(input: {

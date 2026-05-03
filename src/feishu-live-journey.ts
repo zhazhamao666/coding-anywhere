@@ -159,7 +159,6 @@ function buildMainJourney(input: {
           kind: "command",
           text: "/ca project current",
           expectText: ["当前项目", input.projectKey],
-          requireFreshText: false,
         },
       ],
       steps: [
@@ -206,7 +205,6 @@ function buildMainJourney(input: {
         kind: "command",
         text: `/ca project switch ${input.projectKey}`,
         expectText: ["当前项目已切换"],
-        requireFreshText: false,
       },
     ],
     steps: [
@@ -261,7 +259,6 @@ function buildThreadReadySetupSteps(input: {
         kind: "command",
         text: "/ca project current",
         expectText: ["当前项目", input.projectKey],
-        requireFreshText: false,
       },
       {
         name: "打开测试群会话列表",
@@ -287,7 +284,6 @@ function buildThreadReadySetupSteps(input: {
       kind: "command",
       text: `/ca project switch ${input.projectKey}`,
       expectText: ["当前项目已切换"],
-      requireFreshText: false,
     },
     {
       name: "打开测试 DM 会话列表",
@@ -425,12 +421,20 @@ function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLive
 }
 
 function buildBridgeAssetsScenarioSteps(): FeishuLiveJourneyStep[] {
-  const inboundFileName = "live-inbound-file.md";
-  const inboundFileToken = "live-inbound-file-ok";
-  const assetBaseName = "live-outbound-assets";
-  const assetDir = "tmp/feishu-live-bridge-assets";
+  const runSuffix = buildLiveBridgeAssetRunSuffix();
+  const inboundFileName = `live-inbound-file-${runSuffix}.md`;
+  const inboundFileToken = `live-inbound-file-ok-${runSuffix}`;
+  const assetBaseName = `live-outbound-assets-${runSuffix}`;
+  const outboundToken = `live-outbound-assets-ok-${runSuffix}`;
+  const assetDir = `feishu-live-bridge-assets/${runSuffix}`;
 
   return [
+    {
+      name: "准备干净新会话",
+      kind: "command",
+      text: "/ca new",
+      expectAnyText: ["当前项目已选择", "当前群已绑定项目"],
+    },
     {
       name: "上传 Markdown 附件",
       kind: "upload_file",
@@ -448,28 +452,40 @@ function buildBridgeAssetsScenarioSteps(): FeishuLiveJourneyStep[] {
     {
       name: "要求 Codex 读取刚才附件",
       kind: "command",
-      text: "请读取我刚才上传的 Markdown 附件，找到 stable_token 字段，并且只回复该字段值。不要解释。",
+      text: `请只处理本轮 [bridge-attachments] 中 file_name 等于 ${inboundFileName} 的 Markdown 附件。不要扫描仓库，不要读取历史消息。用 local_path 读取该文件，找到 stable_token 字段，并且只回复该字段值。不要解释。`,
       expectText: [inboundFileToken],
-      timeoutMs: 180_000,
+      timeoutMs: 360_000,
     },
     {
       name: "要求 Codex 返回桥接资源",
       kind: "command",
       text: [
-        "请执行真实飞书资源桥 smoke，完成后按指定格式回复，不要解释。",
-        `1. 在当前工作目录创建目录 ${assetDir}。`,
-        `2. 用 Base64 解码写入一个真正的 1x1 PNG 二进制文件；文件基础名为 ${assetBaseName}，扩展名为 png。Base64: iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=`,
-        `3. 写入同一目录下基础名为 ${assetBaseName}、扩展名为 md 的 Markdown 文件，内容包含 token: live-outbound-assets-md-token。`,
-        `4. 写入同一目录下基础名为 ${assetBaseName}、扩展名为 drawio 的合法 draw.io XML 文件，内容包含 token: live-outbound-assets-drawio-token。`,
-        "5. 最终回复第一行是稳定 token。这个 token 由 live、outbound、assets、ok 四段用短横线连接。",
-        "6. 第一行后紧跟 [bridge-assets] JSON 块和 [/bridge-assets] 结束标签；JSON 里 assets 包含 image、Markdown file、drawio file，path 使用上面目录、基础名和扩展名拼接，Markdown 使用 presentation=markdown_preview，drawio 使用 presentation=drawio_with_preview 且 preview format 为 png。",
-      ].join("\n"),
+        "请执行真实飞书资源桥 smoke。不要扫描仓库，不要运行测试，不要解释；只创建 3 个文件并最终回复桥接块。",
+        `dir = [bridge-output-assets] root_path + '/${assetDir}'`,
+        `base = ${assetBaseName}`,
+        `suffix = ${runSuffix}`,
+        "PNG Base64 = iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+        "要求：",
+        "1. 在当前工作目录创建 dir。",
+        "2. 把 PNG Base64 解码写入 dir + '/' + base + '.png'。",
+        "3. 写入 dir + '/' + base + '.md'，内容包含 token: live-outbound-assets-md-token。",
+        "4. 写入 dir + '/' + base + '.drawio'，内容是合法 draw.io XML，且包含 token: live-outbound-assets-drawio-token。",
+        "5. 最终回复第一行用 live、outbound、assets、ok、suffix 这 5 段按顺序用短横线拼接。",
+        "6. 第一行后紧跟 [bridge-assets] JSON 块和 [/bridge-assets] 结束标签；JSON 里 assets 包含 image、Markdown file、drawio file。path 分别用 dir + '/' + base + '.png'、dir + '/' + base + '.md'、dir + '/' + base + '.drawio'；Markdown 使用 presentation=markdown_preview；drawio 使用 presentation=drawio_with_preview 且 preview format 为 png。",
+      ].join(" "),
       expectText: [
-        "live-outbound-assets-ok",
-        "live-outbound-assets.md",
-        "live-outbound-assets.drawio",
+        outboundToken,
+        `${assetBaseName}.md`,
+        `${assetBaseName}.drawio`,
       ],
-      timeoutMs: 240_000,
+      timeoutMs: 360_000,
     },
   ];
+}
+
+function buildLiveBridgeAssetRunSuffix(): string {
+  const explicitSuffix = process.env.FEISHU_LIVE_RUN_SUFFIX?.trim();
+  const rawSuffix = explicitSuffix || `${Date.now().toString(36)}-${process.pid.toString(36)}`;
+  const suffix = rawSuffix.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  return suffix || `${Date.now().toString(36)}-${process.pid.toString(36)}`;
 }

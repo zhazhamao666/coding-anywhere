@@ -195,6 +195,7 @@ CHANGELOG.md
 - `npm run build`
 - `npm run doctor`
 - 飞书最小联调通过
+- 若涉及图片/文件链路：`node scripts/feishu-live.mjs dm bridge-assets` 与 `node scripts/feishu-live.mjs group bridge-assets`
 ```
 
 ## 8. CHANGELOG 条目怎么写
@@ -284,6 +285,14 @@ npm run start
 - `/ca session`
 
 7. 若本次有飞书 UI 或真实链路相关变更，再补对应 `coding-anywhere-autotest` 夹具 smoke。
+8. 若本次改动涉及图片/文件资源链路，补充：
+
+```bash
+node scripts/feishu-live.mjs dm bridge-assets
+node scripts/feishu-live.mjs group bridge-assets
+```
+
+这两个 smoke 覆盖 inbound Markdown 附件、Codex 生成 PNG / `.md` / `.drawio` 文件，以及 `[bridge-assets]` 回传飞书。
 
 ## 11. 发布动作建议顺序
 
@@ -399,6 +408,7 @@ npm run start
 - `npm run build`
 - `npm run doctor`
 - 飞书最小联调通过
+- 若涉及图片/文件链路：DM 与测试群 `bridge-assets` smoke 通过
 ```
 
 ## 17. 最推荐的落地方式

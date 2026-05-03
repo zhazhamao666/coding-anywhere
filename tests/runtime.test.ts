@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -418,12 +418,16 @@ describe("createRuntime", () => {
     try {
       const staleCreatedAt = "2026-03-31T09:00:00.000Z";
       const freshCreatedAt = "2026-03-31T11:30:00.000Z";
+      const stalePath = path.join(rootDir, "stale.png");
+      const freshPath = path.join(rootDir, "fresh.png");
+      writeFileSync(stalePath, "stale");
+      writeFileSync(freshPath, "fresh");
       const staleAsset = runtime.store.savePendingBridgeAsset({
         channel: "feishu",
         peerId: "ou_demo",
         messageId: "om_image_stale",
         resourceKey: "img_stale",
-        localPath: path.join(rootDir, "stale.png"),
+        localPath: stalePath,
         fileName: "stale.png",
         mimeType: "image/png",
         fileSize: 1234,
@@ -434,7 +438,7 @@ describe("createRuntime", () => {
         peerId: "ou_demo",
         messageId: "om_image_fresh",
         resourceKey: "img_fresh",
-        localPath: path.join(rootDir, "fresh.png"),
+        localPath: freshPath,
         fileName: "fresh.png",
         mimeType: "image/png",
         fileSize: 1234,
@@ -446,6 +450,7 @@ describe("createRuntime", () => {
         runner: runtime.runner,
         ttlHours: 1,
         now: new Date("2026-03-31T12:00:00.000Z"),
+        assetRootDir: rootDir,
       });
 
       expect(runtime.store.listPendingBridgeAssetsForSurface({
@@ -462,6 +467,8 @@ describe("createRuntime", () => {
         messageId: "om_image_stale",
         status: "expired",
       });
+      expect(existsSync(stalePath)).toBe(false);
+      expect(existsSync(freshPath)).toBe(true);
     } finally {
       runtime.store.close();
     }

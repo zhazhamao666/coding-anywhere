@@ -3,6 +3,7 @@ import path from "node:path";
 
 import {
   DEFAULT_BRIDGE_ASSET_ROOT_DIR,
+  type BridgeAssetDirectiveAsset,
   classifyBridgeAssetSemanticType,
   parseBridgeAssetDirectives,
   validateBridgeAssetPath,
@@ -540,18 +541,59 @@ export class BridgeService {
 
     await emitLifecycle("received", "[ca] received", resolved.sessionName);
     let currentThreadId = resolved.threadId;
+    const outboundAssetRootDir = buildRunOutboundAssetRootDir(
+      this.dependencies.managedAssetRootDir ?? DEFAULT_BRIDGE_ASSET_ROOT_DIR,
+      currentProgress.runId,
+    );
+    const shouldExposeOutboundAssetInstructions =
+      shouldExposeBridgeOutputAssetInstructions(effectivePromptText);
 
     const executeRun = async (control?: RunControl): Promise<BridgeReply[]> => {
       let activeResolved = resolved;
+      let activePreferences = effectivePreferences;
       let consumedAssets: BridgeAssetRecord[] = [];
       let sawRunnerEvent = false;
+
+      if (activeResolved.context.targetKind === "new_codex_thread") {
+        const refreshedResolved = this.tryResolveContext(input);
+        if (refreshedResolved && hasResolvedRunContextChanged(activeResolved, refreshedResolved)) {
+          activeResolved = refreshedResolved;
+          activePreferences = this.resolveEffectiveCodexPreferences(input, activeResolved);
+          currentThreadId = activeResolved.threadId;
+          currentProgress = {
+            ...currentProgress,
+            sessionName: activeResolved.sessionName,
+            model: activePreferences.model,
+            reasoningEffort: activePreferences.reasoningEffort,
+            speed: activePreferences.speed,
+          };
+          this.dependencies.store.updateRunContext({
+            runId: currentProgress.runId,
+            sessionName: activeResolved.sessionName,
+            threadId: activeResolved.threadId,
+            projectId: activeResolved.projectId,
+            deliveryChatId: activeResolved.deliveryChatId,
+            deliverySurfaceType: activeResolved.deliverySurfaceType,
+            deliverySurfaceRef: activeResolved.deliverySurfaceRef,
+          });
+          this.dependencies.workerManager?.rebindRun(currentProgress.runId, {
+            concurrencyKey: activeResolved.concurrencyKey,
+            projectId: activeResolved.projectId,
+            threadId: activeResolved.threadId,
+            deliveryChatId: activeResolved.deliveryChatId,
+            deliverySurfaceType: activeResolved.deliverySurfaceType,
+            deliverySurfaceRef: activeResolved.deliverySurfaceRef,
+            sessionName: activeResolved.sessionName,
+          });
+        }
+      }
 
       if (activeResolved.context.targetKind === "new_codex_thread") {
         activeResolved = await this.materializeNativeContext(
           input,
           activeResolved,
           routed.prompt,
-          effectivePreferences,
+          activePreferences,
         );
         currentThreadId = activeResolved.threadId;
         currentProgress = {
@@ -622,6 +664,7 @@ export class BridgeService {
         prompt: effectivePromptText,
         wrapPrompt: activeResolved.wrapPrompt,
         assets: consumedAssets,
+        outboundAssetRootDir: shouldExposeOutboundAssetInstructions ? outboundAssetRootDir : undefined,
       });
       await emitLifecycle("submitting_prompt", "[ca] submitting prompt", activeResolved.sessionName);
       await emitLifecycle(
@@ -632,8 +675,14 @@ export class BridgeService {
 
       const runnerEventHandler = async (event: RunnerEvent) => {
         sawRunnerEvent = true;
-        let snapshot = reduceProgressEvent(currentProgress, event);
-        if (event.type === "text" && event.planInteraction && activeResolved.threadId) {
+        const visibleEvent = redactRunnerEventAttachmentLocalPaths(
+          event,
+          consumedAssets,
+          activeResolved.context.cwd,
+          outboundAssetRootDir,
+        );
+        let snapshot = reduceProgressEvent(currentProgress, visibleEvent);
+        if (visibleEvent.type === "text" && visibleEvent.planInteraction && activeResolved.threadId) {
           const interaction = this.dependencies.store.savePendingPlanInteraction({
             runId: currentProgress.runId,
             channel: input.channel,
@@ -643,8 +692,8 @@ export class BridgeService {
             surfaceRef: activeResolved.deliverySurfaceRef,
             threadId: activeResolved.threadId,
             sessionName: activeResolved.sessionName,
-            question: event.planInteraction.question,
-            choices: event.planInteraction.choices,
+            question: visibleEvent.planInteraction.question,
+            choices: visibleEvent.planInteraction.choices,
           });
           snapshot = {
             ...snapshot,
@@ -654,8 +703,8 @@ export class BridgeService {
         await emitSnapshot(
           snapshot,
           "runner",
-          event.type === "tool_call" ? event.toolName : undefined,
-          event.type === "text" || event.type === "waiting",
+          visibleEvent.type === "tool_call" ? visibleEvent.toolName : undefined,
+          visibleEvent.type === "text" || visibleEvent.type === "waiting",
         );
       };
 
@@ -667,8 +716,8 @@ export class BridgeService {
         control?.setCanceler(async () => {
           await this.dependencies.runner.cancel(activeResolved.context);
         });
-        const shouldForwardSpeed = effectivePreferences.source !== "default" || effectivePreferences.speed === "fast";
-        if (imagePaths.length > 0 || effectivePreferences.source !== "default" || shouldForwardSpeed) {
+        const shouldForwardSpeed = activePreferences.source !== "default" || activePreferences.speed === "fast";
+        if (imagePaths.length > 0 || activePreferences.source !== "default" || shouldForwardSpeed) {
           const runnerOptions: {
             images?: string[];
             model?: string;
@@ -678,12 +727,12 @@ export class BridgeService {
           if (imagePaths.length > 0) {
             runnerOptions.images = imagePaths;
           }
-          if (effectivePreferences.source !== "default") {
-            runnerOptions.model = effectivePreferences.model;
-            runnerOptions.reasoningEffort = effectivePreferences.reasoningEffort;
+          if (activePreferences.source !== "default") {
+            runnerOptions.model = activePreferences.model;
+            runnerOptions.reasoningEffort = activePreferences.reasoningEffort;
           }
           if (shouldForwardSpeed) {
-            runnerOptions.speed = effectivePreferences.speed;
+            runnerOptions.speed = activePreferences.speed;
           }
           outcome = await this.dependencies.runner.submitVerbatim(
             activeResolved.context,
@@ -705,7 +754,7 @@ export class BridgeService {
             assetIds: consumedAssets.map(asset => asset.assetId),
           });
         }
-        throw error;
+        throw redactRunErrorAttachmentLocalPaths(error, consumedAssets, activeResolved.context.cwd, outboundAssetRootDir);
       }
 
       const finalText = findFinalAssistantText(outcome.events);
@@ -713,6 +762,8 @@ export class BridgeService {
         finalText,
         cwd: activeResolved.context.cwd,
         managedAssetRootDir: this.dependencies.managedAssetRootDir ?? DEFAULT_BRIDGE_ASSET_ROOT_DIR,
+        attachmentPathRedactions: consumedAssets,
+        outboundAssetRootDir,
       });
 
       if (currentProgress.status === "error" || outcome.exitCode !== 0) {
@@ -3946,6 +3997,60 @@ function buildRunId(): string {
   return `run-${randomUUID()}`;
 }
 
+function buildRunOutboundAssetRootDir(managedAssetRootDir: string, runId: string): string {
+  return path.join(managedAssetRootDir, "outbound", sanitizeRunPathSegment(runId));
+}
+
+function shouldExposeBridgeOutputAssetInstructions(prompt: string): boolean {
+  const normalized = prompt.toLowerCase();
+  return [
+    "[bridge-assets]",
+    "[bridge-image]",
+    "bridge-assets",
+    "bridge-image",
+    "图片",
+    "图像",
+    "图表",
+    "截图",
+    "文件",
+    "附件",
+    "回传",
+    "返回结果",
+    "markdown",
+    "drawio",
+    ".md",
+    ".drawio",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".pdf",
+    ".docx",
+    ".xlsx",
+    ".pptx",
+    ".csv",
+  ].some(keyword => normalized.includes(keyword));
+}
+
+function sanitizeRunPathSegment(value: string): string {
+  return value.trim().replace(/[^a-zA-Z0-9._-]+/g, "_") || "run";
+}
+
+function hasResolvedRunContextChanged(
+  current: ResolvedContext,
+  next: ResolvedContext,
+): boolean {
+  return current.concurrencyKey !== next.concurrencyKey ||
+    current.threadId !== next.threadId ||
+    current.projectId !== next.projectId ||
+    current.sessionName !== next.sessionName ||
+    current.deliveryChatId !== next.deliveryChatId ||
+    current.deliverySurfaceType !== next.deliverySurfaceType ||
+    current.deliverySurfaceRef !== next.deliverySurfaceRef ||
+    current.context.targetKind !== next.context.targetKind;
+}
+
 function formatCurrentThreadLabel(title: string, fallbackThreadId: string): string {
   const normalizedTitle = title.trim();
   return normalizedTitle.length > 0 ? normalizedTitle : fallbackThreadId;
@@ -4233,8 +4338,9 @@ function buildPromptForCodexRun(input: {
   prompt: string;
   wrapPrompt: boolean;
   assets: BridgeAssetRecord[];
+  outboundAssetRootDir?: string;
 }): string {
-  if (!input.wrapPrompt && input.assets.length === 0) {
+  if (!input.wrapPrompt && input.assets.length === 0 && !input.outboundAssetRootDir) {
     return input.prompt;
   }
 
@@ -4251,6 +4357,20 @@ function buildPromptForCodexRun(input: {
       "- If the user asks about available projects, inspect the filesystem and answer directly.",
       `- Do not tell the user to use ${BRIDGE_COMMAND_PREFIX} repo commands because bridge does not manage projects.`,
       "[/bridge-context]",
+      "",
+    );
+  }
+
+  if (input.outboundAssetRootDir) {
+    sections.push(
+      "[bridge-output-assets]",
+      `root_path: ${input.outboundAssetRootDir}`,
+      "instructions:",
+      "- If you need to return generated images or files to Feishu, create them under root_path during this run.",
+      "- Only files under root_path, plus the current run's bridge attachments, can be sent with [bridge-assets].",
+      "- Do not put secrets or unrelated repository files in [bridge-assets].",
+      "- Keep local filesystem paths out of ordinary assistant text; refer to returned resources by file_name.",
+      "[/bridge-output-assets]",
       "",
     );
   }
@@ -4313,38 +4433,61 @@ function buildFinalBridgeReplies(input: {
   finalText: string;
   cwd: string;
   managedAssetRootDir: string;
+  attachmentPathRedactions?: BridgeAssetRecord[];
+  outboundAssetRootDir: string;
 }): {
   previewText: string;
   replies: BridgeReply[];
 } {
   const parsed = parseBridgeAssetDirectives(input.finalText);
+  const redactionTargets = buildBridgePathRedactionTargets({
+    attachmentPathRedactions: input.attachmentPathRedactions ?? [],
+    directiveAssets: parsed.assets,
+    cwd: input.cwd,
+    outboundAssetRootDir: input.outboundAssetRootDir,
+  });
+  const cleanedText = redactBridgePathTargets(parsed.cleanedText, redactionTargets);
   const replies: BridgeReply[] = [];
-  const fallbackTexts = [...parsed.errors];
+  const fallbackTexts = parsed.errors.map(text =>
+    redactBridgePathTargets(text, redactionTargets)
+  );
   const captionTexts: string[] = [];
 
   for (const asset of parsed.assets) {
+    const assetRedactionTargets = buildBridgePathRedactionTargets({
+      attachmentPathRedactions: input.attachmentPathRedactions ?? [],
+      directiveAssets: [asset],
+      cwd: input.cwd,
+      outboundAssetRootDir: input.outboundAssetRootDir,
+    });
     const validation = validateBridgeAssetPath({
       kind: asset.kind,
       candidatePath: asset.path,
       cwd: input.cwd,
       managedAssetRootDir: input.managedAssetRootDir,
+      allowedRootDirs: [input.outboundAssetRootDir],
+      allowedExactPaths: (input.attachmentPathRedactions ?? []).map(redaction => redaction.localPath),
       fileName: asset.fileName,
       caption: asset.caption,
       presentation: asset.presentation,
       preview: asset.preview,
     });
     if (!validation.ok) {
-      fallbackTexts.push(asset.kind === "image"
+      const errorText = asset.kind === "image"
         ? validation.errorText.replace("[ca] asset unavailable:", "[ca] image unavailable:")
-        : validation.errorText);
+        : validation.errorText;
+      fallbackTexts.push(redactBridgePathTargets(errorText, assetRedactionTargets));
       continue;
     }
 
+    const visibleCaption = validation.asset.caption
+      ? redactBridgePathTargets(validation.asset.caption, assetRedactionTargets)
+      : undefined;
     if (validation.asset.kind === "image") {
       replies.push({
         kind: "image",
         localPath: validation.asset.localPath,
-        caption: validation.asset.caption,
+        caption: visibleCaption,
       });
     } else {
       const fileReply: Extract<BridgeReply, { kind: "file" }> = {
@@ -4352,10 +4495,10 @@ function buildFinalBridgeReplies(input: {
         localPath: validation.asset.localPath,
       };
       if (validation.asset.fileName) {
-        fileReply.fileName = validation.asset.fileName;
+        fileReply.fileName = sanitizeVisibleBridgeFileName(validation.asset.fileName, assetRedactionTargets);
       }
-      if (validation.asset.caption) {
-        fileReply.caption = validation.asset.caption;
+      if (visibleCaption) {
+        fileReply.caption = visibleCaption;
       }
       if (validation.asset.mimeType) {
         fileReply.mimeType = validation.asset.mimeType;
@@ -4375,12 +4518,12 @@ function buildFinalBridgeReplies(input: {
       replies.push(fileReply);
     }
 
-    if (validation.asset.caption) {
-      captionTexts.push(validation.asset.caption);
+    if (visibleCaption) {
+      captionTexts.push(visibleCaption);
     }
   }
 
-  const assistantText = parsed.cleanedText || captionTexts.join("\n\n");
+  const assistantText = cleanedText || captionTexts.join("\n\n");
   if (assistantText) {
     replies.unshift({
       kind: "assistant",
@@ -4398,7 +4541,7 @@ function buildFinalBridgeReplies(input: {
   if (replies.length === 0) {
     replies.push({
       kind: "assistant",
-      text: input.finalText,
+      text: redactBridgePathTargets(input.finalText, redactionTargets),
     });
   }
 
@@ -4406,4 +4549,261 @@ function buildFinalBridgeReplies(input: {
     previewText: assistantText || fallbackTexts[0] || "[ca] asset reply generated",
     replies,
   };
+}
+
+interface BridgePathRedactionTarget {
+  localPath: string;
+  replacement: string;
+}
+
+function redactVisibleBridgeText(input: {
+  text: string;
+  attachmentPathRedactions: BridgeAssetRecord[];
+  cwd: string;
+  outboundAssetRootDir?: string;
+}): string {
+  const partialDirectiveRedaction = redactIncompleteBridgeAssetDirective(input.text);
+  const sourceText = partialDirectiveRedaction.text;
+  const parsed = parseBridgeAssetDirectives(input.text);
+  const targets = buildBridgePathRedactionTargets({
+    attachmentPathRedactions: input.attachmentPathRedactions,
+    directiveAssets: parsed.assets,
+    cwd: input.cwd,
+    outboundAssetRootDir: input.outboundAssetRootDir,
+  });
+  const cleanedText = redactBridgePathTargets(parsed.cleanedText, targets);
+  const captionText = parsed.assets
+    .map(asset => asset.caption ? redactBridgePathTargets(asset.caption, targets) : "")
+    .filter(Boolean)
+    .join("\n\n");
+  const errorText = parsed.errors
+    .map(error => redactBridgePathTargets(error, targets))
+    .filter(Boolean)
+    .join("\n\n");
+
+  if (partialDirectiveRedaction.changed && parsed.assets.length === 0 && parsed.errors.length === 0) {
+    return redactBridgePathTargets(sourceText, targets) || "[ca] asset reply in progress";
+  }
+
+  if (parsed.assets.length > 0 || parsed.errors.length > 0 || cleanedText !== input.text.trim()) {
+    return cleanedText || captionText || errorText || "[ca] asset reply generated";
+  }
+
+  return redactBridgePathTargets(sourceText, targets);
+}
+
+function buildBridgePathRedactionTargets(input: {
+  attachmentPathRedactions: BridgeAssetRecord[];
+  directiveAssets?: BridgeAssetDirectiveAsset[];
+  cwd?: string;
+  outboundAssetRootDir?: string;
+}): BridgePathRedactionTarget[] {
+  const targets: BridgePathRedactionTarget[] = [];
+
+  for (const asset of input.attachmentPathRedactions) {
+    addBridgePathRedactionTarget(targets, asset.localPath, asset.fileName);
+  }
+
+  for (const asset of input.directiveAssets ?? []) {
+    addBridgePathRedactionTarget(targets, asset.path, asset.fileName);
+    if (input.cwd) {
+      addBridgePathRedactionTarget(
+        targets,
+        path.resolve(path.isAbsolute(asset.path) ? asset.path : path.join(input.cwd, asset.path)),
+        asset.fileName || path.basename(asset.path),
+      );
+    }
+    if (asset.fileName) {
+      addBridgePathRedactionTarget(targets, asset.fileName, path.basename(asset.fileName.replace(/\\/g, "/")));
+    }
+  }
+  if (input.outboundAssetRootDir) {
+    addBridgePathRedactionTarget(targets, input.outboundAssetRootDir, "bridge-output-assets");
+  }
+
+  return targets;
+}
+
+function addBridgePathRedactionTarget(
+  targets: BridgePathRedactionTarget[],
+  localPath: string | undefined,
+  replacementCandidate?: string,
+): void {
+  const trimmedPath = localPath?.trim();
+  if (!trimmedPath) {
+    return;
+  }
+
+  const replacement = buildPathRedactionReplacement(trimmedPath, replacementCandidate);
+  if (targets.some(target => target.localPath === trimmedPath && target.replacement === replacement)) {
+    return;
+  }
+  targets.push({
+    localPath: trimmedPath,
+    replacement,
+  });
+}
+
+function buildPathRedactionReplacement(localPath: string, replacementCandidate?: string): string {
+  const candidate = replacementCandidate?.trim();
+  const candidateBaseName = candidate ? path.basename(candidate.replace(/\\/g, "/")) : "";
+  const pathBaseName = path.basename(localPath.replace(/\\/g, "/"));
+  return candidateBaseName || pathBaseName || "附件";
+}
+
+function redactBridgePathTargets(text: string, targets: BridgePathRedactionTarget[]): string {
+  if (!text || targets.length === 0) {
+    return text;
+  }
+
+  let redactedText = text;
+  for (const target of targets) {
+    for (const pathVariant of buildLocalPathRedactionVariants(target.localPath)) {
+      redactedText = redactedText.split(pathVariant).join(target.replacement);
+    }
+  }
+
+  return redactedText;
+}
+
+function sanitizeVisibleBridgeFileName(
+  fileName: string,
+  targets: BridgePathRedactionTarget[],
+): string {
+  const redactedFileName = redactBridgePathTargets(fileName, targets).trim();
+  return path.basename(redactedFileName.replace(/\\/g, "/")) || redactedFileName || "attachment";
+}
+
+function redactRunnerEventAttachmentLocalPaths(
+  event: RunnerEvent,
+  assets: BridgeAssetRecord[],
+  cwd: string,
+  outboundAssetRootDir?: string,
+): RunnerEvent {
+  switch (event.type) {
+    case "text":
+      if (!event.planInteraction) {
+        return {
+          ...event,
+          content: redactVisibleBridgeText({ text: event.content, attachmentPathRedactions: assets, cwd, outboundAssetRootDir }),
+        };
+      }
+      return {
+        ...event,
+        content: redactVisibleBridgeText({ text: event.content, attachmentPathRedactions: assets, cwd, outboundAssetRootDir }),
+        planInteraction: {
+          ...event.planInteraction,
+          question: redactVisibleBridgeText({
+            text: event.planInteraction.question,
+            attachmentPathRedactions: assets,
+            cwd,
+            outboundAssetRootDir,
+          }),
+          choices: event.planInteraction.choices.map(choice => {
+            const sanitizedChoice = {
+              ...choice,
+              label: redactVisibleBridgeText({
+                text: choice.label,
+                attachmentPathRedactions: assets,
+                cwd,
+                outboundAssetRootDir,
+              }),
+            };
+            return choice.description
+              ? {
+                  ...sanitizedChoice,
+                  description: redactVisibleBridgeText({
+                    text: choice.description,
+                    attachmentPathRedactions: assets,
+                    cwd,
+                    outboundAssetRootDir,
+                  }),
+                }
+              : sanitizedChoice;
+          }),
+        },
+      };
+    case "tool_call":
+    case "error":
+      return {
+        ...event,
+        content: redactVisibleBridgeText({ text: event.content, attachmentPathRedactions: assets, cwd, outboundAssetRootDir }),
+      };
+    case "done":
+      return event.content
+        ? {
+            ...event,
+            content: redactVisibleBridgeText({ text: event.content, attachmentPathRedactions: assets, cwd, outboundAssetRootDir }),
+          }
+        : event;
+    case "waiting": {
+      const redactedEvent = event.content
+        ? {
+            ...event,
+            content: redactVisibleBridgeText({ text: event.content, attachmentPathRedactions: assets, cwd, outboundAssetRootDir }),
+          }
+        : event;
+      return redactedEvent.planTodos
+        ? {
+            ...redactedEvent,
+            planTodos: redactedEvent.planTodos.map(todo => ({
+              ...todo,
+              text: redactVisibleBridgeText({
+                text: todo.text,
+                attachmentPathRedactions: assets,
+                cwd,
+                outboundAssetRootDir,
+              }),
+            })),
+          }
+        : redactedEvent;
+    }
+  }
+}
+
+function redactRunErrorAttachmentLocalPaths(
+  error: unknown,
+  assets: BridgeAssetRecord[],
+  cwd: string,
+  outboundAssetRootDir?: string,
+): unknown {
+  if (isRunCanceledError(error) || (assets.length === 0 && !outboundAssetRootDir)) {
+    return error;
+  }
+
+  return new Error(redactVisibleBridgeText({
+    text: normalizeRunError(error),
+    attachmentPathRedactions: assets,
+    cwd,
+    outboundAssetRootDir,
+  }));
+}
+
+function redactIncompleteBridgeAssetDirective(text: string): { text: string; changed: boolean } {
+  const startIndex = text.indexOf("[bridge-assets]");
+  if (startIndex < 0) {
+    return { text, changed: false };
+  }
+
+  const endIndex = text.indexOf("[/bridge-assets]", startIndex);
+  if (endIndex >= 0) {
+    return { text, changed: false };
+  }
+
+  return {
+    text: text.slice(0, startIndex).trim(),
+    changed: true,
+  };
+}
+
+function buildLocalPathRedactionVariants(localPath: string): string[] {
+  const slashPath = localPath.replace(/\\/g, "/");
+  const backslashPath = localPath.replace(/\//g, "\\");
+  const escapedBackslashPath = backslashPath.replace(/\\/g, "\\\\");
+  return Array.from(new Set([
+    localPath,
+    slashPath,
+    backslashPath,
+    escapedBackslashPath,
+  ].filter(Boolean)));
 }

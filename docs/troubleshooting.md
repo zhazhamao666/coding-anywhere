@@ -316,6 +316,82 @@ event_msg.task_complete(last_agent_message:null)
 - 多用户或需要固定通知对象：把接收通知的用户 `open_id` 填入 `feishu.desktopOwnerOpenId` 后重启
 - 不要填写机器人 ID；飞书主动发 DM 时目标必须是用户 `open_id`
 
+## 现象 15：飞书文件发送后，Codex 没有看到附件
+
+最可能原因：
+
+- 飞书应用没有读取消息资源权限，bridge 无法下载 `file_key`
+- 用户只发送了文件，还没有继续发送文字说明；pending 文件会等下一条文本消息一起进入 Codex
+- 当前消息不属于 DM 或已绑定项目群主时间线，或群聊没有绑定到项目
+
+检查方法：
+
+- 看飞书是否先回复“已收到文件：<文件名>，请继续发送文字说明”
+- 看 `/ops/runs/<run-id>` 的 prompt 预览或事件，确认是否出现 `[bridge-attachments]`
+- 在飞书后台确认“接收消息 v2.0”和读取消息资源权限已经发布
+
+处理动作：
+
+- 文件确认回复出现后，再发送一条明确的文本任务
+- 若没有确认回复，先按 [飞书配置说明](./feishu-setup.md) 检查消息资源权限
+- 群聊里先执行 `/ca project current`，确认当前群绑定的是目标项目
+
+## 现象 16：Codex 生成了文件，但飞书没有收到文件消息
+
+最可能原因：
+
+- Codex 最终回复没有包含合法 `[bridge-assets]` 指令
+- 指令里的路径不在当前 run/desktop completion 专属输出目录，也不是本轮已消费入站附件的 exact `local_path`
+- 文件不存在、是目录、0 字节，或超过飞书文件上传上限
+- 飞书应用没有上传文件/发送文件消息权限
+
+检查方法：
+
+- 看最终回复是否包含 `[bridge-assets] ... [/bridge-assets]`
+- 看用户可见错误是否包含 `disallowed path`、`file not found`、`empty file` 或 `too large`
+- 确认本轮 prompt 中是否出现 `[bridge-output-assets] root_path=...`；需要回传新生成文件时，应把文件写到这个输出目录下
+
+处理动作：
+
+- 让 Codex 把要回传的资源保存到 `[bridge-output-assets]` 指定的目录，再用 `[bridge-assets]` 声明
+- 不要让 Codex 直接外发任意项目 `cwd` 文件；需要回传入站附件原文件时，必须使用本轮附件的 exact `local_path`
+- 补齐飞书文件上传/发送权限并发布应用版本
+
+## 现象 17：图片被当成文件发送，或图片发送失败后有降级提示
+
+最可能原因：
+
+- 图片超过飞书原生图片上传限制，当前按 `10MB` 作为原生图片上限
+- 图片上传接口、发送图片接口或锚定回复图片能力不可用
+- 图片不超过 `30MB` 时，bridge 会尽量降级为原生文件消息；超过 `30MB` 时不会上传
+
+检查方法：
+
+- 看用户可见提示是否说明“已作为文件发送”或“图片太大”
+- 检查飞书应用是否同时具备图片上传/发送和文件上传/发送权限
+
+处理动作：
+
+- 需要飞书内直接看图时，让 Codex 生成更小的 PNG/JPG
+- 只需要交付原始高分辨率图片时，接受文件消息即可
+
+## 现象 18：`.md` 或 `.drawio` 没有在飞书里自动渲染预览
+
+最可能原因：
+
+- 当前实现支持 Markdown/draw.io 源文件传输、语义标记和源文件回传
+- 自动 Markdown 预览卡、draw.io PNG/SVG/PDF 渲染预览仍是后续增强
+
+检查方法：
+
+- 确认飞书是否收到了 `.md` 或 `.drawio` 原文件
+- 看 Codex prompt 中是否出现 `semantic_type=markdown` 或 `semantic_type=drawio`
+
+处理动作：
+
+- 需要可读摘要时，在任务里明确要求 Codex 同时回复摘要文本，并把 `.md` 源文件作为附件回传
+- 需要 draw.io 可视化预览时，让 Codex 另行生成 PNG 预览文件，并用 `[bridge-assets]` 同时声明 PNG 和 `.drawio`
+
 ## 常用排查入口
 
 ```bash

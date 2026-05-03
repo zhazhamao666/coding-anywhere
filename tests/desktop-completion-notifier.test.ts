@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,6 +22,7 @@ describe("DesktopCompletionNotifier", () => {
         rmSync(harness.rootDir, { recursive: true, force: true });
       }
     }
+    rmSync(desktopCompletionOutputRoot(), { recursive: true, force: true });
   });
 
   it("sends a DM completion card without a second full-result message and advances the notified key", async () => {
@@ -62,8 +63,10 @@ describe("DesktopCompletionNotifier", () => {
 
   it("delivers completion bridge assets to a DM after sending the cleaned completion card", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "desktop-completion-assets-"));
-    const imagePath = path.join(cwd, "chart.png");
-    const filePath = path.join(cwd, "report.md");
+    const outputRoot = desktopCompletionOutputRoot();
+    const imagePath = path.join(outputRoot, "chart.png");
+    const filePath = path.join(outputRoot, "report.md");
+    mkdirSync(outputRoot, { recursive: true });
     writeFileSync(imagePath, "png");
     writeFileSync(filePath, "# report\n");
 
@@ -81,11 +84,11 @@ describe("DesktopCompletionNotifier", () => {
             "任务已经处理完成。",
             "[bridge-assets]",
             JSON.stringify({
-              assets: [
-                { kind: "image", path: "chart.png", caption: "结果图" },
-                { kind: "file", path: "report.md", file_name: "report.md", caption: "结果报告" },
-              ],
-            }),
+                assets: [
+                  { kind: "image", path: imagePath, caption: "结果图" },
+                  { kind: "file", path: filePath, file_name: "report.md", caption: "结果报告" },
+                ],
+              }),
             "[/bridge-assets]",
           ].join("\n"),
         }),
@@ -114,6 +117,49 @@ describe("DesktopCompletionNotifier", () => {
         harness.apiClient.uploadImage.mock.invocationCallOrder[0] ?? 0,
       );
       expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("does not deliver desktop completion bridge assets directly from the thread cwd", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "desktop-completion-cwd-assets-"));
+    const filePath = path.join(cwd, "secret.md");
+    writeFileSync(filePath, "# secret\n");
+
+    try {
+      const harness = createHarness(harnesses, {
+        threadCwd: cwd,
+      });
+      seedWatchState(harness.store, {
+        threadId: "thread-native-1",
+      });
+
+      await harness.notifier.publish({
+        completion: createCompletion({
+          finalAssistantText: [
+            "任务已经处理完成。",
+            "[bridge-assets]",
+            JSON.stringify({
+              assets: [
+                { kind: "file", path: "secret.md", file_name: "secret.md" },
+              ],
+            }),
+            "[/bridge-assets]",
+          ].join("\n"),
+        }),
+        target: {
+          mode: "dm",
+          peerId: "ou_demo",
+        },
+      });
+
+      expect(harness.apiClient.uploadFile).not.toHaveBeenCalled();
+      expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith(
+        "ou_demo",
+        expect.stringContaining("[ca] asset unavailable: disallowed path secret.md"),
+      );
+      expect(JSON.stringify(harness.apiClient.sendTextMessage.mock.calls)).not.toContain(filePath);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -229,7 +275,9 @@ describe("DesktopCompletionNotifier", () => {
 
   it("replies completion bridge assets to the frozen thread anchor after patching the running card", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "desktop-completion-thread-assets-"));
-    const imagePath = path.join(cwd, "thread-chart.png");
+    const outputRoot = desktopCompletionOutputRoot();
+    const imagePath = path.join(outputRoot, "thread-chart.png");
+    mkdirSync(outputRoot, { recursive: true });
     writeFileSync(imagePath, "png");
 
     try {
@@ -262,11 +310,11 @@ describe("DesktopCompletionNotifier", () => {
           finalAssistantText: [
             "线程里的结果已完成。",
             "[bridge-image]",
-            JSON.stringify({
-              images: [
-                { path: "thread-chart.png", caption: "线程结果图" },
-              ],
-            }),
+              JSON.stringify({
+                images: [
+                  { path: imagePath, caption: "线程结果图" },
+                ],
+              }),
             "[/bridge-image]",
           ].join("\n"),
         }),
@@ -398,8 +446,10 @@ describe("DesktopCompletionNotifier", () => {
 
   it("delivers completion bridge assets directly to a project group chat", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "desktop-completion-group-assets-"));
-    const imagePath = path.join(cwd, "group-chart.png");
-    const filePath = path.join(cwd, "group-report.md");
+    const outputRoot = desktopCompletionOutputRoot();
+    const imagePath = path.join(outputRoot, "group-chart.png");
+    const filePath = path.join(outputRoot, "group-report.md");
+    mkdirSync(outputRoot, { recursive: true });
     writeFileSync(imagePath, "png");
     writeFileSync(filePath, "# group report\n");
 
@@ -417,11 +467,11 @@ describe("DesktopCompletionNotifier", () => {
             "项目群里的资源已生成。",
             "[bridge-assets]",
             JSON.stringify({
-              assets: [
-                { kind: "image", path: "group-chart.png" },
-                { kind: "file", path: "group-report.md", file_name: "group-report.md" },
-              ],
-            }),
+                assets: [
+                  { kind: "image", path: imagePath },
+                  { kind: "file", path: filePath, file_name: "group-report.md" },
+                ],
+              }),
             "[/bridge-assets]",
           ].join("\n"),
         }),
@@ -645,8 +695,10 @@ describe("DesktopCompletionNotifier", () => {
 
   it("sends oversized completion images as files up to 30 MB and reports images above that visibly", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "desktop-completion-oversized-images-"));
-    const fileSizedImagePath = path.join(cwd, "large-chart.png");
-    const tooLargeImagePath = path.join(cwd, "too-large-chart.png");
+    const outputRoot = desktopCompletionOutputRoot();
+    const fileSizedImagePath = path.join(outputRoot, "large-chart.png");
+    const tooLargeImagePath = path.join(outputRoot, "too-large-chart.png");
+    mkdirSync(outputRoot, { recursive: true });
     writeFileSync(fileSizedImagePath, "");
     writeFileSync(tooLargeImagePath, "");
     truncateSync(fileSizedImagePath, 10 * 1024 * 1024 + 1);
@@ -666,11 +718,11 @@ describe("DesktopCompletionNotifier", () => {
             "两张图已生成。",
             "[bridge-assets]",
             JSON.stringify({
-              assets: [
-                { kind: "image", path: "large-chart.png" },
-                { kind: "image", path: "too-large-chart.png" },
-              ],
-            }),
+                assets: [
+                  { kind: "image", path: fileSizedImagePath },
+                  { kind: "image", path: tooLargeImagePath },
+                ],
+              }),
             "[/bridge-assets]",
           ].join("\n"),
         }),
@@ -922,6 +974,16 @@ function createCompletion(
     completionKey: "thread-native-1:completion-new",
     ...overrides,
   };
+}
+
+function desktopCompletionOutputRoot(): string {
+  return path.join(
+    tmpdir(),
+    "coding-anywhere",
+    "desktop-completion-outbound",
+    "thread-native-1",
+    "thread-native-1_completion-new",
+  );
 }
 
 function createProgressSnapshot(

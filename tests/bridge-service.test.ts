@@ -1046,6 +1046,112 @@ describe("BridgeService", () => {
     );
   });
 
+  it("re-resolves queued new-session messages onto the thread created by the first run", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    store.setCodexProjectSelection({
+      channel: "feishu",
+      peerId: "ou_demo",
+      projectKey: "proj-native",
+    });
+    const catalogProject = {
+      projectKey: "proj-native",
+      cwd: projectCwd,
+      displayName: "coding-anywhere",
+      threadCount: 1,
+      activeThreadCount: 1,
+      lastUpdatedAt: "2026-03-30T00:00:00.000Z",
+      gitBranch: "main",
+    };
+    const catalogThreads = new Map<string, CodexCatalogThread>();
+    const runner = {
+      createThread: vi.fn(async () => {
+        const thread: CodexCatalogThread = {
+          threadId: "thread-created",
+          projectKey: "proj-native",
+          cwd: projectCwd,
+          displayName: "coding-anywhere",
+          title: "first run",
+          source: "vscode",
+          archived: false,
+          updatedAt: "2026-03-30T00:00:00.000Z",
+          createdAt: "2026-03-29T00:00:00.000Z",
+          gitBranch: "main",
+          cliVersion: "0.116.0",
+          rolloutPath: "D:/rollout",
+        };
+        catalogThreads.set(thread.threadId, thread);
+        return {
+          exitCode: 0,
+          events: [],
+          threadId: thread.threadId,
+        };
+      }),
+      ensureSession: vi.fn(async () => undefined),
+      cancel: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      submitVerbatim: vi.fn(async (
+        _context,
+        _prompt,
+        optionsOrOnEvent?: { images?: string[] } | ((event: RunnerEvent) => void),
+        maybeOnEvent?: (event: RunnerEvent) => void,
+      ) => {
+        const onEvent = typeof optionsOrOnEvent === "function"
+          ? optionsOrOnEvent
+          : maybeOnEvent;
+        const events: RunnerEvent[] = [
+          { type: "text", content: "测试已经执行完成" },
+          { type: "done", content: "测试已经执行完成" },
+        ];
+        for (const event of events) {
+          onEvent?.(event);
+        }
+        return {
+          exitCode: 0,
+          events,
+        };
+      }),
+    };
+    const service = new BridgeService({
+      store,
+      runner,
+      workerManager: new RunWorkerManager({ maxConcurrentRuns: 2 }),
+      codexCatalog: {
+        listProjects: vi.fn(() => [catalogProject]),
+        getProject: vi.fn((projectKey: string) => projectKey === "proj-native" ? catalogProject : undefined),
+        listThreads: vi.fn(() => Array.from(catalogThreads.values())),
+        getThread: vi.fn((threadId: string) => catalogThreads.get(threadId)),
+        listRecentConversation: vi.fn(() => []),
+      },
+    });
+
+    const firstRun = service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "第一条消息创建新会话",
+    });
+    const secondRun = service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      text: "第二条消息应该复用新会话",
+    });
+
+    await expect(Promise.all([firstRun, secondRun])).resolves.toEqual([
+      [{ kind: "assistant", text: "测试已经执行完成" }],
+      [{ kind: "assistant", text: "测试已经执行完成" }],
+    ]);
+    expect(runner.createThread).toHaveBeenCalledTimes(1);
+    expect(runner.submitVerbatim.mock.calls.map(call => call[0])).toEqual([
+      expect.objectContaining({
+        targetKind: "codex_thread",
+        threadId: "thread-created",
+      }),
+      expect.objectContaining({
+        targetKind: "codex_thread",
+        threadId: "thread-created",
+      }),
+    ]);
+  });
+
   it("emits lifecycle and tool snapshots while the runner stream is active", async () => {
     const runner = createRunnerDouble();
     const snapshots: ProgressCardState[] = [];
@@ -1241,21 +1347,52 @@ describe("BridgeService", () => {
       fileSize: 4096,
     });
 
+    const escapedNotesPath = "D:\\\\assets\\\\notes.md";
+    const pathEchoText = `我读取了 D:/assets/notes.md，也参考了 D:\\assets\\diagram.drawio，并看到了 ${escapedNotesPath}。`;
     const runner = createRunnerDouble([
-      { type: "text", content: "结合图片分析完成。" },
-      { type: "done", content: "结合图片分析完成。" },
+      {
+        type: "text",
+        content: "请选择 D:/assets/notes.md",
+        planInteraction: {
+          question: "是否读取 D:/assets/notes.md？",
+          choices: [{
+            choiceId: "read",
+            label: "读取 D:/assets/notes.md",
+            description: "参考 D:\\assets\\diagram.drawio",
+            responseText: "继续读取 D:/assets/notes.md",
+          }],
+        },
+      },
+      {
+        type: "waiting",
+        content: "规划 D:/assets/notes.md",
+        planTodos: [{
+          text: "读取 D:/assets/notes.md",
+          completed: false,
+        }],
+      },
+      { type: "text", content: pathEchoText },
+      { type: "done", content: pathEchoText },
     ]);
+    const snapshots: ProgressCardState[] = [];
     const service = new BridgeService({
       store,
       runner,
     });
 
-    await service.handleMessage({
-      channel: "feishu",
-      peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      text: "请结合刚才的图片继续分析",
-    });
+    const replies = await service.handleMessage(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        text: "请结合刚才的图片继续分析",
+      },
+      {
+        onProgress: snapshot => {
+          snapshots.push(snapshot);
+        },
+      },
+    );
 
     expect(runner.submitVerbatim).toHaveBeenCalledWith(
       {
@@ -1281,6 +1418,29 @@ describe("BridgeService", () => {
     expect(prompt).toContain("Treat local_path values as internal-only handles");
     expect(prompt).toContain("Markdown attachments are UTF-8 text files");
     expect(prompt).toContain("draw.io attachments are editable XML diagram sources");
+    expect(replies).toEqual([{
+      kind: "assistant",
+      text: "我读取了 notes.md，也参考了 diagram.drawio，并看到了 notes.md。",
+    }]);
+    const planSnapshot = snapshots.find(snapshot => snapshot.planInteraction)?.planInteraction;
+    expect(planSnapshot?.question).toBe("是否读取 notes.md？");
+    expect(planSnapshot?.choices[0]?.label).toBe("读取 notes.md");
+    expect(planSnapshot?.choices[0]?.description).toBe("参考 diagram.drawio");
+    expect(planSnapshot?.choices[0]?.responseText).toContain("D:/assets/notes.md");
+    expect(snapshots.find(snapshot => snapshot.planTodos)?.planTodos).toEqual([{
+      text: "读取 notes.md",
+      completed: false,
+    }]);
+    const visibleSnapshotText = [
+      ...snapshots.map(snapshot => snapshot.preview),
+      planSnapshot?.question ?? "",
+      planSnapshot?.choices[0]?.label ?? "",
+      planSnapshot?.choices[0]?.description ?? "",
+      ...(snapshots.flatMap(snapshot => snapshot.planTodos ?? []).map(todo => todo.text)),
+    ].join("\n");
+    expect(visibleSnapshotText).not.toContain("D:/assets/notes.md");
+    expect(visibleSnapshotText).not.toContain("D:\\assets\\diagram.drawio");
+    expect(visibleSnapshotText).not.toContain(escapedNotesPath);
     expect(store.listPendingBridgeAssetsForSurface({
       channel: "feishu",
       peerId: "ou_demo",
@@ -1334,20 +1494,29 @@ describe("BridgeService", () => {
       cancel: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
       submitVerbatim: vi.fn(async () => {
-        throw new Error("CODEX_LAUNCH_FAILED");
+        throw new Error("CODEX_LAUNCH_FAILED D:/assets/one.png");
       }),
     };
     const service = new BridgeService({
       store,
       runner,
     });
+    const snapshots: ProgressCardState[] = [];
 
-    await expect(service.handleMessage({
-      channel: "feishu",
-      peerId: "ou_demo",
-      chatId: "oc_chat_current",
-      text: "请结合刚才的图片继续分析",
-    })).rejects.toThrow("CODEX_LAUNCH_FAILED");
+    await expect(service.handleMessage(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        text: "请结合刚才的图片继续分析",
+      },
+      {
+        onProgress: snapshot => {
+          snapshots.push(snapshot);
+        },
+      },
+    )).rejects.toThrow("CODEX_LAUNCH_FAILED one.png");
+    expect(JSON.stringify(snapshots)).not.toContain("D:/assets/one.png");
 
     expect(store.listPendingBridgeAssetsForSurface({
       channel: "feishu",
@@ -1364,9 +1533,8 @@ describe("BridgeService", () => {
 
   it("strips bridge-image directives from assistant text and returns image replies", async () => {
     const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
-    const imagePath = path.join(projectCwd, "artifacts", "result.png");
-    mkdirSync(path.dirname(imagePath), { recursive: true });
-    writeFileSync(imagePath, "png");
+    const managedAssetRootDir = path.join(rootDir, "managed-assets");
+    let imagePath = "";
 
     store.createProject({
       projectId: "proj-current",
@@ -1381,24 +1549,31 @@ describe("BridgeService", () => {
       projectName: "Current Project",
     });
 
-    const directiveText = [
-      "已生成结果图。",
-      "[bridge-image]",
-      JSON.stringify({
-        images: [{
-          path: imagePath,
-          caption: "处理结果图",
-        }],
-      }),
-      "[/bridge-image]",
-    ].join("\n");
-    const runner = createRunnerDouble([
-      { type: "text", content: directiveText },
-      { type: "done", content: directiveText },
-    ]);
+    const runner = createPromptAwareRunnerDouble(prompt => {
+      const outputRoot = extractBridgeOutputRootPath(prompt);
+      imagePath = path.join(outputRoot, "artifacts", "result.png");
+      mkdirSync(path.dirname(imagePath), { recursive: true });
+      writeFileSync(imagePath, "png");
+      const directiveText = [
+        "已生成结果图。",
+        "[bridge-image]",
+        JSON.stringify({
+          images: [{
+            path: imagePath,
+            caption: "处理结果图",
+          }],
+        }),
+        "[/bridge-image]",
+      ].join("\n");
+      return [
+        { type: "text", content: directiveText },
+        { type: "done", content: directiveText },
+      ];
+    });
     const service = new BridgeService({
       store,
       runner,
+      managedAssetRootDir,
     });
 
     const replies = await service.handleMessage({
@@ -1423,11 +1598,108 @@ describe("BridgeService", () => {
 
   it("strips bridge-assets directives and returns image and file replies", async () => {
     const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
-    const imagePath = path.join(projectCwd, "artifacts", "result.png");
-    const markdownPath = path.join(projectCwd, "artifacts", "notes.md");
-    mkdirSync(path.dirname(imagePath), { recursive: true });
-    writeFileSync(imagePath, "png");
-    writeFileSync(markdownPath, "# Notes\n");
+    const managedAssetRootDir = path.join(rootDir, "managed-assets");
+    let imagePath = "";
+    let markdownPath = "";
+
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    bindGroupMainlineCodexThread(store, {
+      projectId: "proj-current",
+      chatId: "oc_chat_current",
+      threadId: "thread-created",
+      projectName: "Current Project",
+    });
+
+    const runner = createPromptAwareRunnerDouble(prompt => {
+      const outputRoot = extractBridgeOutputRootPath(prompt);
+      imagePath = path.join(outputRoot, "artifacts", "result.png");
+      markdownPath = path.join(outputRoot, "artifacts", "notes.md");
+      mkdirSync(path.dirname(imagePath), { recursive: true });
+      writeFileSync(imagePath, "png");
+      writeFileSync(markdownPath, "# Notes\n");
+      const directiveText = [
+        "已生成结果资源。",
+        "[bridge-assets]",
+        JSON.stringify({
+          assets: [
+            {
+              kind: "image",
+              path: imagePath,
+              caption: `处理结果图 ${imagePath}`,
+            },
+            {
+              kind: "file",
+              path: markdownPath,
+              file_name: "report.md",
+              caption: `Markdown 预览源文件 ${markdownPath}`,
+              presentation: "markdown_preview",
+            },
+          ],
+        }),
+        "[/bridge-assets]",
+      ].join("\n");
+      return [
+        { type: "text", content: directiveText },
+        { type: "done", content: directiveText },
+      ];
+    });
+    const service = new BridgeService({
+      store,
+      runner,
+      managedAssetRootDir,
+    });
+    const snapshots: ProgressCardState[] = [];
+
+    const replies = await service.handleMessage(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        text: "请返回结果资源",
+      },
+      {
+        onProgress: snapshot => {
+          snapshots.push(snapshot);
+        },
+      },
+    );
+
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "已生成结果资源。",
+      },
+      {
+        kind: "image",
+        localPath: imagePath,
+        caption: "处理结果图 result.png",
+      },
+      {
+        kind: "file",
+        localPath: markdownPath,
+        fileName: "report.md",
+        caption: "Markdown 预览源文件 report.md",
+        fileSize: 8,
+        semanticType: "markdown",
+        presentation: "markdown_preview",
+      },
+    ]);
+    const visibleSnapshotText = snapshots.map(snapshot => snapshot.preview).join("\n");
+    expect(visibleSnapshotText).not.toContain("[bridge-assets]");
+    expect(visibleSnapshotText).not.toContain(imagePath);
+    expect(visibleSnapshotText).not.toContain(markdownPath);
+  });
+
+  it("rejects bridge-assets paths from the project cwd unless they are in the current run output root", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    const markdownPath = path.join(projectCwd, "artifacts", "secrets.md");
+    mkdirSync(path.dirname(markdownPath), { recursive: true });
+    writeFileSync(markdownPath, "token=secret\n");
 
     store.createProject({
       projectId: "proj-current",
@@ -1443,62 +1715,104 @@ describe("BridgeService", () => {
     });
 
     const directiveText = [
-      "已生成结果资源。",
+      "文件已生成。",
       "[bridge-assets]",
       JSON.stringify({
-        assets: [
-          {
-            kind: "image",
-            path: imagePath,
-            caption: "处理结果图",
-          },
-          {
-            kind: "file",
-            path: markdownPath,
-            file_name: "report.md",
-            caption: "Markdown 预览源文件",
-            presentation: "markdown_preview",
-          },
-        ],
+        assets: [{
+          kind: "file",
+          path: markdownPath,
+          file_name: "secrets.md",
+        }],
       }),
       "[/bridge-assets]",
     ].join("\n");
-    const runner = createRunnerDouble([
-      { type: "text", content: directiveText },
-      { type: "done", content: directiveText },
-    ]);
     const service = new BridgeService({
       store,
-      runner,
+      runner: createRunnerDouble([
+        { type: "text", content: directiveText },
+        { type: "done", content: directiveText },
+      ]),
     });
 
     const replies = await service.handleMessage({
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      text: "请返回结果资源",
+      text: "请返回文件",
     });
 
     expect(replies).toEqual([
       {
         kind: "assistant",
-        text: "已生成结果资源。",
+        text: "文件已生成。",
       },
       {
-        kind: "image",
-        localPath: imagePath,
-        caption: "处理结果图",
-      },
-      {
-        kind: "file",
-        localPath: markdownPath,
-        fileName: "report.md",
-        caption: "Markdown 预览源文件",
-        fileSize: 8,
-        semanticType: "markdown",
-        presentation: "markdown_preview",
+        kind: "system",
+        text: "[ca] asset unavailable: disallowed path secrets.md",
       },
     ]);
+    expect(JSON.stringify(replies)).not.toContain(markdownPath);
+  });
+
+  it("redacts incomplete streaming bridge-assets blocks before they reach progress cards", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    const managedAssetRootDir = path.join(rootDir, "managed-assets");
+    let streamedPath = "";
+
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    bindGroupMainlineCodexThread(store, {
+      projectId: "proj-current",
+      chatId: "oc_chat_current",
+      threadId: "thread-created",
+      projectName: "Current Project",
+    });
+
+    const runner = createPromptAwareRunnerDouble(prompt => {
+      const outputRoot = extractBridgeOutputRootPath(prompt);
+      streamedPath = path.join(outputRoot, "partial", "result.md");
+      return [
+        {
+          type: "text",
+          content: [
+            "正在准备资源。",
+            "[bridge-assets]",
+            `{"assets":[{"kind":"file","path":"${streamedPath}`,
+          ].join("\n"),
+        },
+        { type: "done", content: "资源已生成。" },
+      ];
+    });
+    const service = new BridgeService({
+      store,
+      runner,
+      managedAssetRootDir,
+    });
+    const snapshots: ProgressCardState[] = [];
+
+    await service.handleMessage(
+      {
+        channel: "feishu",
+        peerId: "ou_demo",
+        chatId: "oc_chat_current",
+        text: "请返回文件",
+      },
+      {
+        onProgress: snapshot => {
+          snapshots.push(snapshot);
+        },
+      },
+    );
+
+    const progressText = snapshots.map(snapshot => snapshot.preview).join("\n");
+    expect(progressText).toContain("正在准备资源。");
+    expect(progressText).not.toContain("[bridge-assets]");
+    expect(progressText).not.toContain(streamedPath);
+    expect(progressText).not.toContain(managedAssetRootDir);
   });
 
   it("degrades disallowed bridge-image paths into readable system text", async () => {
@@ -1561,7 +1875,8 @@ describe("BridgeService", () => {
 
   it("degrades invalid bridge-assets file paths into readable system text", async () => {
     const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
-    const missingPath = path.join(projectCwd, "artifacts", "missing.md");
+    const managedAssetRootDir = path.join(rootDir, "managed-assets");
+    let missingPath = "";
     mkdirSync(projectCwd, { recursive: true });
 
     store.createProject({
@@ -1577,25 +1892,31 @@ describe("BridgeService", () => {
       projectName: "Current Project",
     });
 
-    const directiveText = [
-      "文件已生成。",
-      "[bridge-assets]",
-      JSON.stringify({
-        assets: [{
-          kind: "file",
-          path: missingPath,
-          file_name: "missing.md",
-        }],
-      }),
-      "[/bridge-assets]",
-    ].join("\n");
-    const runner = createRunnerDouble([
-      { type: "text", content: directiveText },
-      { type: "done", content: directiveText },
-    ]);
+    const runner = createPromptAwareRunnerDouble(prompt => {
+      const outputRoot = extractBridgeOutputRootPath(prompt);
+      missingPath = path.join(outputRoot, "artifacts", "missing.md");
+      mkdirSync(path.dirname(missingPath), { recursive: true });
+      const directiveText = [
+        "文件已生成。",
+        "[bridge-assets]",
+        JSON.stringify({
+          assets: [{
+            kind: "file",
+            path: missingPath,
+            file_name: "missing.md",
+          }],
+        }),
+        "[/bridge-assets]",
+      ].join("\n");
+      return [
+        { type: "text", content: directiveText },
+        { type: "done", content: directiveText },
+      ];
+    });
     const service = new BridgeService({
       store,
       runner,
+      managedAssetRootDir,
     });
 
     const replies = await service.handleMessage({
@@ -3459,6 +3780,50 @@ function createRunnerDouble(
       };
     }),
   };
+}
+
+function createPromptAwareRunnerDouble(
+  buildEvents: (prompt: string) => RunnerEvent[],
+) {
+  return {
+    createThread: vi.fn(async () => ({
+      exitCode: 0,
+      events: [],
+      threadId: "thread-created",
+    })),
+    ensureSession: vi.fn(async () => undefined),
+    cancel: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+    submitVerbatim: vi.fn(async (
+      _context,
+      prompt,
+      optionsOrOnEvent?: { images?: string[] } | ((event: RunnerEvent) => void),
+      maybeOnEvent?: (event: RunnerEvent) => void,
+    ) => {
+      const onEvent = typeof optionsOrOnEvent === "function"
+        ? optionsOrOnEvent
+        : maybeOnEvent;
+      const events = buildEvents(prompt);
+
+      for (const event of events) {
+        onEvent?.(event);
+      }
+
+      return {
+        exitCode: 0,
+        events,
+      };
+    }),
+  };
+}
+
+function extractBridgeOutputRootPath(prompt: string): string {
+  const match = /^root_path: (.+)$/m.exec(prompt);
+  if (!match) {
+    throw new Error("BRIDGE_OUTPUT_ROOT_NOT_FOUND");
+  }
+
+  return match[1];
 }
 
 function createGitRepo(rootDir: string, prefix: string): string {

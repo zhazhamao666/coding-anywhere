@@ -414,7 +414,7 @@ export class FeishuAdapter {
     this.requirePendingAssetStore().savePendingBridgeAsset({
       channel: "feishu",
       peerId: input.peerId,
-      chatId: message.chat_id ?? null,
+      chatId: normalizeInboundAssetSurfaceChatId(message),
       surfaceType: message.thread_id ? "thread" : null,
       surfaceRef: message.thread_id ?? null,
       runId: null,
@@ -480,7 +480,7 @@ export class FeishuAdapter {
     this.requirePendingAssetStore().savePendingBridgeAsset({
       channel: "feishu",
       peerId: input.peerId,
-      chatId: message.chat_id ?? null,
+      chatId: normalizeInboundAssetSurfaceChatId(message),
       surfaceType: message.thread_id ? "thread" : null,
       surfaceRef: message.thread_id ?? null,
       runId: null,
@@ -594,8 +594,39 @@ export class FeishuAdapter {
       return;
     }
 
-    const imageKey = await this.uploadImageKey(input.reply.localPath);
+    let imageKey: string | undefined;
+    try {
+      imageKey = await this.uploadImageKey(input.reply.localPath);
+    } catch (error) {
+      this.dependencies.logger?.warn?.(
+        `feishu image delivery failed: ${formatFeishuErrorText(error)}`,
+      );
+      const imageFileReply = maybeBuildImageFileReply(input.reply);
+      if (imageFileReply && await this.replyFile({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        reply: imageFileReply,
+        successText: "图片原生发送失败，已作为文件发送。",
+      })) {
+        return;
+      }
+      await this.replyText({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        text: formatImageDeliveryFailureText(input.reply, error),
+      });
+      return;
+    }
     if (!imageKey) {
+      const imageFileReply = maybeBuildImageFileReply(input.reply);
+      if (imageFileReply && await this.replyFile({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        reply: imageFileReply,
+        successText: "图片原生发送不可用，已作为文件发送。",
+      })) {
+        return;
+      }
       await this.replyText({
         peerId: input.peerId,
         anchorMessageId: input.anchorMessageId,
@@ -604,13 +635,61 @@ export class FeishuAdapter {
       return;
     }
 
-    if (input.anchorMessageId && this.dependencies.apiClient.replyImageMessage) {
-      await this.dependencies.apiClient.replyImageMessage(input.anchorMessageId, imageKey);
+    try {
+      if (input.anchorMessageId && this.dependencies.apiClient.replyImageMessage) {
+        await this.dependencies.apiClient.replyImageMessage(input.anchorMessageId, imageKey);
+        return;
+      }
+      if (input.anchorMessageId) {
+        const imageFileReply = maybeBuildImageFileReply(input.reply);
+        if (imageFileReply && await this.replyFile({
+          peerId: input.peerId,
+          anchorMessageId: input.anchorMessageId,
+          reply: imageFileReply,
+          successText: "图片原生发送不可用，已作为文件发送。",
+        })) {
+          return;
+        }
+        await this.replyText({
+          peerId: input.peerId,
+          anchorMessageId: input.anchorMessageId,
+          text: formatImageDeliveryFailureText(input.reply, new Error("FEISHU_IMAGE_REPLY_UNAVAILABLE")),
+        });
+        return;
+      }
+
+      if (this.dependencies.apiClient.sendImageMessage) {
+        await this.dependencies.apiClient.sendImageMessage(input.peerId, imageKey);
+        return;
+      }
+    } catch (error) {
+      this.dependencies.logger?.warn?.(
+        `feishu image delivery failed: ${formatFeishuErrorText(error)}`,
+      );
+      const imageFileReply = maybeBuildImageFileReply(input.reply);
+      if (imageFileReply && await this.replyFile({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        reply: imageFileReply,
+        successText: "图片原生发送失败，已作为文件发送。",
+      })) {
+        return;
+      }
+      await this.replyText({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        text: formatImageDeliveryFailureText(input.reply, error),
+      });
       return;
     }
 
-    if (this.dependencies.apiClient.sendImageMessage) {
-      await this.dependencies.apiClient.sendImageMessage(input.peerId, imageKey);
+    const imageFileReply = maybeBuildImageFileReply(input.reply);
+    if (imageFileReply && await this.replyFile({
+      peerId: input.peerId,
+      anchorMessageId: input.anchorMessageId,
+      reply: imageFileReply,
+      successText: "图片原生发送不可用，已作为文件发送。",
+    })) {
       return;
     }
 
@@ -789,6 +868,28 @@ function formatOversizedImageFailureText(
   return `图片结果无法发送：${formatLocalPathFileNameForUser(reply.localPath)} 超过 30 MB 文件上限。`;
 }
 
+function formatImageDeliveryFailureText(
+  reply: Extract<BridgeReply, { kind: "image" }>,
+  error: unknown,
+): string {
+  return `图片结果无法发送：${formatLocalPathFileNameForUser(reply.localPath)}，${formatImageDeliveryFailureReason(error)}。`;
+}
+
+function formatImageDeliveryFailureReason(error: unknown): string {
+  const message = error instanceof Error && error.message
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : "";
+
+  if (message.includes("FEISHU_IMAGE_UPLOAD_UNAVAILABLE") ||
+      message.includes("FEISHU_IMAGE_REPLY_UNAVAILABLE")) {
+    return "图片上传或发送能力不可用";
+  }
+
+  return "图片上传或发送失败";
+}
+
 function formatLocalPathFileNameForUser(localPath: string): string {
   const normalized = localPath.replace(/\\/g, "/").replace(/\/+$/, "");
   const parts = normalized.split("/").filter(Boolean);
@@ -828,6 +929,24 @@ function maybeBuildOversizedImageFileReply(
   };
 }
 
+function maybeBuildImageFileReply(
+  reply: Extract<BridgeReply, { kind: "image" }>,
+): Extract<BridgeReply, { kind: "file" }> | undefined {
+  const size = readLocalFileSize(reply.localPath);
+  if (size === undefined || size > FEISHU_FILE_UPLOAD_MAX_BYTES) {
+    return undefined;
+  }
+
+  return {
+    kind: "file",
+    localPath: reply.localPath,
+    fileName: path.basename(reply.localPath),
+    caption: reply.caption,
+    fileSize: size,
+    semanticType: "generic",
+  };
+}
+
 function sanitizeProgressSnapshotForFeishu(snapshot: ProgressCardState): ProgressCardState {
   if (snapshot.status !== "error") {
     return snapshot;
@@ -841,6 +960,10 @@ function sanitizeProgressSnapshotForFeishu(snapshot: ProgressCardState): Progres
     ...snapshot,
     preview: formatFeishuCaErrorText(errorText),
   };
+}
+
+function normalizeInboundAssetSurfaceChatId(message: FeishuEnvelopeMessage): string | null {
+  return message.chat_type === "p2p" ? null : message.chat_id ?? null;
 }
 
 function parseFeishuTextContent(content?: string): { text?: string; mentions: FeishuMention[] } {

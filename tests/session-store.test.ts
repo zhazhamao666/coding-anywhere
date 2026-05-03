@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -831,6 +831,66 @@ describe("SessionStore", () => {
         surfaceRef: null,
       }),
     ).toEqual([]);
+  });
+
+  it("cleans stale bridge asset files only inside the configured asset root", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+    const assetStore = store as any;
+    const assetRoot = path.join(rootDir, "assets-root");
+    const insidePath = path.join(assetRoot, "stale.png");
+    const outsidePath = path.join(rootDir, "outside.png");
+    mkdirSync(assetRoot, { recursive: true });
+    writeFileSync(insidePath, "inside");
+    writeFileSync(outsidePath, "outside");
+
+    const insideAsset = assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_dm",
+      chatId: null,
+      surfaceType: null,
+      surfaceRef: null,
+      runId: null,
+      messageId: "om_inside",
+      resourceType: "image",
+      resourceKey: "img_inside",
+      localPath: insidePath,
+      fileName: "stale.png",
+      mimeType: "image/png",
+      fileSize: 3456,
+      createdAt: "2026-03-20T00:00:00.000Z",
+    });
+    const outsideAsset = assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_dm",
+      chatId: null,
+      surfaceType: null,
+      surfaceRef: null,
+      runId: null,
+      messageId: "om_outside",
+      resourceType: "image",
+      resourceKey: "img_outside",
+      localPath: outsidePath,
+      fileName: "outside.png",
+      mimeType: "image/png",
+      fileSize: 3456,
+      createdAt: "2026-03-20T00:00:00.000Z",
+    });
+
+    assetStore.failPendingBridgeAsset({
+      assetId: insideAsset.assetId,
+      errorText: "download failed",
+    });
+    assetStore.failPendingBridgeAsset({
+      assetId: outsideAsset.assetId,
+      errorText: "download failed",
+    });
+
+    expect(assetStore.cleanupBridgeAssetFiles({
+      rootDir: assetRoot,
+      cutoff: "2026-03-25T00:00:00.000Z",
+    })).toBe(1);
+    expect(existsSync(insidePath)).toBe(false);
+    expect(existsSync(outsidePath)).toBe(true);
   });
 
   it("migrates the legacy workspace root and drops obsolete tables", () => {

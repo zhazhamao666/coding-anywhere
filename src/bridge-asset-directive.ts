@@ -102,6 +102,8 @@ export function validateBridgeAssetPath(input: {
   candidatePath: string;
   cwd: string;
   managedAssetRootDir?: string;
+  allowedRootDirs?: string[];
+  allowedExactPaths?: string[];
   fileName?: string;
   caption?: string;
   mimeType?: string | null;
@@ -110,11 +112,12 @@ export function validateBridgeAssetPath(input: {
 }): BridgeAssetPathValidationResult {
   const resolvedPath = resolveCandidatePath(input.cwd, input.candidatePath);
   const managedRootDir = input.managedAssetRootDir ?? DEFAULT_BRIDGE_ASSET_ROOT_DIR;
-  const allowedRoots = collectExistingAllowedRoots([input.cwd, managedRootDir]);
+  const allowedRoots = collectExistingAllowedRoots(input.allowedRootDirs ?? [input.cwd, managedRootDir]);
+  const allowedExactPaths = collectExistingAllowedFilePaths(input.allowedExactPaths ?? []);
   if (!isBridgeAssetPathWithinAnyRoot({
     candidatePath: resolvedPath,
     rootPaths: allowedRoots.map(root => root.rootPath),
-  })) {
+  }) && !isBridgeAssetPathWithinExactPaths(resolvedPath, allowedExactPaths.map(candidate => candidate.localPath))) {
     return {
       ok: false,
       errorText: buildAssetUnavailableErrorText("disallowed path", resolvedPath),
@@ -132,7 +135,10 @@ export function validateBridgeAssetPath(input: {
   try {
     realPath = realpathSync(resolvedPath);
     const stat = statSync(realPath);
-    if (!allowedRoots.some(root => isPathAllowed(realPath, root.realPath))) {
+    if (
+      !allowedRoots.some(root => isPathAllowed(realPath, root.realPath)) &&
+      !allowedExactPaths.some(candidate => candidate.realPath === realPath)
+    ) {
       return {
         ok: false,
         errorText: buildAssetUnavailableErrorText("disallowed path", resolvedPath),
@@ -340,7 +346,7 @@ function parseBridgeAssetsPayload(rawPayload: string, errors: string[]): BridgeA
       continue;
     }
 
-    const kind = isBridgeAssetResourceType(item.kind) ? item.kind : undefined;
+    const kind = parseBridgeAssetKind(item);
     const assetPath = typeof item.path === "string" ? item.path.trim() : "";
     const presentation = parsePresentation(item, errors);
     const preview = parsePreview(item, errors);
@@ -429,6 +435,32 @@ function parseLegacyBridgeImagePayload(rawPayload: string, errors: string[]): Br
   return assets;
 }
 
+function parseBridgeAssetKind(item: Record<string, unknown>): BridgeAssetResourceType | undefined {
+  const rawKind = item.kind ?? item.type ?? item.resource_type;
+  if (isBridgeAssetResourceType(rawKind)) {
+    return rawKind;
+  }
+  if (typeof rawKind !== "string") {
+    return undefined;
+  }
+
+  const normalized = rawKind.trim().toLowerCase().replace(/[_\s-]+/g, " ");
+  if (normalized === "image") {
+    return "image";
+  }
+  if (
+    normalized === "file" ||
+    normalized === "markdown" ||
+    normalized === "markdown file" ||
+    normalized === "drawio" ||
+    normalized === "drawio file"
+  ) {
+    return "file";
+  }
+
+  return undefined;
+}
+
 function parsePresentation(
   item: Record<string, unknown>,
   errors: string[],
@@ -500,6 +532,11 @@ export function isBridgeAssetPathWithinAnyRoot(input: {
   }));
 }
 
+function isBridgeAssetPathWithinExactPaths(candidatePath: string, allowedPaths: string[]): boolean {
+  const normalizedCandidate = path.resolve(candidatePath);
+  return allowedPaths.some(allowedPath => path.resolve(allowedPath) === normalizedCandidate);
+}
+
 function collectExistingAllowedRoots(rootPaths: Array<string | undefined>): Array<{
   rootPath: string;
   realPath: string;
@@ -520,6 +557,36 @@ function collectExistingAllowedRoots(rootPaths: Array<string | undefined>): Arra
   }
 
   return roots;
+}
+
+function collectExistingAllowedFilePaths(filePaths: Array<string | undefined>): Array<{
+  localPath: string;
+  realPath: string;
+}> {
+  const files: Array<{
+    localPath: string;
+    realPath: string;
+  }> = [];
+
+  for (const filePath of filePaths) {
+    if (!filePath) {
+      continue;
+    }
+    try {
+      const localPath = path.resolve(filePath);
+      const realPath = realpathSync(localPath);
+      if (statSync(realPath).isFile()) {
+        files.push({
+          localPath,
+          realPath,
+        });
+      }
+    } catch {
+      // Ignore missing per-run attachment handles.
+    }
+  }
+
+  return files;
 }
 
 function tryRealpath(rootPath: string | undefined): string | undefined {

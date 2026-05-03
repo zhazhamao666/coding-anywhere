@@ -105,6 +105,52 @@ describe("bridge asset directives", () => {
     ]);
   });
 
+  it("accepts common bridge-assets kind aliases from model output", () => {
+    const parsed = parseBridgeAssetsDirective([
+      "[bridge-assets]",
+      JSON.stringify({
+        assets: [
+          {
+            type: "image",
+            path: "out/chart.png",
+          },
+          {
+            type: "file",
+            file_type: "markdown",
+            path: "notes.md",
+            presentation: "markdown_preview",
+          },
+          {
+            resource_type: "drawio file",
+            path: "workflow.drawio",
+            presentation: "drawio_with_preview",
+            preview: { format: "png" },
+          },
+        ],
+      }),
+      "[/bridge-assets]",
+    ].join("\n"));
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.assets).toEqual([
+      {
+        kind: "image",
+        path: "out/chart.png",
+      },
+      {
+        kind: "file",
+        path: "notes.md",
+        presentation: "markdown_preview",
+      },
+      {
+        kind: "file",
+        path: "workflow.drawio",
+        presentation: "drawio_with_preview",
+        preview: { format: "png" },
+      },
+    ]);
+  });
+
   it("returns readable bridge-assets errors", () => {
     const parsed = parseBridgeAssetsDirective([
       "[bridge-assets]   [/bridge-assets]",

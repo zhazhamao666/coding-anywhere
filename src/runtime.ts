@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Logger } from "pino";
 
 import { buildApp } from "./app.js";
+import { DEFAULT_BRIDGE_ASSET_ROOT_DIR } from "./bridge-asset-directive.js";
 import { BridgeService } from "./bridge-service.js";
 import { CodexCliRunner } from "./codex-cli-runner.js";
 import {
@@ -434,6 +435,7 @@ export async function runRuntimeMaintenance(input: {
   runner: ThreadReapRunnerLike;
   ttlHours: number;
   now?: Date;
+  assetRootDir?: string;
 }): Promise<void> {
   const now = input.now ?? new Date();
   await reapIdleThreads({
@@ -446,6 +448,7 @@ export async function runRuntimeMaintenance(input: {
     store: input.store,
     ttlHours: input.ttlHours,
     now,
+    assetRootDir: input.assetRootDir,
   });
 }
 
@@ -475,10 +478,16 @@ export function expireStalePendingBridgeAssets(input: {
   store: SessionStore;
   ttlHours: number;
   now?: Date;
+  assetRootDir?: string;
 }): number {
   const now = input.now ?? new Date();
   const cutoffIso = new Date(now.getTime() - input.ttlHours * 60 * 60 * 1000).toISOString();
-  return input.store.expirePendingBridgeAssets(cutoffIso);
+  const expiredCount = input.store.expirePendingBridgeAssets(cutoffIso);
+  input.store.cleanupBridgeAssetFiles({
+    rootDir: input.assetRootDir ?? DEFAULT_BRIDGE_ASSET_ROOT_DIR,
+    cutoff: cutoffIso,
+  });
+  return expiredCount;
 }
 
 function createDefaultApiClient(config: BridgeConfig, logger?: Logger) {

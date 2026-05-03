@@ -140,7 +140,7 @@ npm run init:config
 - 只有显式填入非空 `open_id` 列表后，bridge 才会按用户放行
 - 一旦启用 allowlist，只放可信用户
 
-飞书后台权限、回调、图片能力和 `open_id` 获取方式以 [飞书配置说明](./feishu-setup.md) 为准。
+飞书后台权限、回调、图片/文件能力和 `open_id` 获取方式以 [飞书配置说明](./feishu-setup.md) 为准。
 
 ### 第四步：执行预检
 
@@ -397,6 +397,13 @@ npm run test
 codex --version
 ```
 
+如果本次改动涉及飞书资源链路，再补充运行：
+
+```bash
+node scripts/feishu-live.mjs dm bridge-assets
+node scripts/feishu-live.mjs group bridge-assets
+```
+
 5. 停掉旧实例
 6. 启动新实例：
 
@@ -442,6 +449,7 @@ test
 - `/ops/ui` 能看到告警队列、最近失败/取消，以及任务详情
 - 当前只运行了一个实例
 - `config.toml` 没被误改
+- 如果刚改过图片/文件链路，`coding-anywhere-autotest` DM 和测试群的 `bridge-assets` smoke 均通过
 
 ## 13. 安全建议
 
@@ -451,6 +459,8 @@ test
 - 不把真实 `appSecret` 提交到 git
 - 不随便把 `permissionMode` 改成 `danger-full-access`
 - root 路径要明确，不要把整个盘符都作为 `repoRoot`
+- 不让 assistant 直接外发任意项目文件；出站资源必须位于当前 run/desktop completion 专属输出目录，或是本轮已消费入站附件的 exact `local_path`
+- 定期让 runtime maintenance 清理过期、失败或已消费的 bridge 资源，避免临时目录长期堆积用户文件
 
 ## 14. 日志和状态建议
 
