@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -106,17 +106,19 @@ export function validateBridgeAssetPath(input: {
   preview?: BridgeAssetPreview;
 }): BridgeAssetPathValidationResult {
   const resolvedPath = resolveCandidatePath(input.cwd, input.candidatePath);
-  if (!isPathAllowed(resolvedPath, input.cwd) &&
-      !isPathAllowed(resolvedPath, input.managedAssetRootDir ?? DEFAULT_BRIDGE_ASSET_ROOT_DIR)) {
-    return {
-      ok: false,
-      errorText: `[ca] asset unavailable: disallowed path ${resolvedPath}`,
-    };
-  }
+  const managedRootDir = input.managedAssetRootDir ?? DEFAULT_BRIDGE_ASSET_ROOT_DIR;
+  const allowedRoots = collectExistingAllowedRoots([input.cwd, managedRootDir]);
 
   let fileSize: number;
   try {
     const stat = statSync(resolvedPath);
+    const realPath = realpathSync(resolvedPath);
+    if (!allowedRoots.some(root => isPathAllowed(realPath, root.realPath))) {
+      return {
+        ok: false,
+        errorText: `[ca] asset unavailable: disallowed path ${resolvedPath}`,
+      };
+    }
     if (!stat.isFile()) {
       return {
         ok: false,
@@ -131,6 +133,13 @@ export function validateBridgeAssetPath(input: {
     }
     fileSize = stat.size;
   } catch {
+    if (!allowedRoots.some(root => isPathAllowed(resolvedPath, root.rootPath))) {
+      return {
+        ok: false,
+        errorText: `[ca] asset unavailable: disallowed path ${resolvedPath}`,
+      };
+    }
+
     return {
       ok: false,
       errorText: `[ca] asset unavailable: file not found ${resolvedPath}`,
@@ -440,6 +449,40 @@ function isPathAllowed(candidatePath: string, rootPath: string | undefined): boo
   const normalizedCandidate = normalizePathKey(candidatePath);
   const normalizedRoot = normalizePathKey(path.resolve(rootPath));
   return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
+}
+
+function collectExistingAllowedRoots(rootPaths: Array<string | undefined>): Array<{
+  rootPath: string;
+  realPath: string;
+}> {
+  const roots: Array<{
+    rootPath: string;
+    realPath: string;
+  }> = [];
+
+  for (const rootPath of rootPaths) {
+    const realPath = tryRealpath(rootPath);
+    if (rootPath && realPath) {
+      roots.push({
+        rootPath: path.resolve(rootPath),
+        realPath,
+      });
+    }
+  }
+
+  return roots;
+}
+
+function tryRealpath(rootPath: string | undefined): string | undefined {
+  if (!rootPath) {
+    return undefined;
+  }
+
+  try {
+    return realpathSync(rootPath);
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizePathKey(value: string): string {

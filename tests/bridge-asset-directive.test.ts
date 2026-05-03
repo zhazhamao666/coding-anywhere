@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -254,6 +254,51 @@ describe("bridge asset directives", () => {
     })).toEqual({
       ok: false,
       errorText: `[ca] asset unavailable: empty file ${path.join(cwd, "empty.txt")}`,
+    });
+  });
+
+  it("rejects cwd links that resolve outside allowed roots", () => {
+    const cwd = path.join(rootDir, "repo");
+    const managedRoot = path.join(rootDir, "managed");
+    const outsideRoot = path.join(rootDir, "outside");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(managedRoot, { recursive: true });
+    mkdirSync(outsideRoot, { recursive: true });
+    writeFileSync(path.join(outsideRoot, "secret.txt"), "secret", "utf8");
+
+    const linkPath = path.join(cwd, "outside-link");
+    try {
+      symlinkSync(outsideRoot, linkPath, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      console.warn(`Skipping symlink escape assertion: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+
+    expect(validateBridgeAssetPath({
+      kind: "file",
+      candidatePath: path.join("outside-link", "secret.txt"),
+      cwd,
+      managedAssetRootDir: managedRoot,
+    })).toEqual({
+      ok: false,
+      errorText: `[ca] asset unavailable: disallowed path ${path.join(cwd, "outside-link", "secret.txt")}`,
+    });
+  });
+
+  it("does not allow missing managed roots to participate in path checks", () => {
+    const cwd = path.join(rootDir, "repo");
+    const missingManagedRoot = path.join(rootDir, "missing-managed");
+    const candidatePath = path.join(missingManagedRoot, "ghost.txt");
+    mkdirSync(cwd, { recursive: true });
+
+    expect(validateBridgeAssetPath({
+      kind: "file",
+      candidatePath,
+      cwd,
+      managedAssetRootDir: missingManagedRoot,
+    })).toEqual({
+      ok: false,
+      errorText: `[ca] asset unavailable: disallowed path ${candidatePath}`,
     });
   });
 
