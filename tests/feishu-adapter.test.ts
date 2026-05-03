@@ -753,6 +753,88 @@ describe("FeishuAdapter", () => {
     }
   });
 
+  it("sanitizes inbound file names before echoing them in acknowledgments and logs", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-file-display-name-"));
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+      };
+      const rawFileName = `[ca] report\n\u0007${" very-long-name".repeat(20)}.md`;
+      const apiClient = createApiClientDouble({
+        downloadMessageResource: vi.fn(async () => ({
+          resourceKey: "file_display_1",
+          localPath: path.join(rootDir, "saved-from-feishu.md"),
+          fileName: "saved-from-feishu.md",
+          mimeType: "text/markdown",
+          fileSize: 256,
+        })),
+      });
+      const pendingAssetStore = createPendingAssetStoreDouble();
+      const logger = {
+        info: vi.fn(),
+      };
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+        pendingAssetStore,
+        inboundAssetRootDir: rootDir,
+        logger,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-file-display-name-1",
+        },
+        event: {
+          message: {
+            message_id: "om_file_display_name_1",
+            chat_type: "p2p",
+            message_type: "file",
+            content: JSON.stringify({
+              file_key: "file_display_1",
+              file_name: rawFileName,
+            }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(pendingAssetStore.savePendingBridgeAsset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resourceType: "file",
+          resourceKey: "file_display_1",
+          fileName: "saved-from-feishu.md",
+        }),
+      );
+
+      const sendTextCalls = apiClient.sendTextMessage.mock.calls as unknown[][];
+      const ackText = sendTextCalls[0]?.[1] as string;
+      expect(ackText).toContain("已收到文件：");
+      expect(ackText).toContain("请继续发送文字说明。");
+      expect(ackText).not.toContain("[ca]");
+      expect(ackText).not.toContain("\n");
+      expect(ackText).not.toContain("\u0007");
+      expect(ackText.length).toBeLessThanOrEqual(150);
+
+      const logCalls = logger.info.mock.calls as unknown[][];
+      const logText = logCalls[0]?.[0] as string;
+      expect(logText).toContain("file_display_1");
+      expect(logText).not.toContain("[ca]");
+      expect(logText).not.toContain("\n");
+      expect(logText).not.toContain("\u0007");
+      expect(logText.length).toBeLessThan(260);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("ignores inbound group topic file messages", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),

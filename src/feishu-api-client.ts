@@ -674,7 +674,10 @@ function resolveDownloadedFileName(
   const contentDisposition = headers["content-disposition"];
   const encodedMatch = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i);
   if (encodedMatch?.[1]) {
-    return sanitizeFileName(decodeURIComponent(encodedMatch[1]));
+    const decodedFileName = tryDecodeURIComponent(encodedMatch[1]);
+    if (decodedFileName) {
+      return sanitizeFileName(decodedFileName);
+    }
   }
 
   const plainMatch = contentDisposition?.match(/filename="?([^";]+)"?/i);
@@ -688,5 +691,27 @@ function resolveDownloadedFileName(
 function sanitizeFileName(fileName: string): string {
   const baseName = path.basename(fileName).trim();
   const sanitized = baseName.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
-  return sanitized || "download.bin";
+  if (!sanitized || /^[.\s]+$/.test(sanitized) || isWindowsReservedDeviceFileName(sanitized)) {
+    return "download.bin";
+  }
+
+  return sanitized;
+}
+
+function tryDecodeURIComponent(value: string): string | undefined {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function isWindowsReservedDeviceFileName(fileName: string): boolean {
+  const deviceName = fileName.split(".")[0]?.trim().toUpperCase();
+  return deviceName === "CON" ||
+    deviceName === "PRN" ||
+    deviceName === "AUX" ||
+    deviceName === "NUL" ||
+    /^COM[1-9]$/.test(deviceName ?? "") ||
+    /^LPT[1-9]$/.test(deviceName ?? "");
 }

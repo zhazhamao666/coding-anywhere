@@ -446,6 +446,7 @@ export class FeishuAdapter {
       return;
     }
 
+    const displayFileName = sanitizeInboundFileDisplayName(fileContent.fileName);
     this.dependencies.logger?.info?.(
       buildFeishuInboundLog({
         peerId: input.peerId,
@@ -453,8 +454,8 @@ export class FeishuAdapter {
         messageId: message.message_id,
         chatId: message.chat_id,
         threadId: message.thread_id,
-        text: fileContent.fileName
-          ? `[file:${fileContent.fileKey}:${fileContent.fileName}]`
+        text: displayFileName
+          ? `[file:${fileContent.fileKey}:${displayFileName}]`
           : `[file:${fileContent.fileKey}]`,
       }),
     );
@@ -491,7 +492,7 @@ export class FeishuAdapter {
     await this.replyText({
       peerId: input.peerId,
       anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
-      text: buildInboundFileAckText(fileContent.fileName),
+      text: buildInboundFileAckText(displayFileName),
     });
   }
 
@@ -893,3 +894,20 @@ function buildInboundFileAckText(fileName?: string): string {
     ? `已收到文件：${fileName}，请继续发送文字说明。`
     : "已收到文件，请继续发送文字说明。";
 }
+
+function sanitizeInboundFileDisplayName(fileName?: string): string | undefined {
+  const normalized = fileName
+    ?.replace(/[\x00-\x1F\x7F]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^\[ca\]\s*/i, "")
+    .trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized.length > MAX_INBOUND_FILE_DISPLAY_NAME_CHARS
+    ? `${normalized.slice(0, MAX_INBOUND_FILE_DISPLAY_NAME_CHARS - 3)}...`
+    : normalized;
+}
+
+const MAX_INBOUND_FILE_DISPLAY_NAME_CHARS = 120;

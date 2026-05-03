@@ -390,6 +390,132 @@ describe("FeishuApiClient", () => {
     }
   });
 
+  it("falls back to a safe filename when Content-Disposition names a parent directory", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-file-dangerous-name-"));
+    const sdk = createSdkDouble();
+    const writtenPaths: string[] = [];
+    sdk.im.v1.messageResource.get = vi.fn(async () => ({
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-disposition": 'attachment; filename=".."',
+      },
+      writeFile: vi.fn(async (filePath: string) => {
+        writtenPaths.push(filePath);
+        writeFileSync(filePath, "bin");
+        return filePath;
+      }),
+      getReadableStream: vi.fn(),
+    }));
+    const client = new FeishuApiClient(
+      {
+        appId: "cli_xxx",
+        appSecret: "secret",
+        apiBaseUrl: "https://open.feishu.cn/open-apis",
+      },
+      sdk as any,
+    );
+
+    try {
+      const result = await client.downloadMessageResource({
+        messageId: "om_file_parent_1",
+        fileKey: "file_parent_1",
+        type: "file",
+        downloadDir: rootDir,
+        preferredFileName: "safe.md",
+      });
+
+      expect(result.fileName).toBe("download.bin");
+      expect(result.localPath).toBe(path.join(rootDir, "download.bin"));
+      expect(writtenPaths).toEqual([path.join(rootDir, "download.bin")]);
+      expect(path.dirname(result.localPath)).toBe(rootDir);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to a safe filename when the preferred filename is a Windows device name", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-file-device-name-"));
+    const sdk = createSdkDouble();
+    const writtenPaths: string[] = [];
+    sdk.im.v1.messageResource.get = vi.fn(async () => ({
+      headers: {
+        "content-type": "application/octet-stream",
+      },
+      writeFile: vi.fn(async (filePath: string) => {
+        writtenPaths.push(filePath);
+        writeFileSync(filePath, "bin");
+        return filePath;
+      }),
+      getReadableStream: vi.fn(),
+    }));
+    const client = new FeishuApiClient(
+      {
+        appId: "cli_xxx",
+        appSecret: "secret",
+        apiBaseUrl: "https://open.feishu.cn/open-apis",
+      },
+      sdk as any,
+    );
+
+    try {
+      const result = await client.downloadMessageResource({
+        messageId: "om_file_device_1",
+        fileKey: "file_device_1",
+        type: "file",
+        downloadDir: rootDir,
+        preferredFileName: "CON.txt",
+      });
+
+      expect(result.fileName).toBe("download.bin");
+      expect(result.localPath).toBe(path.join(rootDir, "download.bin"));
+      expect(writtenPaths).toEqual([path.join(rootDir, "download.bin")]);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to plain filename when encoded filename is malformed", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-file-malformed-name-"));
+    const sdk = createSdkDouble();
+    sdk.im.v1.messageResource.get = vi.fn(async () => ({
+      headers: {
+        "content-type": "text/markdown",
+        "content-disposition": 'attachment; filename*=UTF-8\'\'%E0%A4%A; filename="plain.md"',
+      },
+      writeFile: vi.fn(async (filePath: string) => {
+        writeFileSync(filePath, "# plain\n");
+        return filePath;
+      }),
+      getReadableStream: vi.fn(),
+    }));
+    const client = new FeishuApiClient(
+      {
+        appId: "cli_xxx",
+        appSecret: "secret",
+        apiBaseUrl: "https://open.feishu.cn/open-apis",
+      },
+      sdk as any,
+    );
+
+    try {
+      const result = await client.downloadMessageResource({
+        messageId: "om_file_malformed_1",
+        fileKey: "file_malformed_1",
+        type: "file",
+        downloadDir: rootDir,
+        preferredFileName: "preferred.md",
+      });
+
+      expect(result).toMatchObject({
+        fileName: "plain.md",
+        localPath: path.join(rootDir, "plain.md"),
+        fileSize: 8,
+      });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("uploads local images and sends native image messages", async () => {
     const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-image-upload-"));
     const imagePath = path.join(rootDir, "reply.png");
