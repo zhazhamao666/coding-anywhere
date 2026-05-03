@@ -7,11 +7,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_BRIDGE_ASSET_ROOT_DIR,
   classifyBridgeAssetSemanticType,
+  isBridgeAssetPathWithinRoot,
   mapBridgeAssetToFeishuFileType,
   parseBridgeAssetDirectives,
   parseBridgeAssetsDirective,
   validateBridgeAssetPath,
 } from "../src/bridge-asset-directive.js";
+
+const CAN_CREATE_DIRECTORY_LINK = canCreateDirectoryLink();
 
 describe("bridge asset directives", () => {
   let rootDir: string;
@@ -257,7 +260,23 @@ describe("bridge asset directives", () => {
     });
   });
 
-  it("rejects cwd links that resolve outside allowed roots", () => {
+  it("treats POSIX asset path prefixes as case-sensitive", () => {
+    expect(isBridgeAssetPathWithinRoot({
+      candidatePath: "/tmp/repo/secret.txt",
+      rootPath: "/tmp/Repo",
+      platform: "linux",
+    })).toBe(false);
+
+    expect(isBridgeAssetPathWithinRoot({
+      candidatePath: "C:/Temp/Repo/asset.txt",
+      rootPath: "c:/temp/repo",
+      platform: "win32",
+    })).toBe(true);
+  });
+
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)(
+    "rejects cwd links that resolve outside allowed roots (requires directory link support)",
+    () => {
     const cwd = path.join(rootDir, "repo");
     const managedRoot = path.join(rootDir, "managed");
     const outsideRoot = path.join(rootDir, "outside");
@@ -267,12 +286,7 @@ describe("bridge asset directives", () => {
     writeFileSync(path.join(outsideRoot, "secret.txt"), "secret", "utf8");
 
     const linkPath = path.join(cwd, "outside-link");
-    try {
-      symlinkSync(outsideRoot, linkPath, process.platform === "win32" ? "junction" : "dir");
-    } catch (error) {
-      console.warn(`Skipping symlink escape assertion: ${error instanceof Error ? error.message : String(error)}`);
-      return;
-    }
+    symlinkSync(outsideRoot, linkPath, process.platform === "win32" ? "junction" : "dir");
 
     expect(validateBridgeAssetPath({
       kind: "file",
@@ -283,7 +297,8 @@ describe("bridge asset directives", () => {
       ok: false,
       errorText: `[ca] asset unavailable: disallowed path ${path.join(cwd, "outside-link", "secret.txt")}`,
     });
-  });
+    },
+  );
 
   it("does not allow missing managed roots to participate in path checks", () => {
     const cwd = path.join(rootDir, "repo");
@@ -324,3 +339,18 @@ describe("bridge asset directives", () => {
     expect(mapBridgeAssetToFeishuFileType({ fileName: "archive.zip" })).toBe("stream");
   });
 });
+
+function canCreateDirectoryLink(): boolean {
+  const probeRoot = mkdtempSync(path.join(tmpdir(), "bridge-assets-link-probe-"));
+  try {
+    const target = path.join(probeRoot, "target");
+    const link = path.join(probeRoot, "link");
+    mkdirSync(target, { recursive: true });
+    symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probeRoot, { recursive: true, force: true });
+  }
+}

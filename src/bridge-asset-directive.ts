@@ -442,12 +442,24 @@ function resolveCandidatePath(cwd: string, candidatePath: string): string {
 }
 
 function isPathAllowed(candidatePath: string, rootPath: string | undefined): boolean {
+  return isBridgeAssetPathWithinRoot({
+    candidatePath,
+    rootPath: rootPath ? path.resolve(rootPath) : undefined,
+  });
+}
+
+export function isBridgeAssetPathWithinRoot(input: {
+  candidatePath: string;
+  rootPath?: string;
+  platform?: NodeJS.Platform;
+}): boolean {
+  const rootPath = input.rootPath;
   if (!rootPath) {
     return false;
   }
 
-  const normalizedCandidate = normalizePathKey(candidatePath);
-  const normalizedRoot = normalizePathKey(path.resolve(rootPath));
+  const normalizedCandidate = normalizePathKey(input.candidatePath, input.platform);
+  const normalizedRoot = normalizePathKey(rootPath, input.platform);
   return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
 }
 
@@ -485,13 +497,13 @@ function tryRealpath(rootPath: string | undefined): string | undefined {
   }
 }
 
-function normalizePathKey(value: string): string {
-  return value
+function normalizePathKey(value: string, platform: NodeJS.Platform = process.platform): string {
+  const normalized = value
     .replace(/^\\\\\?\\/, "")
     .replace(/\\/g, "/")
     .replace(/\/+/g, "/")
-    .replace(/\/$/, "")
-    .toLowerCase();
+    .replace(/\/$/, "");
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 function getAssetFileName(input: { localPath?: string; fileName?: string }): string {
