@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -922,6 +922,201 @@ describe("FeishuAdapter", () => {
     expect(apiClient.replyImageMessage).not.toHaveBeenCalled();
   });
 
+  it("sends oversized outbound image replies as files with a readable notice", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-large-image-"));
+    const imagePath = path.join(rootDir, "large-result.png");
+    writeFileSync(imagePath, "");
+    truncateSync(imagePath, 10 * 1024 * 1024 + 1);
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [
+          { kind: "image", localPath: imagePath, caption: "大图结果" } satisfies BridgeReply,
+        ]),
+      };
+      const apiClient = createApiClientDouble();
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-large-image-reply-dm-1",
+        },
+        event: {
+          message: {
+            chat_type: "p2p",
+            message_type: "text",
+            content: JSON.stringify({ text: "请返回大图" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(apiClient.uploadImage).not.toHaveBeenCalled();
+      expect(apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath: imagePath,
+        fileName: "large-result.png",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(apiClient.sendFileMessage).toHaveBeenCalledWith("ou_demo", "file-uploaded-1");
+      expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+        "ou_demo",
+        "图片超过原生图片限制，已作为文件发送。",
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uploads outbound file replies for DM messages", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [
+        { kind: "assistant", text: "结果文件如下" } satisfies BridgeReply,
+        {
+          kind: "file",
+          localPath: "D:/tmp/report.md",
+          fileName: "report.md",
+          caption: "Markdown 预览源文件",
+          presentation: "markdown_preview",
+        } satisfies BridgeReply,
+      ]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-file-reply-dm-1",
+      },
+      event: {
+        message: {
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "请返回结果文件" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", "结果文件如下");
+    expect(apiClient.uploadFile).toHaveBeenCalledWith({
+      filePath: "D:/tmp/report.md",
+      fileName: "report.md",
+      fileType: undefined,
+      duration: undefined,
+    });
+    expect(apiClient.sendFileMessage).toHaveBeenCalledWith("ou_demo", "file-uploaded-1");
+    expect(apiClient.replyFileMessage).not.toHaveBeenCalled();
+  });
+
+  it("uploads outbound file replies against group anchor messages", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [{
+        kind: "file",
+        localPath: "D:/tmp/diagram.drawio",
+        fileName: "diagram.drawio",
+        caption: "draw.io 源文件",
+        presentation: "drawio_with_preview",
+      } satisfies BridgeReply]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+      isCodexGroupChat: chatId => chatId === "oc_chat_bound",
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-file-reply-group-1",
+      },
+      event: {
+        message: {
+          chat_type: "group",
+          chat_id: "oc_chat_bound",
+          message_id: "om_group_anchor_1",
+          message_type: "text",
+          content: JSON.stringify({ text: "请返回结果文件" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(apiClient.uploadFile).toHaveBeenCalledWith({
+      filePath: "D:/tmp/diagram.drawio",
+      fileName: "diagram.drawio",
+      fileType: undefined,
+      duration: undefined,
+    });
+    expect(apiClient.replyFileMessage).toHaveBeenCalledWith("om_group_anchor_1", "file-uploaded-1");
+    expect(apiClient.sendFileMessage).not.toHaveBeenCalled();
+  });
+
+  it("falls back to readable text when native file delivery is unavailable", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [{
+        kind: "file",
+        localPath: "D:/tmp/report.md",
+        fileName: "report.md",
+      } satisfies BridgeReply]),
+    };
+    const apiClient = createApiClientDouble({
+      uploadFile: undefined,
+      sendFileMessage: undefined,
+      replyFileMessage: undefined,
+    });
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-file-fallback-dm-1",
+      },
+      event: {
+        message: {
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "请返回结果文件" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", "文件结果已生成：report.md");
+  });
+
   it("renders markdown-heavy assistant replies as interactive cards instead of raw text", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => [{
@@ -1400,6 +1595,9 @@ function createApiClientDouble(overrides?: Record<string, unknown>) {
     uploadImage: vi.fn(async () => "img-uploaded-1"),
     sendImageMessage: vi.fn(async () => "msg-image-1"),
     replyImageMessage: vi.fn(async () => "msg-reply-image-1"),
+    uploadFile: vi.fn(async () => "file-uploaded-1"),
+    sendFileMessage: vi.fn(async () => "msg-file-1"),
+    replyFileMessage: vi.fn(async () => "msg-reply-file-1"),
     sendInteractiveCard: vi.fn(async () => "msg-card-1"),
     replyInteractiveCard: vi.fn(async () => "msg-reply-card-1"),
     updateInteractiveCard: vi.fn(async () => undefined),

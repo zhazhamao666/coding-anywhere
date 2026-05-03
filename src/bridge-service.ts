@@ -4,8 +4,8 @@ import path from "node:path";
 import {
   DEFAULT_BRIDGE_ASSET_ROOT_DIR,
   classifyBridgeAssetSemanticType,
-  parseBridgeImageDirective,
-  validateBridgeImagePath,
+  parseBridgeAssetDirectives,
+  validateBridgeAssetPath,
 } from "./bridge-asset-directive.js";
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
 import {
@@ -4316,29 +4316,66 @@ function buildFinalBridgeReplies(input: {
   previewText: string;
   replies: BridgeReply[];
 } {
-  const parsed = parseBridgeImageDirective(input.finalText);
+  const parsed = parseBridgeAssetDirectives(input.finalText);
   const replies: BridgeReply[] = [];
   const fallbackTexts = [...parsed.errors];
   const captionTexts: string[] = [];
 
-  for (const image of parsed.images) {
-    const validation = validateBridgeImagePath({
-      candidatePath: image.localPath,
+  for (const asset of parsed.assets) {
+    const validation = validateBridgeAssetPath({
+      kind: asset.kind,
+      candidatePath: asset.path,
       cwd: input.cwd,
       managedAssetRootDir: input.managedAssetRootDir,
+      fileName: asset.fileName,
+      caption: asset.caption,
+      presentation: asset.presentation,
+      preview: asset.preview,
     });
     if (!validation.ok) {
-      fallbackTexts.push(validation.errorText);
+      fallbackTexts.push(asset.kind === "image"
+        ? validation.errorText.replace("[ca] asset unavailable:", "[ca] image unavailable:")
+        : validation.errorText);
       continue;
     }
 
-    replies.push({
-      kind: "image",
-      localPath: validation.image.localPath,
-      caption: image.caption,
-    });
-    if (image.caption) {
-      captionTexts.push(image.caption);
+    if (validation.asset.kind === "image") {
+      replies.push({
+        kind: "image",
+        localPath: validation.asset.localPath,
+        caption: validation.asset.caption,
+      });
+    } else {
+      const fileReply: Extract<BridgeReply, { kind: "file" }> = {
+        kind: "file",
+        localPath: validation.asset.localPath,
+      };
+      if (validation.asset.fileName) {
+        fileReply.fileName = validation.asset.fileName;
+      }
+      if (validation.asset.caption) {
+        fileReply.caption = validation.asset.caption;
+      }
+      if (validation.asset.mimeType) {
+        fileReply.mimeType = validation.asset.mimeType;
+      }
+      if (validation.asset.fileSize !== undefined) {
+        fileReply.fileSize = validation.asset.fileSize;
+      }
+      if (validation.asset.semanticType) {
+        fileReply.semanticType = validation.asset.semanticType;
+      }
+      if (validation.asset.presentation) {
+        fileReply.presentation = validation.asset.presentation;
+      }
+      if (validation.asset.preview) {
+        fileReply.preview = validation.asset.preview;
+      }
+      replies.push(fileReply);
+    }
+
+    if (validation.asset.caption) {
+      captionTexts.push(validation.asset.caption);
     }
   }
 
@@ -4365,7 +4402,7 @@ function buildFinalBridgeReplies(input: {
   }
 
   return {
-    previewText: assistantText || fallbackTexts[0] || "[ca] image reply generated",
+    previewText: assistantText || fallbackTexts[0] || "[ca] asset reply generated",
     replies,
   };
 }

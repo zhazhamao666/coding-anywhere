@@ -1420,6 +1420,86 @@ describe("BridgeService", () => {
     ]);
   });
 
+  it("strips bridge-assets directives and returns image and file replies", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    const imagePath = path.join(projectCwd, "artifacts", "result.png");
+    const markdownPath = path.join(projectCwd, "artifacts", "notes.md");
+    mkdirSync(path.dirname(imagePath), { recursive: true });
+    writeFileSync(imagePath, "png");
+    writeFileSync(markdownPath, "# Notes\n");
+
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    bindGroupMainlineCodexThread(store, {
+      projectId: "proj-current",
+      chatId: "oc_chat_current",
+      threadId: "thread-created",
+      projectName: "Current Project",
+    });
+
+    const directiveText = [
+      "已生成结果资源。",
+      "[bridge-assets]",
+      JSON.stringify({
+        assets: [
+          {
+            kind: "image",
+            path: imagePath,
+            caption: "处理结果图",
+          },
+          {
+            kind: "file",
+            path: markdownPath,
+            file_name: "report.md",
+            caption: "Markdown 预览源文件",
+            presentation: "markdown_preview",
+          },
+        ],
+      }),
+      "[/bridge-assets]",
+    ].join("\n");
+    const runner = createRunnerDouble([
+      { type: "text", content: directiveText },
+      { type: "done", content: directiveText },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "请返回结果资源",
+    });
+
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "已生成结果资源。",
+      },
+      {
+        kind: "image",
+        localPath: imagePath,
+        caption: "处理结果图",
+      },
+      {
+        kind: "file",
+        localPath: markdownPath,
+        fileName: "report.md",
+        caption: "Markdown 预览源文件",
+        fileSize: 8,
+        semanticType: "markdown",
+        presentation: "markdown_preview",
+      },
+    ]);
+  });
+
   it("degrades disallowed bridge-image paths into readable system text", async () => {
     const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
     const outsideImagePath = path.join(rootDir, "outside.png");
@@ -1473,6 +1553,64 @@ describe("BridgeService", () => {
       {
         kind: "system",
         text: `[ca] image unavailable: disallowed path ${outsideImagePath}`,
+      },
+    ]);
+  });
+
+  it("degrades invalid bridge-assets file paths into readable system text", async () => {
+    const projectCwd = path.join(bridgeRootCwd, "coding-anywhere");
+    const missingPath = path.join(projectCwd, "artifacts", "missing.md");
+    mkdirSync(projectCwd, { recursive: true });
+
+    store.createProject({
+      projectId: "proj-current",
+      name: "Current Project",
+      cwd: projectCwd,
+      repoRoot: projectCwd,
+    });
+    bindGroupMainlineCodexThread(store, {
+      projectId: "proj-current",
+      chatId: "oc_chat_current",
+      threadId: "thread-created",
+      projectName: "Current Project",
+    });
+
+    const directiveText = [
+      "文件已生成。",
+      "[bridge-assets]",
+      JSON.stringify({
+        assets: [{
+          kind: "file",
+          path: missingPath,
+          file_name: "missing.md",
+        }],
+      }),
+      "[/bridge-assets]",
+    ].join("\n");
+    const runner = createRunnerDouble([
+      { type: "text", content: directiveText },
+      { type: "done", content: directiveText },
+    ]);
+    const service = new BridgeService({
+      store,
+      runner,
+    });
+
+    const replies = await service.handleMessage({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      text: "请返回文件",
+    });
+
+    expect(replies).toEqual([
+      {
+        kind: "assistant",
+        text: "文件已生成。",
+      },
+      {
+        kind: "system",
+        text: `[ca] asset unavailable: file not found ${missingPath}`,
       },
     ]);
   });

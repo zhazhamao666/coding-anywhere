@@ -307,6 +307,53 @@ describe("FeishuCardActionService", () => {
     expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
+  it("delivers file resources from inline command action replies", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [
+        { kind: "assistant", text: "结果文件如下" } as BridgeReply,
+        {
+          kind: "file",
+          localPath: "D:/tmp/report.md",
+          fileName: "report.md",
+          caption: "Markdown 预览源文件",
+          presentation: "markdown_preview",
+        } as BridgeReply,
+      ]),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const result = await service.handleAction({
+      open_message_id: "om_callback_1",
+      open_id: "ou_demo",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca project current",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    expect(apiClient.uploadFile).toHaveBeenCalledWith({
+      filePath: "D:/tmp/report.md",
+      fileName: "report.md",
+      fileType: undefined,
+      duration: undefined,
+    });
+    expect(apiClient.replyFileMessage).toHaveBeenCalledWith("om_callback_1", "file-uploaded-1");
+    expect(apiClient.sendFileMessage).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      card: {
+        type: "raw",
+      },
+    });
+  });
+
   it("inline-returns fallback result cards when command callbacks omit chatId in action value", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => [
@@ -1187,6 +1234,61 @@ describe("FeishuCardActionService", () => {
     });
   });
 
+  it("delivers file resources from async command action replies", async () => {
+    const deferred = createDeferred<BridgeReply[]>();
+    const bridgeService = {
+      handleMessage: vi.fn(() => deferred.promise),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const result = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_async_file_1",
+      token: "c-async-file-1",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca project bind-current project-alpha",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      toast: {
+        type: "info",
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(bridgeService.handleMessage).toHaveBeenCalled();
+    });
+
+    deferred.resolve([
+      { kind: "assistant", text: "结果文件如下" } as BridgeReply,
+      {
+        kind: "file",
+        localPath: "D:/tmp/report.md",
+        fileName: "report.md",
+      } as BridgeReply,
+    ]);
+
+    await vi.waitFor(() => {
+      expect(apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath: "D:/tmp/report.md",
+        fileName: "report.md",
+        fileType: undefined,
+        duration: undefined,
+      });
+    });
+    expect(apiClient.replyFileMessage).toHaveBeenCalledWith("om_async_file_1", "file-uploaded-1");
+  });
+
   it("launches a stored plan choice via a fresh progress message", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => []),
@@ -1329,6 +1431,12 @@ function createApiClientDouble() {
     sendTextMessageToChat: vi.fn(async () => ({ messageId: "msg-chat-1", threadId: "omt-1" })),
     replyTextMessage: vi.fn(async () => "msg-reply-text-1"),
     updateTextMessage: vi.fn(async () => undefined),
+    uploadImage: vi.fn(async () => "img-uploaded-1"),
+    sendImageMessage: vi.fn(async () => "msg-image-1"),
+    replyImageMessage: vi.fn(async () => "msg-reply-image-1"),
+    uploadFile: vi.fn(async () => "file-uploaded-1"),
+    sendFileMessage: vi.fn(async () => "msg-file-1"),
+    replyFileMessage: vi.fn(async () => "msg-reply-file-1"),
     sendInteractiveCard: vi.fn(async () => "msg-card-1"),
     replyInteractiveCard: vi.fn(async () => "msg-reply-card-1"),
     delayUpdateInteractiveCard: vi.fn(async () => undefined),

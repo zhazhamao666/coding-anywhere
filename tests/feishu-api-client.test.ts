@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -577,6 +577,96 @@ describe("FeishuApiClient", () => {
       rmSync(rootDir, { recursive: true, force: true });
     }
   });
+
+  it("uploads local files and sends native file messages", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-file-upload-"));
+    const filePath = path.join(rootDir, "reply.md");
+    writeFileSync(filePath, "# Reply\n");
+
+    try {
+      const sdk = createSdkDouble();
+      const client = new FeishuApiClient(
+        {
+          appId: "cli_xxx",
+          appSecret: "secret",
+          apiBaseUrl: "https://open.feishu.cn/open-apis",
+        },
+        sdk as any,
+      );
+
+      const fileKey = await client.uploadFile({
+        filePath,
+        fileName: "../unsafe.md",
+        duration: 3000,
+      });
+      const createMessageId = await client.sendFileMessage("ou_demo", fileKey);
+      const replyMessageId = await client.replyFileMessage("om_anchor_1", fileKey);
+
+      expect(fileKey).toBe("file_uploaded_1");
+      expect(sdk.im.v1.file.create).toHaveBeenCalledWith({
+        data: {
+          file_type: "stream",
+          file_name: "unsafe.md",
+          duration: 3000,
+          file: expect.anything(),
+        },
+      });
+      expect(createMessageId).toBe("msg-file-1");
+      expect(sdk.im.message.create).toHaveBeenCalledWith({
+        params: {
+          receive_id_type: "open_id",
+        },
+        data: {
+          receive_id: "ou_demo",
+          msg_type: "file",
+          content: JSON.stringify({
+            file_key: "file_uploaded_1",
+          }),
+        },
+      });
+      expect(replyMessageId).toBe("msg-reply-file-1");
+      expect(sdk.im.message.reply).toHaveBeenCalledWith({
+        path: {
+          message_id: "om_anchor_1",
+        },
+        data: {
+          msg_type: "file",
+          content: JSON.stringify({
+            file_key: "file_uploaded_1",
+          }),
+        },
+      });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects empty and oversized local files before upload", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-file-size-"));
+    const emptyPath = path.join(rootDir, "empty.md");
+    const oversizedPath = path.join(rootDir, "oversized.md");
+    writeFileSync(emptyPath, "");
+    writeFileSync(oversizedPath, "");
+    truncateSync(oversizedPath, 30 * 1024 * 1024 + 1);
+
+    try {
+      const sdk = createSdkDouble();
+      const client = new FeishuApiClient(
+        {
+          appId: "cli_xxx",
+          appSecret: "secret",
+          apiBaseUrl: "https://open.feishu.cn/open-apis",
+        },
+        sdk as any,
+      );
+
+      await expect(client.uploadFile({ filePath: emptyPath })).rejects.toThrow("FEISHU_FILE_UPLOAD_EMPTY");
+      await expect(client.uploadFile({ filePath: oversizedPath })).rejects.toThrow("FEISHU_FILE_UPLOAD_TOO_LARGE");
+      expect(sdk.im.v1.file.create).not.toHaveBeenCalled();
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function createSdkDouble(): any {
@@ -590,6 +680,8 @@ function createSdkDouble(): any {
               message_id:
                 data.msg_type === "image"
                   ? "msg-image-1"
+                  : data.msg_type === "file"
+                    ? "msg-file-1"
                   : content.type === "card"
                     ? "msg-cardkit-1"
                     : "msg-card-1",
@@ -599,7 +691,12 @@ function createSdkDouble(): any {
         }),
         reply: vi.fn(async ({ data }: { data?: { msg_type?: string } }) => ({
           data: {
-            message_id: data?.msg_type === "image" ? "msg-reply-image-1" : "msg-reply-1",
+            message_id:
+              data?.msg_type === "image"
+                ? "msg-reply-image-1"
+                : data?.msg_type === "file"
+                  ? "msg-reply-file-1"
+                  : "msg-reply-1",
             thread_id: "omt-1",
           },
         })),
@@ -610,6 +707,11 @@ function createSdkDouble(): any {
         image: {
           create: vi.fn(async () => ({
             image_key: "img-upload-default",
+          })),
+        },
+        file: {
+          create: vi.fn(async () => ({
+            file_key: "file_uploaded_1",
           })),
         },
         messageResource: {

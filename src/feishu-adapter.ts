@@ -1,6 +1,8 @@
+import { statSync } from "node:fs";
 import path from "node:path";
 
 import { DEFAULT_BRIDGE_ASSET_ROOT_DIR } from "./bridge-image-directive.js";
+import type { FeishuBridgeFileType } from "./bridge-asset-directive.js";
 import { resolveFeishuAssistantMessageDelivery } from "./feishu-assistant-message.js";
 import { StreamingCardController } from "./feishu-card/streaming-card-controller.js";
 import { normalizeMarkdownToPlainText } from "./markdown-text.js";
@@ -49,6 +51,14 @@ export interface FeishuApiClientLike {
   }): Promise<{ imageKey?: string; image_key?: string } | string>;
   sendImageMessage?(peerId: string, imageKey: string): Promise<string>;
   replyImageMessage?(messageId: string, imageKey: string): Promise<string>;
+  uploadFile?(input: {
+    filePath: string;
+    fileName?: string;
+    fileType?: FeishuBridgeFileType;
+    duration?: number;
+  }): Promise<string>;
+  sendFileMessage?(peerId: string, fileKey: string): Promise<string>;
+  replyFileMessage?(messageId: string, fileKey: string): Promise<string>;
   sendInteractiveCard(peerId: string, card: Record<string, unknown>): Promise<string>;
   sendInteractiveCardToChat?(
     chatId: string,
@@ -346,10 +356,10 @@ export class FeishuAdapter {
       }
 
       if (reply.kind === "file") {
-        await this.replyText({
+        await this.replyFile({
           peerId,
           anchorMessageId,
-          text: formatFileFallbackText(reply),
+          reply,
         });
         continue;
       }
@@ -569,6 +579,17 @@ export class FeishuAdapter {
     reply: Extract<BridgeReply, { kind: "image" }>;
   }): Promise<void> {
     const fallbackText = formatImageFallbackText(input.reply);
+    const imageAsFileReply = maybeBuildOversizedImageFileReply(input.reply);
+    if (imageAsFileReply) {
+      await this.replyFile({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        reply: imageAsFileReply,
+        successText: "图片超过原生图片限制，已作为文件发送。",
+      });
+      return;
+    }
+
     const imageKey = await this.uploadImageKey(input.reply.localPath);
     if (!imageKey) {
       await this.replyText({
@@ -594,6 +615,61 @@ export class FeishuAdapter {
       anchorMessageId: input.anchorMessageId,
       text: fallbackText,
     });
+  }
+
+  private async replyFile(input: {
+    peerId: string;
+    anchorMessageId?: string;
+    reply: Extract<BridgeReply, { kind: "file" }>;
+    successText?: string;
+  }): Promise<boolean> {
+    const fallbackText = formatFileFallbackText(input.reply);
+    const apiClient = this.dependencies.apiClient;
+    const canSend = input.anchorMessageId
+      ? !!apiClient.replyFileMessage
+      : !!apiClient.sendFileMessage;
+    if (!apiClient.uploadFile || !canSend) {
+      await this.replyText({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        text: fallbackText,
+      });
+      return false;
+    }
+
+    try {
+      const fileKey = await apiClient.uploadFile({
+        filePath: input.reply.localPath,
+        fileName: input.reply.fileName,
+        fileType: undefined,
+        duration: undefined,
+      });
+
+      if (input.anchorMessageId) {
+        await apiClient.replyFileMessage!(input.anchorMessageId, fileKey);
+      } else {
+        await apiClient.sendFileMessage!(input.peerId, fileKey);
+      }
+
+      if (input.successText) {
+        await this.replyText({
+          peerId: input.peerId,
+          anchorMessageId: input.anchorMessageId,
+          text: input.successText,
+        });
+      }
+      return true;
+    } catch (error) {
+      this.dependencies.logger?.warn?.(
+        `feishu file delivery failed: ${formatFeishuErrorText(error)}`,
+      );
+      await this.replyText({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        text: fallbackText,
+      });
+      return false;
+    }
   }
 
   private async uploadImageKey(imagePath: string): Promise<string | undefined> {
@@ -674,6 +750,33 @@ function formatFileFallbackText(reply: Extract<BridgeReply, { kind: "file" }>): 
     return `文件结果已生成：${reply.fileName.trim()}`;
   }
   return "文件结果已生成。";
+}
+
+const FEISHU_IMAGE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+const FEISHU_FILE_UPLOAD_MAX_BYTES = 30 * 1024 * 1024;
+
+function maybeBuildOversizedImageFileReply(
+  reply: Extract<BridgeReply, { kind: "image" }>,
+): Extract<BridgeReply, { kind: "file" }> | undefined {
+  let size: number;
+  try {
+    size = statSync(reply.localPath).size;
+  } catch {
+    return undefined;
+  }
+
+  if (size <= FEISHU_IMAGE_UPLOAD_MAX_BYTES || size > FEISHU_FILE_UPLOAD_MAX_BYTES) {
+    return undefined;
+  }
+
+  return {
+    kind: "file",
+    localPath: reply.localPath,
+    fileName: path.basename(reply.localPath),
+    caption: reply.caption,
+    fileSize: size,
+    semanticType: "generic",
+  };
 }
 
 function sanitizeProgressSnapshotForFeishu(snapshot: ProgressCardState): ProgressCardState {

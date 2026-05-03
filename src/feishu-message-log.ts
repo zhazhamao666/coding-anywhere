@@ -64,7 +64,7 @@ export function buildFeishuInboundLog(input: {
 
 export function buildFeishuOutboundLog(input: {
   mode: string;
-  messageType: "text" | "interactive" | "image";
+  messageType: "text" | "interactive" | "image" | "file";
   messageId?: string;
   peerId?: string;
   chatId?: string;
@@ -72,6 +72,7 @@ export function buildFeishuOutboundLog(input: {
   anchorMessageId?: string;
   cardId?: string;
   imageKey?: string;
+  fileKey?: string;
   text?: string;
   card?: Record<string, unknown>;
 }): string {
@@ -89,7 +90,9 @@ export function buildFeishuOutboundLog(input: {
       ? formatSummary("text", summarizeFeishuText(input.text))
       : input.messageType === "interactive"
         ? formatSummary("card", summarizeFeishuCard(input.card))
-        : formatSummary("image_key", input.imageKey),
+        : input.messageType === "image"
+          ? formatSummary("image_key", input.imageKey)
+          : formatSummary("file_key", input.fileKey),
   ];
 
   return parts.filter(Boolean).join(" ");

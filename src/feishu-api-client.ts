@@ -3,7 +3,9 @@ import path from "node:path";
 
 import { Client } from "@larksuiteoapi/node-sdk";
 
+import { mapBridgeAssetToFeishuFileType } from "./bridge-asset-directive.js";
 import { buildFeishuOutboundLog } from "./feishu-message-log.js";
+import type { FeishuBridgeFileType } from "./bridge-asset-directive.js";
 import type { BridgeAssetDownloadResult } from "./types.js";
 
 interface SdkResponse {
@@ -34,6 +36,11 @@ interface FeishuSdkClientLike {
       image?: {
         create(params: Record<string, unknown>): Promise<{
           image_key?: string;
+        } | null>;
+      };
+      file?: {
+        create(params: Record<string, unknown>): Promise<{
+          file_key?: string;
         } | null>;
       };
       messageResource?: {
@@ -67,6 +74,7 @@ export class FeishuApiClient {
   private readonly now: () => number;
   private readonly pushLogWindowMs: number;
   private readonly recentOutboundLogs = new Map<string, number>();
+  private static readonly fileUploadMaxBytes = 30 * 1024 * 1024;
 
   public constructor(
     private readonly config: {
@@ -163,6 +171,57 @@ export class FeishuApiClient {
       [`image:${imageKey}`],
     );
     return imageKey;
+  }
+
+  public async uploadFile(input: {
+    filePath: string;
+    fileName?: string;
+    fileType?: FeishuBridgeFileType;
+    duration?: number;
+  }): Promise<string> {
+    const fileClient = this.sdkClient.im.v1?.file;
+    if (!fileClient) {
+      throw new Error("FEISHU_FILE_UPLOAD_UNAVAILABLE");
+    }
+
+    const fileStat = statSync(input.filePath);
+    if (fileStat.size === 0) {
+      throw new Error("FEISHU_FILE_UPLOAD_EMPTY");
+    }
+    if (fileStat.size > FeishuApiClient.fileUploadMaxBytes) {
+      throw new Error("FEISHU_FILE_UPLOAD_TOO_LARGE");
+    }
+
+    const fileName = sanitizeFileName(input.fileName ?? path.basename(input.filePath));
+    const data: Record<string, unknown> = {
+      file_type: input.fileType ?? mapBridgeAssetToFeishuFileType({
+        localPath: input.filePath,
+        fileName,
+      }),
+      file_name: fileName,
+      file: readFileSync(input.filePath),
+    };
+    if (input.duration !== undefined) {
+      data.duration = input.duration;
+    }
+
+    const response = await fileClient.create({
+      data,
+    });
+    const fileKey = response?.file_key ?? "";
+    if (!fileKey) {
+      throw new Error("FEISHU_FILE_UPLOAD_FAILED");
+    }
+
+    this.logOutbound(
+      {
+        messageType: "file",
+        mode: "upload",
+        fileKey,
+      },
+      [`file:${fileKey}`],
+    );
+    return fileKey;
   }
 
   public async sendTextMessage(peerId: string, text: string): Promise<string> {
@@ -321,6 +380,58 @@ export class FeishuApiClient {
         imageKey,
       },
       [`message:${replyMessageId}`, `image:${imageKey}`],
+    );
+    return replyMessageId;
+  }
+
+  public async sendFileMessage(peerId: string, fileKey: string): Promise<string> {
+    const response = await this.sdkClient.im.message.create({
+      params: {
+        receive_id_type: "open_id",
+      },
+      data: {
+        receive_id: peerId,
+        msg_type: "file",
+        content: JSON.stringify({ file_key: fileKey }),
+      },
+    });
+
+    const messageId = response.data?.message_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "file",
+        mode: "create",
+        messageId,
+        peerId,
+        fileKey,
+      },
+      [`message:${messageId}`, `file:${fileKey}`],
+    );
+    return messageId;
+  }
+
+  public async replyFileMessage(messageId: string, fileKey: string): Promise<string> {
+    const response = await this.sdkClient.im.message.reply({
+      path: {
+        message_id: messageId,
+      },
+      data: {
+        msg_type: "file",
+        content: JSON.stringify({ file_key: fileKey }),
+      },
+    });
+
+    const replyMessageId = response.data?.message_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "file",
+        mode: "reply",
+        messageId: replyMessageId,
+        anchorMessageId: messageId,
+        threadId: response.data?.thread_id ?? "",
+        fileKey,
+      },
+      [`message:${replyMessageId}`, `file:${fileKey}`],
     );
     return replyMessageId;
   }
@@ -592,7 +703,7 @@ export class FeishuApiClient {
   private logOutbound(
     input: {
       mode: string;
-      messageType: "text" | "interactive" | "image";
+      messageType: "text" | "interactive" | "image" | "file";
       messageId?: string;
       peerId?: string;
       chatId?: string;
@@ -600,6 +711,7 @@ export class FeishuApiClient {
       anchorMessageId?: string;
       cardId?: string;
       imageKey?: string;
+      fileKey?: string;
       text?: string;
       card?: Record<string, unknown>;
     },

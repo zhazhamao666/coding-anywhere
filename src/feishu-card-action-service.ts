@@ -355,7 +355,7 @@ export class FeishuCardActionService {
           surfaceRef: actionValue?.surfaceRef,
           text: command,
         });
-        await this.deliverImageReplies({
+        await this.deliverResourceReplies({
           replies,
           peerId: event.open_id,
           existingMessageId: patchTargetMessageId,
@@ -604,7 +604,7 @@ export class FeishuCardActionService {
     void (async () => {
       try {
         const replies = await input.execute();
-        await this.deliverImageReplies({
+        await this.deliverResourceReplies({
           replies,
           peerId: input.peerId,
           existingMessageId: input.existingMessageId,
@@ -736,18 +736,18 @@ export class FeishuCardActionService {
     throw new Error("FEISHU_DESKTOP_CONTINUE_REPLY_KIND_UNSUPPORTED");
   }
 
-  private async deliverImageReplies(input: {
+  private async deliverResourceReplies(input: {
     replies: BridgeReply[];
     peerId: string;
     existingMessageId?: string;
   }): Promise<void> {
     for (const reply of input.replies) {
-      if (reply.kind !== "image") {
+      if (reply.kind !== "image" && reply.kind !== "file") {
         continue;
       }
 
       try {
-        await this.deliverImageReply({
+        await this.deliverResourceReply({
           peerId: input.peerId,
           existingMessageId: input.existingMessageId,
           reply,
@@ -760,10 +760,31 @@ export class FeishuCardActionService {
             error: normalizeActionError(error),
             localPath: reply.localPath,
           },
-          "feishu card action image delivery failed",
+          "feishu card action resource delivery failed",
         );
       }
     }
+  }
+
+  private async deliverResourceReply(input: {
+    peerId: string;
+    existingMessageId?: string;
+    reply: Extract<BridgeReply, { kind: "image" | "file" }>;
+  }): Promise<void> {
+    if (input.reply.kind === "file") {
+      await this.deliverFileReply(input as {
+        peerId: string;
+        existingMessageId?: string;
+        reply: Extract<BridgeReply, { kind: "file" }>;
+      });
+      return;
+    }
+
+    await this.deliverImageReply(input as {
+      peerId: string;
+      existingMessageId?: string;
+      reply: Extract<BridgeReply, { kind: "image" }>;
+    });
   }
 
   private async deliverImageReply(input: {
@@ -795,6 +816,39 @@ export class FeishuCardActionService {
     throw new Error("FEISHU_IMAGE_REPLY_UNAVAILABLE");
   }
 
+  private async deliverFileReply(input: {
+    peerId: string;
+    existingMessageId?: string;
+    reply: Extract<BridgeReply, { kind: "file" }>;
+  }): Promise<void> {
+    const apiClient = this.dependencies.apiClient;
+    if (!apiClient?.uploadFile) {
+      throw new Error("FEISHU_FILE_REPLY_UNAVAILABLE");
+    }
+
+    const fileKey = await apiClient.uploadFile({
+      filePath: input.reply.localPath,
+      fileName: input.reply.fileName,
+      fileType: undefined,
+      duration: undefined,
+    });
+    if (!fileKey) {
+      throw new Error("FEISHU_FILE_REPLY_UNAVAILABLE");
+    }
+
+    if (input.existingMessageId && apiClient.replyFileMessage) {
+      await apiClient.replyFileMessage(input.existingMessageId, fileKey);
+      return;
+    }
+
+    if (apiClient.sendFileMessage) {
+      await apiClient.sendFileMessage(input.peerId, fileKey);
+      return;
+    }
+
+    throw new Error("FEISHU_FILE_REPLY_UNAVAILABLE");
+  }
+
   private launchInteractiveRun(input: {
     peerId: string;
     anchorMessageId?: string;
@@ -813,9 +867,16 @@ export class FeishuCardActionService {
         })
       : undefined;
 
-    void input.execute({
-      onProgress: snapshot => controller?.push(snapshot),
-    }).catch(async error => {
+    void (async () => {
+      const replies = await input.execute({
+        onProgress: snapshot => controller?.push(snapshot),
+      });
+      await this.deliverResourceReplies({
+        replies,
+        peerId: input.peerId,
+        existingMessageId: input.existingMessageId,
+      });
+    })().catch(async error => {
       await controller?.finalizeError(normalizeActionError(error));
     });
   }
