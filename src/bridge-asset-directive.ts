@@ -108,6 +108,21 @@ export function validateBridgeAssetPath(input: {
   const resolvedPath = resolveCandidatePath(input.cwd, input.candidatePath);
   const managedRootDir = input.managedAssetRootDir ?? DEFAULT_BRIDGE_ASSET_ROOT_DIR;
   const allowedRoots = collectExistingAllowedRoots([input.cwd, managedRootDir]);
+  if (!isBridgeAssetPathWithinAnyRoot({
+    candidatePath: resolvedPath,
+    rootPaths: allowedRoots.map(root => root.rootPath),
+  })) {
+    return {
+      ok: false,
+      errorText: `[ca] asset unavailable: disallowed path ${resolvedPath}`,
+    };
+  }
+  if (input.preview && input.presentation !== "drawio_with_preview") {
+    return {
+      ok: false,
+      errorText: PREVIEW_REQUIRES_DRAWIO_PRESENTATION_ERROR,
+    };
+  }
 
   let fileSize: number;
   try {
@@ -133,13 +148,6 @@ export function validateBridgeAssetPath(input: {
     }
     fileSize = stat.size;
   } catch {
-    if (!allowedRoots.some(root => isPathAllowed(resolvedPath, root.rootPath))) {
-      return {
-        ok: false,
-        errorText: `[ca] asset unavailable: disallowed path ${resolvedPath}`,
-      };
-    }
-
     return {
       ok: false,
       errorText: `[ca] asset unavailable: file not found ${resolvedPath}`,
@@ -327,6 +335,10 @@ function parseBridgeAssetsPayload(rawPayload: string, errors: string[]): BridgeA
     const assetPath = typeof item.path === "string" ? item.path.trim() : "";
     const presentation = parsePresentation(item, errors);
     const preview = parsePreview(item, errors);
+    const previewRequiresDrawioPresentation =
+      preview !== undefined &&
+      preview !== INVALID_PREVIEW &&
+      presentation !== "drawio_with_preview";
 
     if (!kind) {
       errors.push("[ca] asset unavailable: bridge-assets item has invalid kind");
@@ -334,10 +346,14 @@ function parseBridgeAssetsPayload(rawPayload: string, errors: string[]): BridgeA
     if (!assetPath) {
       errors.push("[ca] asset unavailable: bridge-assets item missing path");
     }
+    if (previewRequiresDrawioPresentation) {
+      errors.push(PREVIEW_REQUIRES_DRAWIO_PRESENTATION_ERROR);
+    }
     if (!kind ||
         !assetPath ||
         presentation === INVALID_PRESENTATION ||
-        preview === INVALID_PREVIEW) {
+        preview === INVALID_PREVIEW ||
+        previewRequiresDrawioPresentation) {
       continue;
     }
 
@@ -463,6 +479,18 @@ export function isBridgeAssetPathWithinRoot(input: {
   return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
 }
 
+export function isBridgeAssetPathWithinAnyRoot(input: {
+  candidatePath: string;
+  rootPaths: Array<string | undefined>;
+  platform?: NodeJS.Platform;
+}): boolean {
+  return input.rootPaths.some(rootPath => isBridgeAssetPathWithinRoot({
+    candidatePath: input.candidatePath,
+    rootPath,
+    platform: input.platform,
+  }));
+}
+
 function collectExistingAllowedRoots(rootPaths: Array<string | undefined>): Array<{
   rootPath: string;
   realPath: string;
@@ -532,5 +560,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const BRIDGE_DIRECTIVE_PATTERN = /\[(bridge-assets|bridge-image)\]\s*([\s\S]*?)\s*\[\/\1\]/g;
+const PREVIEW_REQUIRES_DRAWIO_PRESENTATION_ERROR =
+  "[ca] asset unavailable: bridge-assets preview requires drawio_with_preview presentation";
 const INVALID_PRESENTATION = Symbol("invalid-presentation");
 const INVALID_PREVIEW = Symbol("invalid-preview");

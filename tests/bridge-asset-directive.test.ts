@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_BRIDGE_ASSET_ROOT_DIR,
   classifyBridgeAssetSemanticType,
+  isBridgeAssetPathWithinAnyRoot,
   isBridgeAssetPathWithinRoot,
   mapBridgeAssetToFeishuFileType,
   parseBridgeAssetDirectives,
@@ -49,7 +50,6 @@ describe("bridge asset directives", () => {
             path: "notes.md",
             file_name: "notes.md",
             presentation: "markdown_preview",
-            preview: { format: "png" },
           },
           {
             kind: "file",
@@ -64,7 +64,6 @@ describe("bridge asset directives", () => {
             path: "report.pdf",
             file_name: "report.pdf",
             presentation: "attachment",
-            preview: { format: "pdf" },
           },
         ],
       }),
@@ -88,7 +87,6 @@ describe("bridge asset directives", () => {
         path: "notes.md",
         fileName: "notes.md",
         presentation: "markdown_preview",
-        preview: { format: "png" },
       },
       {
         kind: "file",
@@ -103,7 +101,6 @@ describe("bridge asset directives", () => {
         path: "report.pdf",
         fileName: "report.pdf",
         presentation: "attachment",
-        preview: { format: "pdf" },
       },
     ]);
   });
@@ -118,6 +115,8 @@ describe("bridge asset directives", () => {
       "[bridge-assets]{\"assets\":[{\"kind\":\"video\",\"path\":\"movie.mp4\"}]}[/bridge-assets]",
       "[bridge-assets]{\"assets\":[{\"kind\":\"file\",\"path\":\"notes.md\",\"presentation\":\"inline\"}]}[/bridge-assets]",
       "[bridge-assets]{\"assets\":[{\"kind\":\"file\",\"path\":\"notes.md\",\"preview\":{\"format\":\"jpg\"}}]}[/bridge-assets]",
+      "[bridge-assets]{\"assets\":[{\"kind\":\"file\",\"path\":\"report.pdf\",\"presentation\":\"attachment\",\"preview\":{\"format\":\"pdf\"}}]}[/bridge-assets]",
+      "[bridge-assets]{\"assets\":[{\"kind\":\"file\",\"path\":\"diagram.drawio\",\"preview\":{\"format\":\"png\"}}]}[/bridge-assets]",
     ].join("\n"));
 
     expect(parsed.assets).toEqual([]);
@@ -130,6 +129,8 @@ describe("bridge asset directives", () => {
       "[ca] asset unavailable: bridge-assets item has invalid kind",
       "[ca] asset unavailable: bridge-assets item has invalid presentation",
       "[ca] asset unavailable: bridge-assets item has invalid preview",
+      "[ca] asset unavailable: bridge-assets preview requires drawio_with_preview presentation",
+      "[ca] asset unavailable: bridge-assets preview requires drawio_with_preview presentation",
     ]);
   });
 
@@ -274,29 +275,43 @@ describe("bridge asset directives", () => {
     })).toBe(true);
   });
 
+  it("rejects obvious out-of-root paths at lexical precheck", () => {
+    expect(isBridgeAssetPathWithinAnyRoot({
+      candidatePath: "/mnt/network-share/outside.txt",
+      rootPaths: ["/workspace/repo", "/tmp/coding-anywhere"],
+      platform: "linux",
+    })).toBe(false);
+
+    expect(isBridgeAssetPathWithinAnyRoot({
+      candidatePath: "/workspace/repo/artifacts/result.txt",
+      rootPaths: ["/workspace/repo", "/tmp/coding-anywhere"],
+      platform: "linux",
+    })).toBe(true);
+  });
+
   it.skipIf(!CAN_CREATE_DIRECTORY_LINK)(
     "rejects cwd links that resolve outside allowed roots (requires directory link support)",
     () => {
-    const cwd = path.join(rootDir, "repo");
-    const managedRoot = path.join(rootDir, "managed");
-    const outsideRoot = path.join(rootDir, "outside");
-    mkdirSync(cwd, { recursive: true });
-    mkdirSync(managedRoot, { recursive: true });
-    mkdirSync(outsideRoot, { recursive: true });
-    writeFileSync(path.join(outsideRoot, "secret.txt"), "secret", "utf8");
+      const cwd = path.join(rootDir, "repo");
+      const managedRoot = path.join(rootDir, "managed");
+      const outsideRoot = path.join(rootDir, "outside");
+      mkdirSync(cwd, { recursive: true });
+      mkdirSync(managedRoot, { recursive: true });
+      mkdirSync(outsideRoot, { recursive: true });
+      writeFileSync(path.join(outsideRoot, "secret.txt"), "secret", "utf8");
 
-    const linkPath = path.join(cwd, "outside-link");
-    symlinkSync(outsideRoot, linkPath, process.platform === "win32" ? "junction" : "dir");
+      const linkPath = path.join(cwd, "outside-link");
+      symlinkSync(outsideRoot, linkPath, process.platform === "win32" ? "junction" : "dir");
 
-    expect(validateBridgeAssetPath({
-      kind: "file",
-      candidatePath: path.join("outside-link", "secret.txt"),
-      cwd,
-      managedAssetRootDir: managedRoot,
-    })).toEqual({
-      ok: false,
-      errorText: `[ca] asset unavailable: disallowed path ${path.join(cwd, "outside-link", "secret.txt")}`,
-    });
+      expect(validateBridgeAssetPath({
+        kind: "file",
+        candidatePath: path.join("outside-link", "secret.txt"),
+        cwd,
+        managedAssetRootDir: managedRoot,
+      })).toEqual({
+        ok: false,
+        errorText: `[ca] asset unavailable: disallowed path ${path.join(cwd, "outside-link", "secret.txt")}`,
+      });
     },
   );
 
@@ -314,6 +329,23 @@ describe("bridge asset directives", () => {
     })).toEqual({
       ok: false,
       errorText: `[ca] asset unavailable: disallowed path ${candidatePath}`,
+    });
+  });
+
+  it("rejects preview validation unless presentation is drawio_with_preview", () => {
+    const cwd = path.join(rootDir, "repo");
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(path.join(cwd, "report.pdf"), "pdf", "utf8");
+
+    expect(validateBridgeAssetPath({
+      kind: "file",
+      candidatePath: "report.pdf",
+      cwd,
+      presentation: "attachment",
+      preview: { format: "pdf" },
+    })).toEqual({
+      ok: false,
+      errorText: "[ca] asset unavailable: bridge-assets preview requires drawio_with_preview presentation",
     });
   });
 
