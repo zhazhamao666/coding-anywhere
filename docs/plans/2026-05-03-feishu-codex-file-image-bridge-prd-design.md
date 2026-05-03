@@ -21,6 +21,8 @@
 - 入站文件不会自动改写用户工作区；默认下载到桥接层托管目录，再把路径和元数据交给 Codex。Codex 如需复制、解析或转换文件，应在会话内显式执行。
 - 出站图片优先作为飞书原生图片消息发送；超过飞书图片限制或非图片资源走飞书文件消息。
 - 文件安全边界沿用当前图片边界：只允许返回当前项目工作目录或桥接托管资源目录下的文件。
+- Markdown 文件指 `.md` / `.markdown`，作为普通文件传输，但在提示、预览和验收中拥有明确语义；默认按 UTF-8 文本处理，MIME 缺失时回退为 `text/markdown`。
+- draw.io 文件指 `.drawio` / `.drawio.xml`，作为可编辑图源文件传输；飞书侧“查看”体验通过可选 PNG/SVG/PDF 预览补足，源文件仍必须一并返回，避免只给不可编辑快照。
 
 ## 3. 官方飞书约束
 
@@ -31,6 +33,7 @@
 - [上传文件](https://open.feishu.cn/document/server-docs/im-v1/file/create?lang=zh-CN)：上传后返回 `file_key`；文件大小不得超过 30 MB 且不能为 0；请求体包含 `file_type`、`file_name`、可选 `duration` 和二进制 `file`。
 - [获取消息中的资源文件](https://open.feishu.cn/document/server-docs/im-v1/message/get-2?lang=zh-CN)：可下载指定消息里的图片、文件、音频、视频资源，返回二进制流；机器人和待操作消息需要在同一会话内；仅支持 100 MB 以内资源；`type=image` 对应图片，`type=file` 对应文件、音频、视频；不支持表情包、合并转发子消息和卡片消息内资源。
 - [接收消息内容结构](https://open.feishu.cn/document/server-docs/im-v1/message-content-description/message_content?lang=zh-CN)：消息事件/查询结果中的 `content` 是 JSON 字符串，不同 `msg_type` 有不同资源 key 结构。
+- Markdown 和 draw.io 都不需要飞书专用消息类型；`.md`、`.drawio`、`.drawio.xml` 走 `msg_type=file`。draw.io 预览图或 PDF 是桥接层本地转换产物，再按图片或文件上传到飞书。
 
 ## 4. 代码现状
 
@@ -53,6 +56,8 @@
 - `BridgeReply` 没有 `file` 类型；`FeishuApiClient` 没有 `uploadFile`、`sendFileMessage`、`replyFileMessage`。
 - 桌面 Codex 完成通知只把最终文本渲染为完成卡片；若桌面会话最终文本里包含待返回文件路径，当前不会触发上传。
 - 对资源数量、总大小、敏感路径、重复发送、上传失败后的用户提示还没有统一治理。
+- 没有按扩展名或 MIME 识别 Markdown、draw.io 等“语义文件类型”；Codex 只能看到普通文件元数据，桥接层也无法决定是否发送 Markdown 预览或 draw.io 预览图。
+- 没有 draw.io 本地导出服务；即使 Codex 生成 `.drawio`，飞书用户也只能收到源文件，不能直接在会话中预览图形内容。
 
 ## 5. 产品目标
 
@@ -75,8 +80,12 @@
 
 - 作为飞书用户，我发送一张截图后再说“分析这个报错”，Codex 能看到截图并给出分析。
 - 作为飞书用户，我发送一个 `.log`、`.csv`、`.xlsx`、`.pdf` 或 `.zip` 后再提问，Codex 能读取下载后的本地文件路径并处理。
+- 作为飞书用户，我发送一个 `.md` 文档后再提问，Codex 能按 Markdown 文本读取、总结、改写或生成新版 `.md` 文件。
+- 作为飞书用户，我发送一个 `.drawio` 架构图后再提问，Codex 能把它作为 draw.io 源文件识别，并在需要时修改 XML 或返回新版图源。
 - 作为飞书用户，我要求 Codex 生成图表、截图或设计稿，Codex 完成后我能直接在飞书看到图片。
 - 作为飞书用户，我要求 Codex 生成报告、表格、压缩包或补丁文件，Codex 完成后我能在飞书收到原生文件消息。
+- 作为飞书用户，我要求 Codex 生成 Markdown 报告时，能收到 `.md` 文件；在内容较短时，也能看到一段飞书内可读的摘要或预览。
+- 作为飞书用户，我要求 Codex 生成 draw.io 图时，能收到可编辑 `.drawio` 源文件；若本地导出能力可用，还能同时收到 PNG/SVG/PDF 预览。
 - 作为运维者，我能从日志和数据库记录里追踪某个资源从飞书消息下载、被哪个 run 消费、是否上传回飞书。
 
 ## 7. 推荐方案
@@ -94,9 +103,10 @@
 ### 7.3 推荐路径
 
 - 入站资源：复用 `pending_bridge_assets`，把 `image` 扩展为 `image | file`。
-- Codex 输入：图片继续传 `-i`；文件通过 prompt 内 `[bridge-attachments]` 暴露本地路径、文件名、MIME、大小、来源消息 ID。
+- Codex 输入：图片继续传 `-i`；文件通过 prompt 内 `[bridge-attachments]` 暴露本地路径、文件名、MIME、大小、来源消息 ID，并补充由扩展名/MIME 推导出的 `semantic_type`。
 - 出站资源：新增统一 `[bridge-assets]` 指令，兼容旧 `[bridge-image]`。
 - 飞书发送：新增 `BridgeReply.kind === "file"`，图片走图片上传，文件走文件上传。
+- Markdown/draw.io 特化：不改变飞书底层传输形态，仍然走文件；在桥接层新增轻量分类器和可选预览策略，避免为少数格式改动数据库主模型。
 - 桌面完成：完成卡片仍保留，另行解析最终文本中的出站资源指令并追加发送图片/文件。
 
 ## 8. 功能设计
@@ -133,12 +143,14 @@
 [bridge-attachments]
 image_count: 1
 image_1: file_name=screenshot.png; local_path=D:/.../screenshot.png; source_message_id=om_x; mime_type=image/png; file_size=12345
-file_count: 2
-file_1: file_name=report.pdf; local_path=D:/.../report.pdf; source_message_id=om_y; mime_type=application/pdf; file_size=204800
-file_2: file_name=data.csv; local_path=D:/.../data.csv; source_message_id=om_z; mime_type=text/csv; file_size=4096
+file_count: 3
+file_1: file_name=report.pdf; local_path=D:/.../report.pdf; source_message_id=om_y; mime_type=application/pdf; file_size=204800; semantic_type=generic
+file_2: file_name=notes.md; local_path=D:/.../notes.md; source_message_id=om_z; mime_type=text/markdown; file_size=4096; semantic_type=markdown; encoding=utf-8
+file_3: file_name=architecture.drawio; local_path=D:/.../architecture.drawio; source_message_id=om_a; mime_type=application/vnd.jgraph.mxfile; file_size=8192; semantic_type=drawio; encoding=utf-8
 instructions:
 - Use the local_path values above when the user asks you to inspect or process the attached resources.
 - Do not ask the user to re-upload these files unless a listed path is unreadable.
+- Markdown attachments are plain text files. draw.io attachments are editable XML diagram sources.
 [/bridge-attachments]
 ```
 
@@ -160,6 +172,21 @@ instructions:
       "path": "output/report.xlsx",
       "file_name": "report.xlsx",
       "caption": "完整报告"
+    },
+    {
+      "kind": "file",
+      "path": "docs/analysis.md",
+      "file_name": "analysis.md",
+      "caption": "Markdown 版分析报告",
+      "presentation": "markdown_preview"
+    },
+    {
+      "kind": "file",
+      "path": "docs/architecture.drawio",
+      "file_name": "architecture.drawio",
+      "caption": "可编辑架构图源文件",
+      "presentation": "drawio_with_preview",
+      "preview": { "format": "png" }
     }
   ]
 }
@@ -172,9 +199,12 @@ instructions:
 - `path` 必填，可为绝对路径或相对当前项目 cwd 的路径。
 - `file_name` 可选；未提供时使用 `path.basename(path)`。
 - `caption` 可选；用于发送前后的文本说明，不写入文件内容。
+- `presentation` 可选，允许 `attachment`、`markdown_preview`、`drawio_with_preview`；未提供时默认为 `attachment`。
+- `preview` 可选，仅在 `presentation=drawio_with_preview` 时生效；一期建议只接受 `format=png|svg|pdf`。
 - 旧 `[bridge-image]` 继续兼容，内部可转换成 `kind=image` 的统一 asset。
 - 若同一回复同时包含正文和资源，先发送正文/卡片，再发送资源。
 - 若资源路径无效或越界，发送系统提示而不是静默失败。
+- Markdown 预览不替代 `.md` 文件上传；draw.io 预览不替代 `.drawio` 源文件上传。
 
 ### 8.4 出站路径校验
 
@@ -195,6 +225,7 @@ instructions:
 - 优先按 `kind=image`。
 - 校验扩展名和 MIME：JPG、JPEG、PNG、WEBP、GIF、BMP、ICO、TIFF、HEIC 可走图片上传。
 - 超过图片上传限制但不超过文件上传限制时，降级为 `file` 发送，并在说明中提示“图片超过原生图片限制，已作为文件发送”。
+- `.svg` 虽然可作为 draw.io 预览导出格式，但不在飞书图片上传支持列表内；默认作为文件发送。若需要飞书内直接看图，预览格式应选 PNG。
 
 ### 8.5 飞书出站上传与发送
 
@@ -229,7 +260,17 @@ export type BridgeReply =
   | { kind: "card"; card: Record<string, unknown> }
   | { kind: "assistant"; text: string }
   | { kind: "image"; localPath: string; caption?: string }
-  | { kind: "file"; localPath: string; fileName?: string; caption?: string; mimeType?: string | null; fileSize?: number | null };
+  | {
+      kind: "file";
+      localPath: string;
+      fileName?: string;
+      caption?: string;
+      mimeType?: string | null;
+      fileSize?: number | null;
+      semanticType?: "markdown" | "drawio" | "generic";
+      presentation?: "attachment" | "markdown_preview" | "drawio_with_preview";
+      preview?: { format?: "png" | "svg" | "pdf"; localPath?: string; mimeType?: string | null };
+    };
 ```
 
 数据库表 `pending_bridge_assets` 可继续复用，不需要一期新增表。需要确认旧数据迁移不受影响，因为 `resource_type` 当前是文本列，没有枚举约束。
@@ -244,11 +285,49 @@ export type BridgeReply =
 - `.doc` / `.docx` -> `doc`
 - `.xls` / `.xlsx` / `.csv` -> `xls`
 - `.ppt` / `.pptx` -> `ppt`
+- `.md` / `.markdown` -> `stream`，语义类型为 `markdown`，MIME 缺失时使用 `text/markdown; charset=utf-8`
+- `.drawio` / `.drawio.xml` -> `stream`，语义类型为 `drawio`，MIME 缺失时使用 `application/vnd.jgraph.mxfile` 或 `application/xml`
 - `.mp4` -> `mp4`
 - `.opus` -> `opus`
+- draw.io 导出的 `.png` 预览 -> 原生图片消息；`.svg` / `.pdf` 预览 -> 文件消息
 - 其他普通文件 -> `stream`
 
 若官方 SDK 类型不接受 `stream`，实现时需用最新 SDK 类型或低层 request 验证；设计上保留 `stream` 作为通用文件兜底，因为官方示例中使用 `file_type: 'stream'` 上传 `text.txt`。
+
+### 8.8 Markdown 与 draw.io 特化规则
+
+Markdown 和 draw.io 都属于“普通文件传输 + 桥接层语义增强”，不引入新的飞书消息类型。
+
+#### Markdown 入站
+
+- 识别条件：扩展名为 `.md` / `.markdown`，或 MIME 为 `text/markdown`。
+- 暂存方式：仍保存为 `resourceType=file`，额外在 prompt 元数据中标记 `semantic_type=markdown`。
+- 读取方式：默认不把完整正文注入 prompt，避免长文档污染上下文；Codex 应通过 `local_path` 按需读取。
+- 编码策略：优先按 UTF-8 读取；若后续实现发现 BOM 或编码探测失败，提示 Codex 文件可能需要显式转码。
+
+#### Markdown 出站
+
+- 默认发送 `.md` 原文件，飞书消息类型为 `file`。
+- 当 `presentation=markdown_preview` 且文件大小、内容长度在卡片预算内时，可先发送一条摘要/预览卡片或文本，再发送原文件。
+- 预览内容必须来自文件正文或 Codex 已给出的 caption/summary，不包含 `[bridge-assets]` 等桥接指令。
+- 文件较大、解析失败或内容包含过多代码块时，降级为仅发送 `.md` 文件，并用 caption 说明。
+
+#### draw.io 入站
+
+- 识别条件：扩展名为 `.drawio` / `.drawio.xml`，或 MIME 为 `application/vnd.jgraph.mxfile` / `application/xml` 且文件名匹配 draw.io 扩展。
+- 暂存方式：仍保存为 `resourceType=file`，prompt 元数据标记 `semantic_type=drawio`。
+- 读取方式：把它提示为“可编辑 XML 图源文件”，由 Codex 按需读取、修改或生成新文件。
+- 默认不在入站阶段自动渲染预览，避免引入额外耗时和本地 draw.io CLI 依赖；用户明确要求看图或分析图形布局时，可由 Codex 会话自行导出或在后续阶段扩展自动预览。
+
+#### draw.io 出站
+
+- 默认必须发送 `.drawio` 源文件，确保飞书用户拿到可编辑版本。
+- 当 `presentation=drawio_with_preview` 时，桥接层尝试把 `.drawio` 导出为 `preview.format` 指定的 PNG/SVG/PDF。
+- 默认预览格式建议为 PNG，因为它可走飞书原生图片消息；SVG/PDF 作为文件发送。
+- 若本地 draw.io Desktop CLI 可用，导出时优先保留源图信息，例如 PNG/SVG/PDF 使用 `--embed-diagram` 或等价参数；若导出为 VSD 等不支持嵌入源图的格式，不作为默认预览。
+- CLI 探测顺序建议为：显式配置 `DRAWIO_CLI_PATH`、常见 Windows 安装路径、PATH 中的 `drawio`/`draw.io` 命令。探测失败只影响预览，不影响源文件返回。
+- 推荐发送顺序：先发送预览图或预览文件，再发送 `.drawio` 源文件。这样飞书里能先查看效果，同时保留可编辑产物。
+- 若导出失败、CLI 不存在或 XML 无效，不阻塞源文件发送；追加一条系统提示说明预览未生成。
 
 ## 9. 关键流程
 
@@ -296,7 +375,32 @@ sequenceDiagram
   V-->>B: assistant text + asset replies
   B->>F: uploadImage/uploadFile
   F->>F: 获取 image_key/file_key
-  F->>U: 发送文本/图片/文件消息
+F->>U: 发送文本/图片/文件消息
+```
+
+### 9.3 draw.io 源文件加预览返回飞书
+
+```mermaid
+sequenceDiagram
+  participant X as Codex
+  participant B as BridgeService/Notifier
+  participant D as DrawioPreviewExporter
+  participant F as FeishuApiClient
+  participant U as 飞书用户
+
+  X-->>B: [bridge-assets] 声明 architecture.drawio + drawio_with_preview
+  B->>B: 校验 .drawio 源文件路径
+  B->>D: export(format=png, embed=true)
+  alt 预览导出成功
+    D-->>B: preview.png
+    B->>F: uploadImage(preview.png)
+    F->>U: 发送预览图片
+  else 预览导出失败
+    D-->>B: export error
+    B->>U: 发送预览失败说明
+  end
+  B->>F: uploadFile(architecture.drawio, file_type=stream)
+  F->>U: 发送可编辑源文件
 ```
 
 ## 10. 错误处理
@@ -306,6 +410,10 @@ sequenceDiagram
 - 路径越界：返回 `[ca] file unavailable: disallowed path <path>`。
 - 文件不存在：返回 `[ca] file unavailable: file not found <path>`。
 - 上传失败：保留正文回复，资源部分以系统文本提示；日志包含 peer、message、localPath、error。
+- Markdown 预览失败：不影响 `.md` 文件上传；提示“Markdown 预览生成失败，已发送源文件”。
+- Markdown 内容过长：不发送完整预览，改为发送摘要或仅发送文件，避免飞书消息/卡片超限。
+- draw.io 预览导出失败：不影响 `.drawio` 源文件上传；提示导出失败原因的短文本，不把完整 CLI stderr 暴露给用户。
+- draw.io XML 无效：仍可作为普通文件发送；若用户要求可视化预览，提示文件无法渲染。
 - 同一资源重复事件：沿用 `message_id + resource_key + surface` 去重。
 - Codex 启动失败且尚未产生事件：沿用现有 restore 逻辑，把已消费的 pending asset 恢复为 `pending`。
 
@@ -337,9 +445,17 @@ sequenceDiagram
 - `BridgeService`：
   - 图片仍传 `-i`。
   - 文件不传 `-i`，但 prompt 包含 `local_path` 和元数据。
+  - `.md` / `.markdown` 被标记为 `semantic_type=markdown`，prompt 包含编码提示。
+  - `.drawio` / `.drawio.xml` 被标记为 `semantic_type=drawio`，prompt 说明它是可编辑 XML 图源。
   - `[bridge-assets]` 解析出 image/file replies。
+  - `[bridge-assets]` 支持 `presentation=markdown_preview`，并在文件过长时降级为文件发送。
+  - `[bridge-assets]` 支持 `presentation=drawio_with_preview`，能生成源文件 reply 与预览 reply。
   - 旧 `[bridge-image]` 兼容。
   - 越界路径、目录、0 字节、大文件都有可读降级提示。
+- `DrawioPreviewExporter`：
+  - CLI 存在时，按 `png` 导出预览并保留源图信息。
+  - CLI 不存在时，返回可识别错误，不阻塞 `.drawio` 源文件发送。
+  - XML 无效或导出失败时，错误信息可被桥接层转成用户可读提示。
 - `DesktopCompletionNotifier`：
   - 完成卡片发送后，解析最终文本里的 `[bridge-assets]` 并追加发送资源。
 
@@ -355,8 +471,12 @@ sequenceDiagram
 
 - 用户在飞书发送图片后，下一条文字提问触发的 Codex run 能收到 `-i` 图片参数。
 - 用户在飞书发送文件后，下一条文字提问触发的 Codex run 能在 prompt 中看到并读取本地路径。
+- 用户在飞书发送 `.md` 文件后，下一条文字提问触发的 Codex run 能看到 `semantic_type=markdown`，并能按本地路径读取 Markdown 正文。
+- 用户在飞书发送 `.drawio` 文件后，下一条文字提问触发的 Codex run 能看到 `semantic_type=drawio`，并被提示该文件是可编辑 XML 图源。
 - Codex 回复 `[bridge-assets]` 声明图片时，飞书收到原生图片消息。
 - Codex 回复 `[bridge-assets]` 声明文件时，飞书收到原生文件消息。
+- Codex 回复 `[bridge-assets]` 声明 `.md` 且 `presentation=markdown_preview` 时，飞书收到 `.md` 文件；在预算允许时还收到可读预览。
+- Codex 回复 `[bridge-assets]` 声明 `.drawio` 且 `presentation=drawio_with_preview` 时，飞书收到 `.drawio` 源文件；本地导出成功时还收到预览 PNG/SVG/PDF。
 - 非法路径、文件不存在、超限文件均不上传，且用户收到明确说明。
 - 既有文本、卡片、图片链路不回归。
 
@@ -376,6 +496,13 @@ sequenceDiagram
 - 实现 `FeishuApiClient.uploadFile/sendFileMessage/replyFileMessage`。
 - 扩展 adapter 与卡片 action 的资源发送。
 
+### 阶段 2.5：Markdown 与 draw.io 特化
+
+- 新增 `asset-semantic-type.ts`，按扩展名/MIME 推导 `markdown`、`drawio`、`generic`。
+- Markdown：实现出站 `markdown_preview` 的长度预算、指令剥离和降级策略。
+- draw.io：实现 `DrawioPreviewExporter`，支持 PNG 优先预览、SVG/PDF 文件预览和 CLI 缺失降级。
+- 补齐 md/drawio 的单元测试与 fixture，不依赖真实飞书环境验证转换逻辑。
+
 ### 阶段 3：桌面完成回传
 
 - `DesktopCompletionNotifierApiClientLike` 增加图片/文件发送能力。
@@ -394,3 +521,5 @@ sequenceDiagram
 - 是否要支持大于 30 MB 的文件通过外部链接返回？本期不建议做，除非引入明确的对象存储或云文档方案。
 - 是否要把高分辨率图片统一作为文件发送？本方案建议仅当超过图片原生限制时降级。
 - 是否把入站文件复制到项目工作区？本方案建议不复制，只提供托管目录路径，避免污染仓库。
+- Markdown 预览默认是否开启？本方案建议由 `presentation=markdown_preview` 显式开启，避免把长文档刷屏到飞书。
+- draw.io 默认预览格式是否固定为 PNG？本方案建议默认 PNG，因为飞书可原生查看；SVG/PDF 仅在 Codex 指令或配置中显式指定。
