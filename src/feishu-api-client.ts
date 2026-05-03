@@ -362,6 +362,40 @@ export class FeishuApiClient {
     return messageId;
   }
 
+  public async sendImageMessageToChat(
+    chatId: string,
+    imageKey: string,
+  ): Promise<{ messageId: string; threadId: string }> {
+    const response = await this.sdkClient.im.message.create({
+      params: {
+        receive_id_type: "chat_id",
+      },
+      data: {
+        receive_id: chatId,
+        msg_type: "image",
+        content: JSON.stringify({ image_key: imageKey }),
+      },
+    });
+
+    const messageId = response.data?.message_id ?? "";
+    const threadId = response.data?.thread_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "image",
+        mode: "create",
+        messageId,
+        chatId,
+        threadId,
+        imageKey,
+      },
+      [`message:${messageId}`, `image:${imageKey}`],
+    );
+    return {
+      messageId,
+      threadId,
+    };
+  }
+
   public async replyImageMessage(messageId: string, imageKey: string): Promise<string> {
     const response = await this.sdkClient.im.message.reply({
       path: {
@@ -412,6 +446,40 @@ export class FeishuApiClient {
       [`message:${messageId}`, `file:${fileKey}`],
     );
     return messageId;
+  }
+
+  public async sendFileMessageToChat(
+    chatId: string,
+    fileKey: string,
+  ): Promise<{ messageId: string; threadId: string }> {
+    const response = await this.sdkClient.im.message.create({
+      params: {
+        receive_id_type: "chat_id",
+      },
+      data: {
+        receive_id: chatId,
+        msg_type: "file",
+        content: JSON.stringify({ file_key: fileKey }),
+      },
+    });
+
+    const messageId = response.data?.message_id ?? "";
+    const threadId = response.data?.thread_id ?? "";
+    this.logOutbound(
+      {
+        messageType: "file",
+        mode: "create",
+        messageId,
+        chatId,
+        threadId,
+        fileKey,
+      },
+      [`message:${messageId}`, `file:${fileKey}`],
+    );
+    return {
+      messageId,
+      threadId,
+    };
   }
 
   public async replyFileMessage(messageId: string, fileKey: string): Promise<string> {

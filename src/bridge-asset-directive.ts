@@ -71,7 +71,10 @@ export function parseBridgeAssetsDirective(text: string): ParsedBridgeAssetDirec
   });
 }
 
-export function parseBridgeAssetDirectives(text: string): ParsedBridgeAssetDirective {
+export function parseBridgeAssetDirectives(
+  text: string,
+  _options?: { cwd?: string },
+): ParsedBridgeAssetDirective {
   return parseBridgeDirectiveText(text, {
     includeAssetsDirective: true,
     includeLegacyImageDirective: true,

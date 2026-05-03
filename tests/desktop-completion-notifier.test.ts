@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -58,6 +58,65 @@ describe("DesktopCompletionNotifier", () => {
     expect(harness.store.getCodexThreadWatchState("thread-native-1")).toMatchObject({
       lastNotifiedCompletionKey: "thread-native-1:completion-new",
     });
+  });
+
+  it("delivers completion bridge assets to a DM after sending the cleaned completion card", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "desktop-completion-assets-"));
+    const imagePath = path.join(cwd, "chart.png");
+    const filePath = path.join(cwd, "report.md");
+    writeFileSync(imagePath, "png");
+    writeFileSync(filePath, "# report\n");
+
+    try {
+      const harness = createHarness(harnesses, {
+        threadCwd: cwd,
+      });
+      seedWatchState(harness.store, {
+        threadId: "thread-native-1",
+      });
+
+      await harness.notifier.publish({
+        completion: createCompletion({
+          finalAssistantText: [
+            "任务已经处理完成。",
+            "[bridge-assets]",
+            JSON.stringify({
+              assets: [
+                { kind: "image", path: "chart.png", caption: "结果图" },
+                { kind: "file", path: "report.md", file_name: "report.md", caption: "结果报告" },
+              ],
+            }),
+            "[/bridge-assets]",
+          ].join("\n"),
+        }),
+        target: {
+          mode: "dm",
+          peerId: "ou_demo",
+        },
+      });
+
+      const card = harness.apiClient.sendInteractiveCard.mock.calls[0]?.[1] as Record<string, unknown>;
+      const visibleText = collectVisibleText(card).join("\n");
+      expect(visibleText).toContain("任务已经处理完成。");
+      expect(visibleText).not.toContain("[bridge-assets]");
+      expect(harness.apiClient.uploadImage).toHaveBeenCalledWith({
+        imagePath,
+      });
+      expect(harness.apiClient.sendImageMessage).toHaveBeenCalledWith("ou_demo", "img_desktop_1");
+      expect(harness.apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath,
+        fileName: "report.md",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(harness.apiClient.sendFileMessage).toHaveBeenCalledWith("ou_demo", "file_desktop_1");
+      expect(harness.apiClient.sendInteractiveCard.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.apiClient.uploadImage.mock.invocationCallOrder[0] ?? 0,
+      );
+      expect(harness.apiClient.sendTextMessage).not.toHaveBeenCalled();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("creates a running DM card, stores the frozen route, and does not advance the completion key yet", async () => {
@@ -168,6 +227,65 @@ describe("DesktopCompletionNotifier", () => {
     });
   });
 
+  it("replies completion bridge assets to the frozen thread anchor after patching the running card", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "desktop-completion-thread-assets-"));
+    const imagePath = path.join(cwd, "thread-chart.png");
+    writeFileSync(imagePath, "png");
+
+    try {
+      const harness = createHarness(harnesses, {
+        threadCwd: cwd,
+      });
+      seedWatchState(harness.store, {
+        threadId: "thread-native-1",
+        lastNotifiedCompletionKey: "thread-native-1:notified-old",
+      });
+      harness.store.upsertCodexThreadDesktopNotificationState({
+        threadId: "thread-native-1",
+        activeRunKey: "thread-native-1:turn-1",
+        status: "running_notified",
+        startedAt: "2026-04-22T10:00:00.000Z",
+        lastEventAt: "2026-04-22T10:00:06.000Z",
+        messageId: "om_running_thread_1",
+        deliveryMode: "thread",
+        chatId: "oc_group_1",
+        surfaceType: "thread",
+        surfaceRef: "omt_topic_1",
+        anchorMessageId: "om_anchor_thread_1",
+        latestPublicMessage: "Task 1 已 review 完。",
+        commandCount: 3,
+        lastRenderHash: "render-1",
+      });
+
+      await harness.notifier.publishCompletion({
+        completion: createCompletion({
+          finalAssistantText: [
+            "线程里的结果已完成。",
+            "[bridge-image]",
+            JSON.stringify({
+              images: [
+                { path: "thread-chart.png", caption: "线程结果图" },
+              ],
+            }),
+            "[/bridge-image]",
+          ].join("\n"),
+        }),
+      });
+
+      expect(harness.apiClient.updateInteractiveCard).toHaveBeenCalledWith(
+        "om_running_thread_1",
+        expect.any(Object),
+      );
+      expect(harness.apiClient.uploadImage).toHaveBeenCalledWith({
+        imagePath,
+      });
+      expect(harness.apiClient.replyImageMessage).toHaveBeenCalledWith("om_anchor_thread_1", "img_desktop_1");
+      expect(harness.apiClient.sendImageMessage).not.toHaveBeenCalled();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to the last real user prompt when snapshot and recent conversation contain synthetic wrappers", async () => {
     const harness = createHarness(harnesses, {
       codexCatalogOverrides: {
@@ -276,6 +394,59 @@ describe("DesktopCompletionNotifier", () => {
       surfaceRef: null,
       anchorMessageId: null,
     });
+  });
+
+  it("delivers completion bridge assets directly to a project group chat", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "desktop-completion-group-assets-"));
+    const imagePath = path.join(cwd, "group-chart.png");
+    const filePath = path.join(cwd, "group-report.md");
+    writeFileSync(imagePath, "png");
+    writeFileSync(filePath, "# group report\n");
+
+    try {
+      const harness = createHarness(harnesses, {
+        threadCwd: cwd,
+      });
+      seedWatchState(harness.store, {
+        threadId: "thread-native-1",
+      });
+
+      await harness.notifier.publish({
+        completion: createCompletion({
+          finalAssistantText: [
+            "项目群里的资源已生成。",
+            "[bridge-assets]",
+            JSON.stringify({
+              assets: [
+                { kind: "image", path: "group-chart.png" },
+                { kind: "file", path: "group-report.md", file_name: "group-report.md" },
+              ],
+            }),
+            "[/bridge-assets]",
+          ].join("\n"),
+        }),
+        target: {
+          mode: "project_group",
+          chatId: "oc_group_1",
+        },
+      });
+
+      expect(harness.apiClient.uploadImage).toHaveBeenCalledWith({
+        imagePath,
+      });
+      expect(harness.apiClient.sendImageMessageToChat).toHaveBeenCalledWith("oc_group_1", "img_desktop_1");
+      expect(harness.apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath,
+        fileName: "group-report.md",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(harness.apiClient.sendFileMessageToChat).toHaveBeenCalledWith("oc_group_1", "file_desktop_1");
+      expect(harness.apiClient.replyImageMessage).not.toHaveBeenCalled();
+      expect(harness.apiClient.replyFileMessage).not.toHaveBeenCalled();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("posts a project-group notification card to the timeline without replying a second full result message", async () => {
@@ -419,6 +590,118 @@ describe("DesktopCompletionNotifier", () => {
     });
   });
 
+  it("reports invalid completion bridge assets visibly without leaking full local paths", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "desktop-completion-invalid-assets-"));
+
+    try {
+      const harness = createHarness(harnesses, {
+        threadCwd: cwd,
+      });
+      seedWatchState(harness.store, {
+        threadId: "thread-native-1",
+      });
+
+      await harness.notifier.publish({
+        completion: createCompletion({
+          finalAssistantText: [
+            "[bridge-assets]",
+            JSON.stringify({
+              assets: [
+                { kind: "file", path: "C:/Users/alice/private/secret.txt" },
+              ],
+            }),
+            "[/bridge-assets]",
+          ].join("\n"),
+        }),
+        target: {
+          mode: "dm",
+          peerId: "ou_demo",
+        },
+      });
+
+      expect(harness.apiClient.uploadFile).not.toHaveBeenCalled();
+      expect(harness.apiClient.sendTextMessage).toHaveBeenCalledTimes(1);
+      const failureText = harness.apiClient.sendTextMessage.mock.calls[0]?.[1] ?? "";
+      expect(failureText).toContain("secret.txt");
+      expect(failureText).not.toContain("C:/Users/alice/private");
+      expect(failureText).not.toContain("\\private\\");
+      expect(harness.apiClient.sendInteractiveCard).toHaveBeenCalledWith(
+        "ou_demo",
+        expect.objectContaining({
+          body: expect.objectContaining({
+            elements: expect.arrayContaining([
+              expect.objectContaining({
+                tag: "markdown",
+                content: expect.stringContaining("body unavailable"),
+              }),
+            ]),
+          }),
+        }),
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("sends oversized completion images as files up to 30 MB and reports images above that visibly", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "desktop-completion-oversized-images-"));
+    const fileSizedImagePath = path.join(cwd, "large-chart.png");
+    const tooLargeImagePath = path.join(cwd, "too-large-chart.png");
+    writeFileSync(fileSizedImagePath, "");
+    writeFileSync(tooLargeImagePath, "");
+    truncateSync(fileSizedImagePath, 10 * 1024 * 1024 + 1);
+    truncateSync(tooLargeImagePath, 30 * 1024 * 1024 + 1);
+
+    try {
+      const harness = createHarness(harnesses, {
+        threadCwd: cwd,
+      });
+      seedWatchState(harness.store, {
+        threadId: "thread-native-1",
+      });
+
+      await harness.notifier.publish({
+        completion: createCompletion({
+          finalAssistantText: [
+            "两张图已生成。",
+            "[bridge-assets]",
+            JSON.stringify({
+              assets: [
+                { kind: "image", path: "large-chart.png" },
+                { kind: "image", path: "too-large-chart.png" },
+              ],
+            }),
+            "[/bridge-assets]",
+          ].join("\n"),
+        }),
+        target: {
+          mode: "dm",
+          peerId: "ou_demo",
+        },
+      });
+
+      expect(harness.apiClient.uploadImage).not.toHaveBeenCalled();
+      expect(harness.apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath: fileSizedImagePath,
+        fileName: "large-chart.png",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(harness.apiClient.sendFileMessage).toHaveBeenCalledWith("ou_demo", "file_desktop_1");
+      expect(harness.apiClient.sendTextMessage).toHaveBeenCalledWith(
+        "ou_demo",
+        expect.stringContaining("too-large-chart.png"),
+      );
+      const visibleFailureText = harness.apiClient.sendTextMessage.mock.calls
+        .map(call => call[1])
+        .join("\n");
+      expect(visibleFailureText).toContain("超过 30 MB");
+      expect(visibleFailureText).not.toContain(tooLargeImagePath);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("keeps long completion content inside the completion card without a second text message", async () => {
     const harness = createHarness(harnesses);
     seedWatchState(harness.store, {
@@ -519,6 +802,7 @@ interface NotifierHarness {
 function createHarness(
   harnesses: NotifierHarness[],
   input?: {
+    threadCwd?: string;
     apiClientOverrides?: Partial<ReturnType<typeof createApiClientDouble>>;
     codexCatalogOverrides?: Partial<{
       getThread: ReturnType<typeof vi.fn>;
@@ -534,7 +818,7 @@ function createHarness(
     getThread: vi.fn(() => ({
       threadId: "thread-native-1",
       projectKey: "project-key-1",
-      cwd: "D:/repo-one",
+      cwd: input?.threadCwd ?? "D:/repo-one",
       displayName: "Repo One",
       title: "修复桌面完成通知",
       source: "user",
@@ -580,15 +864,28 @@ function createHarness(
 function createApiClientDouble(
   overrides?: Partial<{
     sendTextMessage: ReturnType<typeof vi.fn>;
+    sendTextMessageToChat: ReturnType<typeof vi.fn>;
     sendInteractiveCard: ReturnType<typeof vi.fn>;
     sendInteractiveCardToChat: ReturnType<typeof vi.fn>;
     replyTextMessage: ReturnType<typeof vi.fn>;
     replyInteractiveCard: ReturnType<typeof vi.fn>;
     updateInteractiveCard: ReturnType<typeof vi.fn>;
+    uploadImage: ReturnType<typeof vi.fn>;
+    sendImageMessage: ReturnType<typeof vi.fn>;
+    replyImageMessage: ReturnType<typeof vi.fn>;
+    sendImageMessageToChat: ReturnType<typeof vi.fn>;
+    uploadFile: ReturnType<typeof vi.fn>;
+    sendFileMessage: ReturnType<typeof vi.fn>;
+    replyFileMessage: ReturnType<typeof vi.fn>;
+    sendFileMessageToChat: ReturnType<typeof vi.fn>;
   }>,
 ) {
   return {
     sendTextMessage: vi.fn(async () => "om_dm_text_1"),
+    sendTextMessageToChat: vi.fn(async () => ({
+      messageId: "om_group_text_1",
+      threadId: "omt_group_text_1",
+    })),
     sendInteractiveCard: vi.fn(async () => "om_dm_card_1"),
     sendInteractiveCardToChat: vi.fn(async () => ({
       messageId: "om_group_root_card_1",
@@ -597,6 +894,20 @@ function createApiClientDouble(
     replyTextMessage: vi.fn(async () => "om_reply_text_1"),
     replyInteractiveCard: vi.fn(async () => "om_reply_card_1"),
     updateInteractiveCard: vi.fn(async () => undefined),
+    uploadImage: vi.fn(async () => "img_desktop_1"),
+    sendImageMessage: vi.fn(async () => "om_dm_image_1"),
+    replyImageMessage: vi.fn(async () => "om_reply_image_1"),
+    sendImageMessageToChat: vi.fn(async () => ({
+      messageId: "om_group_image_1",
+      threadId: "omt_group_image_1",
+    })),
+    uploadFile: vi.fn(async () => "file_desktop_1"),
+    sendFileMessage: vi.fn(async () => "om_dm_file_1"),
+    replyFileMessage: vi.fn(async () => "om_reply_file_1"),
+    sendFileMessageToChat: vi.fn(async () => ({
+      messageId: "om_group_file_1",
+      threadId: "omt_group_file_1",
+    })),
     ...overrides,
   };
 }

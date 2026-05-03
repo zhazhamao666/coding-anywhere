@@ -539,6 +539,7 @@ describe("FeishuApiClient", () => {
         imagePath,
       });
       const createMessageId = await client.sendImageMessage("ou_demo", imageKey);
+      const chatMessage = await client.sendImageMessageToChat("oc_group_1", imageKey);
       const replyMessageId = await client.replyImageMessage("om_anchor_1", imageKey);
 
       expect(imageKey).toBe("img_uploaded_1");
@@ -549,12 +550,28 @@ describe("FeishuApiClient", () => {
         },
       });
       expect(createMessageId).toBe("msg-image-1");
-      expect(sdk.im.message.create).toHaveBeenCalledWith({
+      expect(chatMessage).toEqual({
+        messageId: "msg-image-1",
+        threadId: "omt-chat-1",
+      });
+      expect(sdk.im.message.create).toHaveBeenNthCalledWith(1, {
         params: {
           receive_id_type: "open_id",
         },
         data: {
           receive_id: "ou_demo",
+          msg_type: "image",
+          content: JSON.stringify({
+            image_key: "img_uploaded_1",
+          }),
+        },
+      });
+      expect(sdk.im.message.create).toHaveBeenNthCalledWith(2, {
+        params: {
+          receive_id_type: "chat_id",
+        },
+        data: {
+          receive_id: "oc_group_1",
           msg_type: "image",
           content: JSON.stringify({
             image_key: "img_uploaded_1",
@@ -600,6 +617,7 @@ describe("FeishuApiClient", () => {
         duration: 3000,
       });
       const createMessageId = await client.sendFileMessage("ou_demo", fileKey);
+      const chatMessage = await client.sendFileMessageToChat("oc_group_1", fileKey);
       const replyMessageId = await client.replyFileMessage("om_anchor_1", fileKey);
 
       expect(fileKey).toBe("file_uploaded_1");
@@ -612,12 +630,28 @@ describe("FeishuApiClient", () => {
         },
       });
       expect(createMessageId).toBe("msg-file-1");
-      expect(sdk.im.message.create).toHaveBeenCalledWith({
+      expect(chatMessage).toEqual({
+        messageId: "msg-file-1",
+        threadId: "omt-chat-1",
+      });
+      expect(sdk.im.message.create).toHaveBeenNthCalledWith(1, {
         params: {
           receive_id_type: "open_id",
         },
         data: {
           receive_id: "ou_demo",
+          msg_type: "file",
+          content: JSON.stringify({
+            file_key: "file_uploaded_1",
+          }),
+        },
+      });
+      expect(sdk.im.message.create).toHaveBeenNthCalledWith(2, {
+        params: {
+          receive_id_type: "chat_id",
+        },
+        data: {
+          receive_id: "oc_group_1",
           msg_type: "file",
           content: JSON.stringify({
             file_key: "file_uploaded_1",
@@ -716,7 +750,10 @@ function createSdkDouble(): any {
   return {
     im: {
       message: {
-        create: vi.fn(async ({ data }: { data: { content: string; msg_type?: string } }) => {
+        create: vi.fn(async ({ data, params }: {
+          data: { content: string; msg_type?: string };
+          params?: { receive_id_type?: string };
+        }) => {
           const content = JSON.parse(data.content);
           return {
             data: {
@@ -727,8 +764,10 @@ function createSdkDouble(): any {
                     ? "msg-file-1"
                   : content.type === "card"
                     ? "msg-cardkit-1"
-                    : "msg-card-1",
-              thread_id: data.msg_type === "interactive" ? "omt-chat-1" : undefined,
+                  : "msg-card-1",
+              thread_id: params?.receive_id_type === "chat_id" || data.msg_type === "interactive"
+                ? "omt-chat-1"
+                : undefined,
             },
           };
         }),
