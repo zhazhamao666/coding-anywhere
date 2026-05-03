@@ -329,6 +329,15 @@ export class FeishuAdapter {
         continue;
       }
 
+      if (reply.kind === "file") {
+        await this.replyText({
+          peerId,
+          anchorMessageId,
+          text: formatFileFallbackText(reply),
+        });
+        continue;
+      }
+
       await this.replyText({
         peerId,
         anchorMessageId,
@@ -570,6 +579,16 @@ function formatImageFallbackText(reply: Extract<BridgeReply, { kind: "image" }>)
   return reply.caption?.trim()
     ? `图片结果：${reply.caption.trim()}`
     : "图片结果已生成。";
+}
+
+function formatFileFallbackText(reply: Extract<BridgeReply, { kind: "file" }>): string {
+  if (reply.caption?.trim()) {
+    return `文件结果：${reply.caption.trim()}`;
+  }
+  if (reply.fileName?.trim()) {
+    return `文件结果已生成：${reply.fileName.trim()}`;
+  }
+  return "文件结果已生成。";
 }
 
 function sanitizeProgressSnapshotForFeishu(snapshot: ProgressCardState): ProgressCardState {

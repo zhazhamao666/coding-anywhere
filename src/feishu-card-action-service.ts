@@ -556,6 +556,23 @@ export class FeishuCardActionService {
       return infoCard;
     }
 
+    if (reply.kind === "file") {
+      const infoCard = this.buildInfoCard("文件结果", [formatFileReplyText(reply)], input.actionValue);
+      this.dependencies.logger?.info?.(
+        {
+          openId: input.openId,
+          openMessageId: input.openMessageId,
+          command: input.command,
+          replyKind: reply.kind,
+          patchTargetCardId: input.patchTargetCardId,
+          patchTargetMessageId: input.patchTargetMessageId,
+          cardPreview: summarizeCard(infoCard),
+        },
+        "feishu card action wrapped file reply",
+      );
+      return infoCard;
+    }
+
     const infoCard = this.buildInfoCard("命令结果", [reply.text], input.actionValue);
     this.dependencies.logger?.info?.(
       {
@@ -833,6 +850,16 @@ function summarizeCard(card: Record<string, unknown>): Record<string, unknown> {
     elementCount: elements.length,
     firstElementTag: (elements[0] as { tag?: string } | undefined)?.tag ?? "",
   };
+}
+
+function formatFileReplyText(reply: Extract<BridgeReply, { kind: "file" }>): string {
+  if (reply.caption?.trim()) {
+    return reply.caption.trim();
+  }
+  if (reply.fileName?.trim()) {
+    return `文件结果已生成：${reply.fileName.trim()}`;
+  }
+  return "文件结果已生成。";
 }
 
 function isDesktopThreadContinuationResult(value: unknown): value is DesktopThreadContinuationResult {

@@ -84,7 +84,15 @@ export interface PendingPlanInteractionRecord extends PlanInteractionDraft {
 
 export type BridgeAssetStatus = "pending" | "consumed" | "failed" | "expired" | "sent";
 
-export type BridgeAssetResourceType = "image";
+export type BridgeAssetResourceType = "image" | "file";
+
+export type BridgeAssetSemanticType = "markdown" | "drawio" | "generic";
+
+export type BridgeAssetPresentation = "attachment" | "markdown_preview" | "drawio_with_preview";
+
+export interface BridgeAssetPreview {
+  format: "png" | "svg" | "pdf";
+}
 
 export interface BridgeAssetRecord {
   assetId: string;
@@ -572,4 +580,15 @@ export type BridgeReply =
   | { kind: "progress"; text: string; status: ProgressStatus }
   | { kind: "card"; card: Record<string, unknown> }
   | { kind: "assistant"; text: string }
-  | { kind: "image"; localPath: string; caption?: string };
+  | { kind: "image"; localPath: string; caption?: string }
+  | {
+      kind: "file";
+      localPath: string;
+      fileName?: string;
+      caption?: string;
+      mimeType?: string;
+      fileSize?: number;
+      semanticType?: BridgeAssetSemanticType;
+      presentation?: BridgeAssetPresentation;
+      preview?: BridgeAssetPreview;
+    };
