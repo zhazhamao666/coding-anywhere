@@ -68,6 +68,13 @@ Browser / script
 - `sessionName` 和旧 `thread_bindings` 只保留兼容或观测意义，不再作为普通 prompt 的主路由真相源。
 - 服务按单实例设计，不支持多实例集群部署。
 
+术语口径：
+
+- 工作面(surface)：飞书 DM 或已绑定项目群主时间线。
+- 会话(session)：飞书用户看到的当前会话概念。
+- Codex 原生线程(native thread)：实际续跑上下文，通常表现为 `thread_id`。
+- run：一次 prompt 执行，对应一个短生命周期 `codex exec` / `codex exec resume` worker。
+
 ## 4. 主要模块
 
 | 模块 | 职责 |
@@ -152,7 +159,7 @@ Feishu image
 
 ## 7. 数据与配置
 
-当前 `config.toml` 主要包含：
+当前 `config.toml` 支持：
 
 - `[server]`
 - `[storage]`
@@ -162,6 +169,8 @@ Feishu image
 - `[root]`
 
 仓库只提交 `config.example.toml`。新环境先执行 `npm run init:config`，再填写本地 `config.toml`。旧 `[acpx]` 只作为兼容入口读取并归一化到 `config.codex.command`，不代表当前运行模型。
+
+说明：`scheduler.maxConcurrentRuns` 有代码默认值；`config.example.toml` 不一定显式写出 `[scheduler]`。
 
 关键配置：
 

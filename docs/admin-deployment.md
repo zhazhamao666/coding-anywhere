@@ -140,6 +140,8 @@ npm run init:config
 - 只有显式填入非空 `open_id` 列表后，bridge 才会按用户放行
 - 一旦启用 allowlist，只放可信用户
 
+飞书后台权限、回调、图片能力和 `open_id` 获取方式以 [飞书配置说明](./feishu-setup.md) 为准。
+
 ### 第四步：执行预检
 
 ```bash
@@ -215,6 +217,7 @@ http://127.0.0.1:3000/ops/ui
 
 - 默认保持 `command = "codex"`
 - 升级或排障后执行 `codex --version`，确认当前服务实际调用的是哪个 CLI；Windows 上还可以用 `where codex` 检查 PATH 中是否同时存在 npm 安装版和 Codex 桌面端自带版
+- 模型、推理强度和速度候选项可在 `[codex]` 中补充；完整字段以 `config.example.toml` 和 [项目总览](./project-full-overview.md) 为准
 
 ### `[feishu]`
 
@@ -388,9 +391,9 @@ http://127.0.0.1:3000/ops/sessions
 
 ```bash
 npm install
-npm run build
-npm test
 npm run doctor
+npm run build
+npm run test
 codex --version
 ```
 
@@ -401,8 +404,9 @@ codex --version
 npm run start
 ```
 
-7. 按 [项目总说明](./project-full-overview.md) 里的“推荐验证路径”做一轮最小回归
+7. 按 [项目总览](./project-full-overview.md) 里的“验证路径”做一轮最小回归
 8. 再打开 `/ops/ui` 和 `/ops/runtime` 确认后台观测也正常
+9. 若准备对外发布，再按 [版本发布与变更记录规范](./release-and-changelog.md) 整理发布记录
 
 ## 11. 回滚流程
 
@@ -476,8 +480,8 @@ test
 
 ```bash
 npm run doctor
-npm test
 npm run build
+npm run test
 npm run start
 ```
 
@@ -486,9 +490,9 @@ npm run start
 最推荐的稳定工作流是：
 
 1. 改代码
-2. `npm test`
+2. `npm run doctor`
 3. `npm run build`
-4. `npm run doctor`
+4. `npm run test`
 5. 停旧实例
 6. `npm run start`
 7. 飞书里发 `/ca status`

@@ -24,6 +24,7 @@
 - 在飞书开放平台确认“接收消息 v2.0”事件已添加，且权限已按目标场景发布：直接群消息需要“获取群组中所有消息”，`@机器人` 场景至少需要群 @ 机器人消息权限
 - 确认当前群已经通过 `/ca project bind-current` 或项目列表卡片绑定到 `coding-anywhere-autotest` 等目标项目
 - 检查 `config.toml` 里的 `feishu.requireGroupMention`
+- 飞书权限配置细节见 [飞书配置说明](./feishu-setup.md)
 
 处理动作：
 
@@ -90,7 +91,7 @@
 最可能原因：
 
 - 线程被 TTL 回收过
-- session 需要重新 `ensure`
+- 旧工作面绑定仍可复用 native `thread_id`，但本轮 `codex exec resume` 需要重新拉起短生命周期 worker
 
 检查方法：
 
@@ -151,42 +152,40 @@
 最可能原因：
 
 - 你仍然基于旧任务结论继续追问
-- 线程已切到新 session，但你没有重新描述上下文
+- 当前工作面已退出旧 native thread，但下一条消息没有重新描述上下文
 
 检查方法：
 
 - 立即在线程里执行 `/ca session`
-- 确认 sessionName 是否变化
+- 确认是否处于“已选项目但未绑定会话”或新的当前会话卡
 
 处理动作：
 
 - 先 `/ca new`
 - 再明确描述当前线程的新任务背景
 
-## 现象 8：`/ca thread create` 报 `PROJECT_CHAT_NOT_CONFIGURED`
+## 现象 8：`/ca thread create` 返回“不支持创建飞书主题”
 
 最可能原因：
 
-- 这个项目还没有绑定飞书群
+- 这是当前预期行为：飞书 topic / 话题 / 群 `thread_id` 主题不是产品化入口
+- 当前不会通过 `/ca thread create*` 自动创建飞书主题
 
 检查方法：
 
-- 执行 `/ca project list`
-- 看目标项目是否已经存在并带有 `chatId`
+- 查看 [项目总览](./project-full-overview.md) 的工作面边界
+- 确认当前需求是否其实是“在 DM 或已绑定项目群主时间线中切换 Codex 原生线程”
 
 处理动作：
 
-- 先执行：
+- 在 DM 或已绑定项目群主时间线中使用：
 
 ```text
-/ca project bind <projectId> <chatId> <cwd> [name]
+/ca thread list-current
+/ca thread switch <threadId>
 ```
 
-如果你已经在目标项目群里，也可以直接用：
-
-```text
-/ca project bind-current <projectId> <cwd> [name]
-```
+如果确实要重新设计飞书 topic 夹具或入口，先单独提出需求并确认真实联调边界。
 
 ## 现象 9：`/ops/ui` 看得到 run，但看不到项目 / 线程视图
 
@@ -239,6 +238,7 @@ http://127.0.0.1:3000/ops/threads/<thread-id>
 - 打开飞书应用后台，确认订阅方式已经切到“使用长连接接收事件/回调”
 - 重启服务后观察长连接是否成功建立
 - 如启用了加密推送，核对 `encryptKey`
+- 事件与卡片回调配置见 [飞书配置说明](./feishu-setup.md)
 
 处理动作：
 
@@ -320,8 +320,8 @@ event_msg.task_complete(last_agent_message:null)
 
 ```bash
 npm run doctor
-npm test
 npm run build
+npm run test
 ```
 
 ```text

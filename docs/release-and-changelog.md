@@ -9,6 +9,8 @@
 - CHANGELOG 应该怎么写
 - 发布前后管理员该做哪些动作
 
+当前项目的运行边界和验证入口以 [项目总览](./project-full-overview.md) 为准；部署、升级和回滚操作以 [管理员部署手册](./admin-deployment.md) 为准。
+
 ## 1. 适用范围
 
 这份规范适用于：
@@ -49,7 +51,7 @@ CHANGELOG 不是 git log 的复制品。
 
 至少应看到：
 
-- `npm test` 通过
+- `npm run test` 通过
 - `npm run build` 通过
 - `npm run doctor` 通过
 - 最小飞书联调通过
@@ -189,7 +191,7 @@ CHANGELOG.md
 - 重启桥接服务
 
 ### Verification
-- `npm test`
+- `npm run test`
 - `npm run build`
 - `npm run doctor`
 - 飞书最小联调通过
@@ -264,9 +266,9 @@ CHANGELOG.md
 4. 执行：
 
 ```bash
-npm test
-npm run build
 npm run doctor
+npm run build
+npm run test
 ```
 
 5. 启动服务：
@@ -281,10 +283,7 @@ npm run start
 - `test`
 - `/ca session`
 
-7. 若本次有工作区相关变更，再补测：
-
-- `/ca repo list`
-- `/ca repo use <id>`
+7. 若本次有飞书 UI 或真实链路相关变更，再补对应 `coding-anywhere-autotest` 夹具 smoke。
 
 ## 11. 发布动作建议顺序
 
@@ -352,13 +351,13 @@ npm run start
 
 - 重复回复修复
 - 控制台乱码修复
-- `acpx` 参数兼容修复
+- Codex CLI JSONL 解析兼容修复
 
 ### 适合归入 minor 的例子
 
 - 新增 `/ca` 命令
 - 新增日志查询能力
-- 新增多工作区增强能力
+- 新增飞书卡片、ops 或 live smoke 能力
 
 ### 适合归入 major 的例子
 
@@ -375,13 +374,14 @@ npm run start
 
 ### Added
 - 初版 Coding Anywhere
-- 支持飞书 DM 文本消息直通 Codex
+- 支持飞书 DM 文本消息进入 Codex
+- 支持已绑定项目群主时间线
 - 支持 `/ca status`、`/ca new`、`/ca stop`、`/ca session`
-- 支持工作区绑定与 session 持久化
+- 支持 Codex 原生线程绑定与 run 级观测
 
 ### Fixed
 - 修复飞书普通消息重复回复问题
-- 修复当前 `acpx` 版本的协议兼容问题
+- 修复 Codex CLI JSONL 协议兼容问题
 - 修复 Windows 控制台日志乱码问题
 
 ### Docs
@@ -395,7 +395,7 @@ npm run start
 - 无
 
 ### Verification
-- `npm test`
+- `npm run test`
 - `npm run build`
 - `npm run doctor`
 - 飞书最小联调通过
