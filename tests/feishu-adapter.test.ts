@@ -309,6 +309,70 @@ describe("FeishuAdapter", () => {
     expect(apiClient.replyTextMessage).not.toHaveBeenCalled();
   });
 
+  it("ignores inbound images and files from unrelated group chats", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+    };
+    const apiClient = createApiClientDouble();
+    const pendingAssetStore = createPendingAssetStoreDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+      pendingAssetStore,
+      isCodexGroupChat: () => false,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-unrelated-group-image-1",
+      },
+      event: {
+        message: {
+          message_id: "om_unrelated_group_image_1",
+          chat_id: "oc_chat_other",
+          chat_type: "group",
+          message_type: "image",
+          content: JSON.stringify({ image_key: "img_unrelated_1" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-unrelated-group-file-1",
+      },
+      event: {
+        message: {
+          message_id: "om_unrelated_group_file_1",
+          chat_id: "oc_chat_other",
+          chat_type: "group",
+          message_type: "file",
+          content: JSON.stringify({
+            file_key: "file_unrelated_1",
+            file_name: "private.md",
+          }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+    expect(apiClient.downloadMessageResource).not.toHaveBeenCalled();
+    expect(pendingAssetStore.savePendingBridgeAsset).not.toHaveBeenCalled();
+    expect(apiClient.replyTextMessage).not.toHaveBeenCalled();
+    expect(apiClient.sendTextMessage).not.toHaveBeenCalled();
+  });
+
   it("downloads inbound DM images, stages them, and replies with an acknowledgment", async () => {
     const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-image-"));
 
@@ -1128,7 +1192,7 @@ describe("FeishuAdapter", () => {
     expect(apiClient.sendFileMessage).not.toHaveBeenCalled();
   });
 
-  it("falls back to readable text when native file delivery is unavailable", async () => {
+  it("reports a readable failure when native file delivery is unavailable", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => [{
         kind: "file",
@@ -1166,7 +1230,52 @@ describe("FeishuAdapter", () => {
       },
     });
 
-    expect(apiClient.sendTextMessage).toHaveBeenCalledWith("ou_demo", "文件结果已生成：report.md");
+    expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+      "ou_demo",
+      "文件结果无法发送：report.md，文件上传或发送能力不可用。",
+    );
+  });
+
+  it("reports upload failures instead of saying file results were generated", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [{
+        kind: "file",
+        localPath: "D:/tmp/large-report.md",
+        fileName: "large-report.md",
+      } satisfies BridgeReply]),
+    };
+    const apiClient = createApiClientDouble();
+    apiClient.uploadFile.mockRejectedValueOnce(new Error("FEISHU_FILE_UPLOAD_TOO_LARGE"));
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-file-upload-fail-dm-1",
+      },
+      event: {
+        message: {
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "请返回结果文件" }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(apiClient.sendFileMessage).not.toHaveBeenCalled();
+    expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+      "ou_demo",
+      "文件结果无法发送：large-report.md，文件超过 30 MB。",
+    );
   });
 
   it("renders markdown-heavy assistant replies as interactive cards instead of raw text", async () => {

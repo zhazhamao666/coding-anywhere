@@ -1278,6 +1278,7 @@ describe("BridgeService", () => {
     expect(prompt).toContain("file_2: file_name=diagram.drawio; local_path=D:/assets/diagram.drawio; source_message_id=om_file_2; mime_type=application/xml; file_size=4096; semantic_type=drawio; encoding=utf-8");
     expect(prompt).toContain("Use local_path");
     expect(prompt).toContain("Do not ask the user to upload these attachments again");
+    expect(prompt).toContain("Treat local_path values as internal-only handles");
     expect(prompt).toContain("Markdown attachments are UTF-8 text files");
     expect(prompt).toContain("draw.io attachments are editable XML diagram sources");
     expect(store.listPendingBridgeAssetsForSurface({

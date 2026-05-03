@@ -128,9 +128,10 @@ export function validateBridgeAssetPath(input: {
   }
 
   let fileSize: number;
+  let realPath: string;
   try {
-    const stat = statSync(resolvedPath);
-    const realPath = realpathSync(resolvedPath);
+    realPath = realpathSync(resolvedPath);
+    const stat = statSync(realPath);
     if (!allowedRoots.some(root => isPathAllowed(realPath, root.realPath))) {
       return {
         ok: false,
@@ -161,7 +162,7 @@ export function validateBridgeAssetPath(input: {
   const mimeType = trimOptional(input.mimeType ?? undefined);
   const asset: ValidatedBridgeAsset = {
     kind: input.kind,
-    localPath: resolvedPath,
+    localPath: realPath,
     fileName,
     fileSize,
     semanticType: classifyBridgeAssetSemanticType({

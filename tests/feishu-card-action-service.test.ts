@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { FeishuCardActionService } from "../src/feishu-card-action-service.js";
@@ -352,6 +356,60 @@ describe("FeishuCardActionService", () => {
         type: "raw",
       },
     });
+  });
+
+  it("delivers oversized inline image resources as files", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-card-action-large-image-"));
+    const imagePath = path.join(rootDir, "large-action-image.png");
+    writeFileSync(imagePath, "");
+    truncateSync(imagePath, 10 * 1024 * 1024 + 1);
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [
+          {
+            kind: "image",
+            localPath: imagePath,
+            caption: "大图结果",
+          } as BridgeReply,
+        ]),
+      };
+      const apiClient = createApiClientDouble();
+
+      const service = new FeishuCardActionService({
+        bridgeService: bridgeService as any,
+        apiClient: apiClient as any,
+      });
+
+      const result = await service.handleAction({
+        open_message_id: "om_callback_large_image_1",
+        open_id: "ou_demo",
+        action: {
+          tag: "button",
+          value: {
+            command: "/ca project current",
+            chatId: "oc_chat_current",
+          },
+        },
+      });
+
+      expect(apiClient.uploadImage).not.toHaveBeenCalled();
+      expect(apiClient.uploadFile).toHaveBeenCalledWith({
+        filePath: imagePath,
+        fileName: "large-action-image.png",
+        fileType: undefined,
+        duration: undefined,
+      });
+      expect(apiClient.replyFileMessage).toHaveBeenCalledWith("om_callback_large_image_1", "file-uploaded-1");
+      expect(apiClient.replyImageMessage).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        card: {
+          type: "raw",
+        },
+      });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
   });
 
   it("shows a visible failure card when inline resource delivery fails", async () => {

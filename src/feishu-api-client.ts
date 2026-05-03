@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { Client } from "@larksuiteoapi/node-sdk";
@@ -78,6 +78,7 @@ export class FeishuApiClient {
   private readonly pushLogWindowMs: number;
   private readonly recentOutboundLogs = new Map<string, number>();
   private static readonly fileUploadMaxBytes = 30 * 1024 * 1024;
+  private static readonly resourceDownloadMaxBytes = 30 * 1024 * 1024;
 
   public constructor(
     private readonly config: {
@@ -136,6 +137,14 @@ export class FeishuApiClient {
     await response.writeFile(localPath);
 
     const fileStat = statSync(localPath);
+    if (fileStat.size === 0) {
+      rmSync(localPath, { force: true });
+      throw new Error("FEISHU_RESOURCE_DOWNLOAD_EMPTY");
+    }
+    if (fileStat.size > FeishuApiClient.resourceDownloadMaxBytes) {
+      rmSync(localPath, { force: true });
+      throw new Error("FEISHU_RESOURCE_DOWNLOAD_TOO_LARGE");
+    }
     return {
       resourceKey: input.fileKey,
       localPath,

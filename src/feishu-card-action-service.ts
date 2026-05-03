@@ -1,3 +1,5 @@
+import { statSync } from "node:fs";
+
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
 import { classifyCommandActionCallbackMode } from "./feishu-card/action-contract.js";
 import { buildBridgeHubCard } from "./feishu-card/navigation-card-builder.js";
@@ -847,6 +849,26 @@ export class FeishuCardActionService {
     existingMessageId?: string;
     reply: Extract<BridgeReply, { kind: "image" }>;
   }): Promise<void> {
+    const imageSize = readLocalFileSize(input.reply.localPath);
+    if (imageSize !== undefined && imageSize > FEISHU_FILE_UPLOAD_MAX_BYTES) {
+      throw new Error("FEISHU_FILE_UPLOAD_TOO_LARGE");
+    }
+    if (imageSize !== undefined && imageSize > FEISHU_IMAGE_UPLOAD_MAX_BYTES) {
+      await this.deliverFileReply({
+        peerId: input.peerId,
+        existingMessageId: input.existingMessageId,
+        reply: {
+          kind: "file",
+          localPath: input.reply.localPath,
+          fileName: formatPathFileNameForUser(input.reply.localPath),
+          caption: input.reply.caption,
+          fileSize: imageSize,
+          semanticType: "generic",
+        },
+      });
+      return;
+    }
+
     const apiClient = this.dependencies.apiClient;
     if (!apiClient?.uploadImage) {
       throw new Error("FEISHU_IMAGE_REPLY_UNAVAILABLE");
@@ -1039,6 +1061,17 @@ function formatPathFileNameForUser(value: string): string {
   const parts = normalized.split("/").filter(Boolean);
   return parts.at(-1) ?? "资源";
 }
+
+function readLocalFileSize(localPath: string): number | undefined {
+  try {
+    return statSync(localPath).size;
+  } catch {
+    return undefined;
+  }
+}
+
+const FEISHU_IMAGE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+const FEISHU_FILE_UPLOAD_MAX_BYTES = 30 * 1024 * 1024;
 
 function isDesktopThreadContinuationResult(value: unknown): value is DesktopThreadContinuationResult {
   return !!value

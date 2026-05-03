@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -385,6 +385,60 @@ describe("FeishuApiClient", () => {
         mimeType: "text/markdown",
         fileSize: 8,
       });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects empty or oversized downloaded message resources and removes the local file", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-file-resource-limit-"));
+    const sdk = createSdkDouble();
+    const client = new FeishuApiClient(
+      {
+        appId: "cli_xxx",
+        appSecret: "secret",
+        apiBaseUrl: "https://open.feishu.cn/open-apis",
+      },
+      sdk as any,
+    );
+
+    try {
+      sdk.im.v1.messageResource.get = vi.fn(async () => ({
+        headers: {
+          "content-disposition": 'attachment; filename="empty.md"',
+        },
+        writeFile: vi.fn(async (filePath: string) => {
+          writeFileSync(filePath, "");
+          return filePath;
+        }),
+        getReadableStream: vi.fn(),
+      }));
+      await expect(client.downloadMessageResource({
+        messageId: "om_empty_file_1",
+        fileKey: "file_empty_1",
+        type: "file",
+        downloadDir: rootDir,
+      })).rejects.toThrow("FEISHU_RESOURCE_DOWNLOAD_EMPTY");
+      expect(existsSync(path.join(rootDir, "empty.md"))).toBe(false);
+
+      sdk.im.v1.messageResource.get = vi.fn(async () => ({
+        headers: {
+          "content-disposition": 'attachment; filename="large.md"',
+        },
+        writeFile: vi.fn(async (filePath: string) => {
+          writeFileSync(filePath, "");
+          truncateSync(filePath, 30 * 1024 * 1024 + 1);
+          return filePath;
+        }),
+        getReadableStream: vi.fn(),
+      }));
+      await expect(client.downloadMessageResource({
+        messageId: "om_large_file_1",
+        fileKey: "file_large_1",
+        type: "file",
+        downloadDir: rootDir,
+      })).rejects.toThrow("FEISHU_RESOURCE_DOWNLOAD_TOO_LARGE");
+      expect(existsSync(path.join(rootDir, "large.md"))).toBe(false);
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
     }

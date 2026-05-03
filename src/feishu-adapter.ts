@@ -383,11 +383,8 @@ export class FeishuAdapter {
     }
 
     const isDm = message.chat_type === "p2p";
-    const isGroupSurface = message.chat_type === "group" && !!message.chat_id;
-    if (message.chat_type === "group" && message.thread_id) {
-      return;
-    }
-    if (!isDm && !isGroupSurface) {
+    const isRegisteredGroupChat = this.isRegisteredGroupMainline(message);
+    if (!isDm && !isRegisteredGroupChat) {
       return;
     }
 
@@ -448,11 +445,8 @@ export class FeishuAdapter {
     }
 
     const isDm = message.chat_type === "p2p";
-    const isGroupSurface = message.chat_type === "group" && !!message.chat_id;
-    if (message.chat_type === "group" && message.thread_id) {
-      return;
-    }
-    if (!isDm && !isGroupSurface) {
+    const isRegisteredGroupChat = this.isRegisteredGroupMainline(message);
+    if (!isDm && !isRegisteredGroupChat) {
       return;
     }
 
@@ -633,7 +627,6 @@ export class FeishuAdapter {
     reply: Extract<BridgeReply, { kind: "file" }>;
     successText?: string;
   }): Promise<boolean> {
-    const fallbackText = formatFileFallbackText(input.reply);
     const apiClient = this.dependencies.apiClient;
     const canSend = input.anchorMessageId
       ? !!apiClient.replyFileMessage
@@ -642,7 +635,7 @@ export class FeishuAdapter {
       await this.replyText({
         peerId: input.peerId,
         anchorMessageId: input.anchorMessageId,
-        text: fallbackText,
+        text: formatFileDeliveryFailureText(input.reply, new Error("FEISHU_FILE_REPLY_UNAVAILABLE")),
       });
       return false;
     }
@@ -676,10 +669,17 @@ export class FeishuAdapter {
       await this.replyText({
         peerId: input.peerId,
         anchorMessageId: input.anchorMessageId,
-        text: fallbackText,
+        text: formatFileDeliveryFailureText(input.reply, error),
       });
       return false;
     }
+  }
+
+  private isRegisteredGroupMainline(message: FeishuEnvelopeMessage): boolean {
+    return message.chat_type === "group" &&
+      !!message.chat_id &&
+      !message.thread_id &&
+      (this.dependencies.isCodexGroupChat?.(message.chat_id) ?? false);
   }
 
   private async uploadImageKey(imagePath: string): Promise<string | undefined> {
@@ -752,14 +752,35 @@ function formatImageFallbackText(reply: Extract<BridgeReply, { kind: "image" }>)
     : "图片结果已生成。";
 }
 
-function formatFileFallbackText(reply: Extract<BridgeReply, { kind: "file" }>): string {
-  if (reply.caption?.trim()) {
-    return `文件结果：${reply.caption.trim()}`;
+function formatFileDeliveryFailureText(
+  reply: Extract<BridgeReply, { kind: "file" }>,
+  error: unknown,
+): string {
+  const fileName = reply.fileName?.trim()
+    ? formatLocalPathFileNameForUser(reply.fileName)
+    : formatLocalPathFileNameForUser(reply.localPath);
+  return `文件结果无法发送：${fileName}，${formatFileDeliveryFailureReason(error)}。`;
+}
+
+function formatFileDeliveryFailureReason(error: unknown): string {
+  const message = error instanceof Error && error.message
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : "";
+
+  if (message.includes("FEISHU_FILE_UPLOAD_TOO_LARGE")) {
+    return "文件超过 30 MB";
   }
-  if (reply.fileName?.trim()) {
-    return `文件结果已生成：${reply.fileName.trim()}`;
+  if (message.includes("FEISHU_FILE_UPLOAD_EMPTY")) {
+    return "文件为空";
   }
-  return "文件结果已生成。";
+  if (message.includes("FEISHU_FILE_UPLOAD_UNAVAILABLE") ||
+      message.includes("FEISHU_FILE_REPLY_UNAVAILABLE")) {
+    return "文件上传或发送能力不可用";
+  }
+
+  return "文件上传或发送失败";
 }
 
 function formatOversizedImageFailureText(

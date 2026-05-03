@@ -4265,6 +4265,7 @@ function buildPromptForCodexRun(input: {
       "instructions:",
       "- Use local_path to inspect each attached file or image.",
       "- Do not ask the user to upload these attachments again.",
+      "- Treat local_path values as internal-only handles; do not quote, summarize, or return local filesystem paths to Feishu. Refer to attachments by file_name instead.",
       "- Markdown attachments are UTF-8 text files.",
       "- draw.io attachments are editable XML diagram sources.",
       ...imageAssets.map((asset, index) => formatBridgeAttachmentMetadata("image", asset, index)),
