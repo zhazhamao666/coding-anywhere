@@ -247,6 +247,24 @@ export class FeishuCardActionService {
         return this.buildRawCardResponse(reply.reply.card);
       }
 
+      if (reply.reply.kind === "image" || reply.reply.kind === "file") {
+        const replies: BridgeReply[] = [reply.reply];
+        await this.deliverResourceReplies({
+          replies,
+          peerId: event.open_id,
+          existingMessageId: patchTargetMessageId,
+        });
+        return this.buildRawCardResponse(this.buildCommandResultCard({
+          replies,
+          command: bridgeAction,
+          actionValue,
+          openId: event.open_id,
+          openMessageId: event.open_message_id,
+          patchTargetCardId,
+          patchTargetMessageId,
+        }));
+      }
+
       return this.buildRawCardResponse(this.buildInfoCard("继续入口不可用", [
         reply.reply.kind === "system" || reply.reply.kind === "assistant"
           ? reply.reply.text

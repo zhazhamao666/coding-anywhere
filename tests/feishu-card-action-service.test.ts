@@ -930,6 +930,72 @@ describe("FeishuCardActionService", () => {
     expect(apiClient.updateInteractiveCard).not.toHaveBeenCalled();
   });
 
+  it("delivers file replies returned by desktop continuation to the clicked message anchor", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => []),
+      continueDesktopThread: vi.fn(async () => ({
+        reply: {
+          kind: "file",
+          localPath: "D:/tmp/desktop-report.md",
+          fileName: "desktop-report.md",
+          caption: "桌面继续结果",
+        },
+      })),
+    };
+    const apiClient = createApiClientDouble();
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const result = await service.handleAction({
+      open_id: "ou_demo",
+      open_message_id: "om_continue_file_1",
+      action: {
+        tag: "button",
+        value: {
+          bridgeAction: "continue_desktop_thread",
+          mode: "project_group",
+          threadId: "thread-native-current",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    expect(bridgeService.continueDesktopThread).toHaveBeenCalledWith({
+      channel: "feishu",
+      peerId: "ou_demo",
+      threadId: "thread-native-current",
+      mode: "project_group",
+      chatType: "group",
+      chatId: "oc_chat_current",
+      surfaceType: undefined,
+      surfaceRef: undefined,
+    });
+    expect(apiClient.uploadFile).toHaveBeenCalledWith({
+      filePath: "D:/tmp/desktop-report.md",
+      fileName: "desktop-report.md",
+      fileType: undefined,
+      duration: undefined,
+    });
+    expect(apiClient.replyFileMessage).toHaveBeenCalledWith("om_continue_file_1", "file-uploaded-1");
+    expect(apiClient.sendFileMessage).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("继续入口不可用");
+    expect(result).toMatchObject({
+      card: {
+        type: "raw",
+        data: expect.objectContaining({
+          header: expect.objectContaining({
+            title: expect.objectContaining({
+              content: "文件结果",
+            }),
+          }),
+        }),
+      },
+    });
+  });
+
   it("submits a plan form via a fresh progress message instead of patching the clicked card", async () => {
     const bridgeService = {
       handleMessage: vi.fn(
