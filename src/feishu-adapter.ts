@@ -39,7 +39,7 @@ export interface FeishuApiClientLike {
   downloadMessageResource?(input: {
     messageId: string;
     fileKey: string;
-    type: "image";
+    type: "image" | "file";
     downloadDir: string;
     preferredFileName?: string;
   }): Promise<BridgeAssetDownloadResult>;
@@ -190,6 +190,22 @@ export class FeishuAdapter {
     if (message.message_type === "image") {
       try {
         await this.handleInboundImage({
+          peerId,
+          message,
+        });
+      } catch (error) {
+        await this.replyText({
+          peerId,
+          anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
+          text: formatFeishuCaErrorText(error),
+        });
+      }
+      return;
+    }
+
+    if (message.message_type === "file") {
+      try {
+        await this.handleInboundFile({
           peerId,
           message,
         });
@@ -380,7 +396,7 @@ export class FeishuAdapter {
       messageId: message.message_id,
       fileKey: imageKey,
       type: "image",
-      downloadDir: buildInboundImageDownloadDir(
+      downloadDir: buildInboundAssetDownloadDir(
         this.dependencies.inboundAssetRootDir,
         input.peerId,
         message,
@@ -408,6 +424,74 @@ export class FeishuAdapter {
       peerId: input.peerId,
       anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
       text: INBOUND_IMAGE_ACK_TEXT,
+    });
+  }
+
+  private async handleInboundFile(input: {
+    peerId: string;
+    message: FeishuEnvelopeMessage;
+  }): Promise<void> {
+    const message = input.message;
+    const fileContent = parseFeishuFileContent(message.content);
+    if (!fileContent?.fileKey || !message.message_id) {
+      return;
+    }
+
+    const isDm = message.chat_type === "p2p";
+    const isGroupSurface = message.chat_type === "group" && !!message.chat_id;
+    if (message.chat_type === "group" && message.thread_id) {
+      return;
+    }
+    if (!isDm && !isGroupSurface) {
+      return;
+    }
+
+    this.dependencies.logger?.info?.(
+      buildFeishuInboundLog({
+        peerId: input.peerId,
+        chatType: message.chat_type,
+        messageId: message.message_id,
+        chatId: message.chat_id,
+        threadId: message.thread_id,
+        text: fileContent.fileName
+          ? `[file:${fileContent.fileKey}:${fileContent.fileName}]`
+          : `[file:${fileContent.fileKey}]`,
+      }),
+    );
+
+    const download = await this.requireDownloadClient().downloadMessageResource({
+      messageId: message.message_id,
+      fileKey: fileContent.fileKey,
+      type: "file",
+      downloadDir: buildInboundAssetDownloadDir(
+        this.dependencies.inboundAssetRootDir,
+        input.peerId,
+        message,
+      ),
+      preferredFileName: fileContent.fileName ??
+        `${sanitizePathSegment(message.message_id)}-${sanitizePathSegment(fileContent.fileKey)}.bin`,
+    });
+
+    this.requirePendingAssetStore().savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: input.peerId,
+      chatId: message.chat_id ?? null,
+      surfaceType: message.thread_id ? "thread" : null,
+      surfaceRef: message.thread_id ?? null,
+      runId: null,
+      messageId: message.message_id,
+      resourceType: "file",
+      resourceKey: fileContent.fileKey,
+      localPath: download.localPath,
+      fileName: download.fileName,
+      mimeType: download.mimeType,
+      fileSize: download.fileSize,
+    });
+
+    await this.replyText({
+      peerId: input.peerId,
+      anchorMessageId: message.chat_type === "group" ? message.message_id : undefined,
+      text: buildInboundFileAckText(fileContent.fileName),
     });
   }
 
@@ -748,7 +832,35 @@ function parseFeishuImageContent(content?: string): string | undefined {
   }
 }
 
-function buildInboundImageDownloadDir(
+function parseFeishuFileContent(content?: string): { fileKey: string; fileName?: string } | undefined {
+  if (!content) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    const fileKey = typeof parsed.file_key === "string" ? parsed.file_key.trim() : "";
+    if (!fileKey) {
+      return undefined;
+    }
+
+    const fileName =
+      typeof parsed.file_name === "string" && parsed.file_name.trim()
+        ? parsed.file_name.trim()
+        : typeof parsed.name === "string" && parsed.name.trim()
+          ? parsed.name.trim()
+          : undefined;
+
+    return {
+      fileKey,
+      fileName,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function buildInboundAssetDownloadDir(
   rootDir: string | undefined,
   peerId: string,
   message: FeishuEnvelopeMessage,
@@ -775,3 +887,9 @@ function sanitizePathSegment(value: string): string {
 
 const INBOUND_IMAGE_ACK_TEXT = "[ca] 已收到图片，请继续发送文字说明。";
 const DEFAULT_INBOUND_ASSET_ROOT_DIR = DEFAULT_BRIDGE_ASSET_ROOT_DIR;
+
+function buildInboundFileAckText(fileName?: string): string {
+  return fileName
+    ? `已收到文件：${fileName}，请继续发送文字说明。`
+    : "已收到文件，请继续发送文字说明。";
+}

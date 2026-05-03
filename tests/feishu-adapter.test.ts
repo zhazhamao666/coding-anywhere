@@ -520,6 +520,285 @@ describe("FeishuAdapter", () => {
     );
   });
 
+  it("downloads inbound DM files, stages them, and replies with a filename acknowledgment", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-file-"));
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+      };
+      const apiClient = createApiClientDouble({
+        downloadMessageResource: vi.fn(async () => ({
+          resourceKey: "file_dm_1",
+          localPath: path.join(rootDir, "notes.md"),
+          fileName: "notes.md",
+          mimeType: "text/markdown",
+          fileSize: 128,
+        })),
+      });
+      const pendingAssetStore = createPendingAssetStoreDouble();
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+        pendingAssetStore,
+        inboundAssetRootDir: rootDir,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-file-1",
+        },
+        event: {
+          message: {
+            message_id: "om_file_1",
+            chat_type: "p2p",
+            message_type: "file",
+            content: JSON.stringify({
+              file_key: "file_dm_1",
+              file_name: "notes.md",
+            }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+      expect(apiClient.downloadMessageResource).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: "om_file_1",
+          fileKey: "file_dm_1",
+          type: "file",
+          downloadDir: expect.stringContaining(rootDir),
+          preferredFileName: "notes.md",
+        }),
+      );
+      expect(pendingAssetStore.savePendingBridgeAsset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: "feishu",
+          peerId: "ou_demo",
+          chatId: null,
+          surfaceType: null,
+          surfaceRef: null,
+          messageId: "om_file_1",
+          resourceType: "file",
+          resourceKey: "file_dm_1",
+          localPath: path.join(rootDir, "notes.md"),
+          fileName: "notes.md",
+          mimeType: "text/markdown",
+          fileSize: 128,
+        }),
+      );
+      expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+        "ou_demo",
+        "已收到文件：notes.md，请继续发送文字说明。",
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("downloads inbound group mainline files and replies to the source message", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-group-file-"));
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+      };
+      const apiClient = createApiClientDouble({
+        downloadMessageResource: vi.fn(async () => ({
+          resourceKey: "file_group_1",
+          localPath: path.join(rootDir, "diagram.drawio"),
+          fileName: "diagram.drawio",
+          mimeType: "application/xml",
+          fileSize: 512,
+        })),
+      });
+      const pendingAssetStore = createPendingAssetStoreDouble();
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+        pendingAssetStore,
+        inboundAssetRootDir: rootDir,
+        isCodexGroupChat: chatId => chatId === "oc_chat_bound",
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-group-file-1",
+        },
+        event: {
+          message: {
+            message_id: "om_group_file_1",
+            chat_id: "oc_chat_bound",
+            chat_type: "group",
+            message_type: "file",
+            content: JSON.stringify({
+              file_key: "file_group_1",
+              name: "diagram.drawio",
+            }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+      expect(apiClient.downloadMessageResource).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: "om_group_file_1",
+          fileKey: "file_group_1",
+          type: "file",
+          preferredFileName: "diagram.drawio",
+        }),
+      );
+      expect(pendingAssetStore.savePendingBridgeAsset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: "feishu",
+          peerId: "ou_demo",
+          chatId: "oc_chat_bound",
+          surfaceType: null,
+          surfaceRef: null,
+          messageId: "om_group_file_1",
+          resourceType: "file",
+          resourceKey: "file_group_1",
+        }),
+      );
+      expect(apiClient.replyTextMessage).toHaveBeenCalledWith(
+        "om_group_file_1",
+        "已收到文件：diagram.drawio，请继续发送文字说明。",
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a generic inbound file acknowledgment when the Feishu content has no filename", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-file-no-name-"));
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+      };
+      const apiClient = createApiClientDouble({
+        downloadMessageResource: vi.fn(async () => ({
+          resourceKey: "file_dm_no_name_1",
+          localPath: path.join(rootDir, "downloaded.bin"),
+          fileName: "downloaded.bin",
+          mimeType: "application/octet-stream",
+          fileSize: 64,
+        })),
+      });
+      const pendingAssetStore = createPendingAssetStoreDouble();
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+        pendingAssetStore,
+        inboundAssetRootDir: rootDir,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-file-no-name-1",
+        },
+        event: {
+          message: {
+            message_id: "om_file_no_name_1",
+            chat_type: "p2p",
+            message_type: "file",
+            content: JSON.stringify({
+              file_key: "file_dm_no_name_1",
+            }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(apiClient.downloadMessageResource).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileKey: "file_dm_no_name_1",
+          type: "file",
+          preferredFileName: "om_file_no_name_1-file_dm_no_name_1.bin",
+        }),
+      );
+      expect(pendingAssetStore.savePendingBridgeAsset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resourceType: "file",
+          resourceKey: "file_dm_no_name_1",
+          fileName: "downloaded.bin",
+        }),
+      );
+      expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+        "ou_demo",
+        "已收到文件，请继续发送文字说明。",
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores inbound group topic file messages", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [] satisfies BridgeReply[]),
+    };
+    const apiClient = createApiClientDouble();
+    const pendingAssetStore = createPendingAssetStoreDouble();
+
+    const adapter = new FeishuAdapter({
+      allowlist: ["ou_demo"],
+      bridgeService,
+      apiClient,
+      pendingAssetStore,
+      isCodexGroupChat: chatId => chatId === "oc_chat_bound",
+    });
+
+    await adapter.handleEnvelope({
+      header: {
+        event_id: "evt-topic-file-1",
+      },
+      event: {
+        message: {
+          message_id: "om_topic_file_1",
+          chat_id: "oc_chat_bound",
+          chat_type: "group",
+          thread_id: "omt_topic_1",
+          message_type: "file",
+          content: JSON.stringify({
+            file_key: "file_topic_1",
+            file_name: "topic.md",
+          }),
+        },
+        sender: {
+          sender_id: {
+            open_id: "ou_demo",
+          },
+        },
+      },
+    });
+
+    expect(bridgeService.handleMessage).not.toHaveBeenCalled();
+    expect(apiClient.downloadMessageResource).not.toHaveBeenCalled();
+    expect(pendingAssetStore.savePendingBridgeAsset).not.toHaveBeenCalled();
+    expect(apiClient.replyTextMessage).not.toHaveBeenCalled();
+    expect(apiClient.sendTextMessage).not.toHaveBeenCalled();
+  });
+
   it("uploads outbound image replies for DM messages", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => [

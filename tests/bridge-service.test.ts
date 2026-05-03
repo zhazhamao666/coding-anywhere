@@ -1192,7 +1192,7 @@ describe("BridgeService", () => {
     ]);
   });
 
-  it("consumes staged surface images and forwards them to the next prompt only once", async () => {
+  it("consumes staged surface assets, forwards only images to Codex, and describes file metadata", async () => {
     store.createProject({
       projectId: "proj-current",
       name: "Current Project",
@@ -1220,12 +1220,25 @@ describe("BridgeService", () => {
       channel: "feishu",
       peerId: "ou_demo",
       chatId: "oc_chat_current",
-      messageId: "om_image_2",
-      resourceKey: "img_dm_2",
-      localPath: "D:/assets/two.png",
-      fileName: "two.png",
-      mimeType: "image/png",
+      messageId: "om_file_1",
+      resourceType: "file",
+      resourceKey: "file_dm_1",
+      localPath: "D:/assets/notes.md",
+      fileName: "notes.md",
+      mimeType: "text/markdown",
       fileSize: 2048,
+    });
+    store.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_demo",
+      chatId: "oc_chat_current",
+      messageId: "om_file_2",
+      resourceType: "file",
+      resourceKey: "file_dm_2",
+      localPath: "D:/assets/diagram.drawio",
+      fileName: "diagram.drawio",
+      mimeType: "application/xml",
+      fileSize: 4096,
     });
 
     const runner = createRunnerDouble([
@@ -1253,13 +1266,20 @@ describe("BridgeService", () => {
       },
       expect.stringContaining("[bridge-attachments]"),
       {
-        images: ["D:/assets/one.png", "D:/assets/two.png"],
+        images: ["D:/assets/one.png"],
       },
       expect.any(Function),
     );
-    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("image_count: 2");
-    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("file_name=one.png");
-    expect(runner.submitVerbatim.mock.calls[0]?.[1]).toContain("source_message_id=om_image_1");
+    const prompt = runner.submitVerbatim.mock.calls[0]?.[1] as string;
+    expect(prompt).toContain("image_count: 1");
+    expect(prompt).toContain("file_count: 2");
+    expect(prompt).toContain("image_1: file_name=one.png; local_path=D:/assets/one.png; source_message_id=om_image_1");
+    expect(prompt).toContain("file_1: file_name=notes.md; local_path=D:/assets/notes.md; source_message_id=om_file_1; mime_type=text/markdown; file_size=2048; semantic_type=markdown; encoding=utf-8");
+    expect(prompt).toContain("file_2: file_name=diagram.drawio; local_path=D:/assets/diagram.drawio; source_message_id=om_file_2; mime_type=application/xml; file_size=4096; semantic_type=drawio; encoding=utf-8");
+    expect(prompt).toContain("Use local_path");
+    expect(prompt).toContain("Do not ask the user to upload these attachments again");
+    expect(prompt).toContain("Markdown attachments are UTF-8 text files");
+    expect(prompt).toContain("draw.io attachments are editable XML diagram sources");
     expect(store.listPendingBridgeAssetsForSurface({
       channel: "feishu",
       peerId: "ou_demo",

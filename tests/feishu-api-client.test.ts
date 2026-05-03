@@ -338,6 +338,58 @@ describe("FeishuApiClient", () => {
     }
   });
 
+  it("downloads file resources from message.resource with the file resource type", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-file-resource-download-"));
+    const sdk = createSdkDouble();
+    sdk.im.v1.messageResource.get = vi.fn(async () => ({
+      headers: {
+        "content-type": "text/markdown",
+        "content-disposition": 'attachment; filename="notes.md"',
+      },
+      writeFile: vi.fn(async (filePath: string) => {
+        writeFileSync(filePath, "# notes\n");
+        return filePath;
+      }),
+      getReadableStream: vi.fn(),
+    }));
+    const client = new FeishuApiClient(
+      {
+        appId: "cli_xxx",
+        appSecret: "secret",
+        apiBaseUrl: "https://open.feishu.cn/open-apis",
+      },
+      sdk as any,
+    );
+
+    try {
+      const result = await client.downloadMessageResource({
+        messageId: "om_file_1",
+        fileKey: "file_dm_1",
+        type: "file",
+        downloadDir: rootDir,
+      });
+
+      expect(sdk.im.v1.messageResource.get).toHaveBeenCalledWith({
+        params: {
+          type: "file",
+        },
+        path: {
+          message_id: "om_file_1",
+          file_key: "file_dm_1",
+        },
+      });
+      expect(result).toMatchObject({
+        resourceKey: "file_dm_1",
+        localPath: path.join(rootDir, "notes.md"),
+        fileName: "notes.md",
+        mimeType: "text/markdown",
+        fileSize: 8,
+      });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("uploads local images and sends native image messages", async () => {
     const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-image-upload-"));
     const imagePath = path.join(rootDir, "reply.png");

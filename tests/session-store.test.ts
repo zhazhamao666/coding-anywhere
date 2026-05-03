@@ -701,6 +701,67 @@ describe("SessionStore", () => {
     ]);
   });
 
+  it("persists file pending bridge assets and restores them after consumption", () => {
+    store = new SessionStore(path.join(rootDir, "bridge.db"));
+    const assetStore = store as any;
+
+    const fileAsset = assetStore.savePendingBridgeAsset({
+      channel: "feishu",
+      peerId: "ou_dm",
+      chatId: null,
+      surfaceType: null,
+      surfaceRef: null,
+      runId: null,
+      messageId: "om_file_1",
+      resourceType: "file",
+      resourceKey: "file_dm_1",
+      localPath: path.join(rootDir, "assets", "notes.md"),
+      fileName: "notes.md",
+      mimeType: "text/markdown",
+      fileSize: 1234,
+      createdAt: "2026-03-28T00:00:00.000Z",
+    });
+
+    expect(fileAsset).toMatchObject({
+      resourceType: "file",
+      status: "pending",
+      localPath: path.join(rootDir, "assets", "notes.md"),
+    });
+
+    const consumed = assetStore.consumePendingBridgeAssets({
+      runId: "run-file-1",
+      assetIds: [fileAsset.assetId],
+    });
+
+    expect(consumed).toEqual([
+      expect.objectContaining({
+        assetId: fileAsset.assetId,
+        runId: "run-file-1",
+        resourceType: "file",
+        status: "consumed",
+      }),
+    ]);
+
+    const restored = assetStore.restoreConsumedBridgeAssets({
+      runId: "run-file-1",
+      assetIds: [fileAsset.assetId],
+    });
+
+    expect(restored).toEqual([
+      expect.objectContaining({
+        assetId: fileAsset.assetId,
+        runId: null,
+        resourceType: "file",
+        status: "pending",
+      }),
+    ]);
+    expect(assetStore.getBridgeAsset(fileAsset.assetId)).toMatchObject({
+      resourceType: "file",
+      status: "pending",
+      consumedAt: null,
+    });
+  });
+
   it("marks pending image assets as failed and expires stale ones", () => {
     store = new SessionStore(path.join(rootDir, "bridge.db"));
     const assetStore = store as any;

@@ -96,7 +96,7 @@ export class FeishuApiClient {
   public async downloadMessageResource(input: {
     messageId: string;
     fileKey: string;
-    type: "image";
+    type: "image" | "file";
     downloadDir: string;
     preferredFileName?: string;
   }): Promise<BridgeAssetDownloadResult> {

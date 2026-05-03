@@ -3,9 +3,10 @@ import path from "node:path";
 
 import {
   DEFAULT_BRIDGE_ASSET_ROOT_DIR,
+  classifyBridgeAssetSemanticType,
   parseBridgeImageDirective,
   validateBridgeImagePath,
-} from "./bridge-image-directive.js";
+} from "./bridge-asset-directive.js";
 import { BRIDGE_COMMAND_PREFIX, routeBridgeInput } from "./command-router.js";
 import {
   getCodexModelLabel,
@@ -4255,12 +4256,19 @@ function buildPromptForCodexRun(input: {
   }
 
   if (input.assets.length > 0) {
+    const imageAssets = input.assets.filter(asset => asset.resourceType === "image");
+    const fileAssets = input.assets.filter(asset => asset.resourceType === "file");
     sections.push(
       "[bridge-attachments]",
-      `image_count: ${input.assets.length}`,
-      ...input.assets.map((asset, index) =>
-        `image_${index + 1}: file_name=${asset.fileName}; source_message_id=${asset.messageId}; mime_type=${asset.mimeType ?? "unknown"}`,
-      ),
+      `image_count: ${imageAssets.length}`,
+      `file_count: ${fileAssets.length}`,
+      "instructions:",
+      "- Use local_path to inspect each attached file or image.",
+      "- Do not ask the user to upload these attachments again.",
+      "- Markdown attachments are UTF-8 text files.",
+      "- draw.io attachments are editable XML diagram sources.",
+      ...imageAssets.map((asset, index) => formatBridgeAttachmentMetadata("image", asset, index)),
+      ...fileAssets.map((asset, index) => formatBridgeAttachmentMetadata("file", asset, index)),
       "[/bridge-attachments]",
       "",
     );
@@ -4273,6 +4281,31 @@ function buildPromptForCodexRun(input: {
   );
 
   return sections.join("\n");
+}
+
+function formatBridgeAttachmentMetadata(
+  label: "image" | "file",
+  asset: BridgeAssetRecord,
+  index: number,
+): string {
+  const semanticType = classifyBridgeAssetSemanticType({
+    localPath: asset.localPath,
+    fileName: asset.fileName,
+    mimeType: asset.mimeType,
+  });
+  const fields = [
+    `file_name=${asset.fileName}`,
+    `local_path=${asset.localPath}`,
+    `source_message_id=${asset.messageId}`,
+    `mime_type=${asset.mimeType ?? "unknown"}`,
+    `file_size=${asset.fileSize ?? "unknown"}`,
+    `semantic_type=${semanticType}`,
+  ];
+  if (semanticType === "markdown" || semanticType === "drawio") {
+    fields.push("encoding=utf-8");
+  }
+
+  return `${label}_${index + 1}: ${fields.join("; ")}`;
 }
 
 function buildFinalBridgeReplies(input: {
