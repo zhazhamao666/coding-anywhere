@@ -445,6 +445,7 @@ describe("feishu live user journeys", () => {
       "dm:new-session",
       "dm:conversation-switch",
       "dm:run-basic",
+      "dm:bridge-assets",
       "dm:ops-ui",
     ]);
     expect(journeys.flatMap(journey => journey.steps).map(step => step.name)).toEqual(expect.arrayContaining([
@@ -454,6 +455,9 @@ describe("feishu live user journeys", () => {
       "从选择卡准备新会话",
       "切换到一个已有会话",
       "发送一条短任务并等待终态卡",
+      "上传 Markdown 附件",
+      "要求 Codex 读取刚才附件",
+      "要求 Codex 返回桥接资源",
       "打开后台观察面",
     ]));
     expect(journeys.flatMap(journey => journey.setupSteps).filter(step =>
@@ -481,6 +485,61 @@ describe("feishu live user journeys", () => {
 
     expect(userFacingNames).toContain("group:conversation-switch");
     expect(userFacingNames.join("\n")).not.toMatch(/线程|话题|handoff|topic/i);
+  });
+
+  it("builds a bridge-assets live scenario for inbound files and outbound assets", () => {
+    const [dmJourney] = buildFeishuLiveJourneys({
+      surface: "dm",
+      projectKey: "coding-anywhere-autotest",
+      scenarios: ["bridge-assets"],
+    });
+    const [groupJourney] = buildFeishuLiveJourneys({
+      surface: "group",
+      projectKey: "coding-anywhere-autotest",
+      scenarios: ["bridge-assets"],
+    });
+
+    expect(dmJourney.name).toBe("dm:bridge-assets");
+    expect(dmJourney.setupSteps[0]).toMatchObject({
+      kind: "command",
+      text: "/ca project switch coding-anywhere-autotest",
+    });
+    expect(groupJourney.setupSteps[0]).toMatchObject({
+      kind: "command",
+      text: "/ca project current",
+      expectText: ["当前项目", "coding-anywhere-autotest"],
+    });
+    expect(dmJourney.steps).toMatchObject([
+      {
+        kind: "upload_file",
+        fileName: "live-inbound-file.md",
+        mimeType: "text/markdown",
+        content: expect.stringContaining("live-inbound-file-ok"),
+        expectText: ["已收到文件", "live-inbound-file.md"],
+      },
+      {
+        kind: "command",
+        text: expect.not.stringContaining("live-inbound-file-ok"),
+        expectText: ["live-inbound-file-ok"],
+      },
+      {
+        kind: "command",
+        text: expect.stringContaining("[bridge-assets]"),
+        expectText: [
+          "live-outbound-assets-ok",
+          "live-outbound-assets.md",
+          "live-outbound-assets.drawio",
+        ],
+      },
+    ]);
+
+    const outboundStep = dmJourney.steps[2];
+    expect(outboundStep.kind).toBe("command");
+    if (outboundStep.kind === "command") {
+      for (const expectedText of outboundStep.expectText ?? []) {
+        expect(outboundStep.text).not.toContain(expectedText);
+      }
+    }
   });
 
   it("does not expose topic journeys in the live UI matrix", () => {

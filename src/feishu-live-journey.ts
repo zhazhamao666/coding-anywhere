@@ -6,6 +6,12 @@ export type FeishuLiveJourneyStep = (
       text: string;
     }
   | {
+      kind: "upload_file";
+      fileName: string;
+      content: string;
+      mimeType: string;
+    }
+  | {
       kind: "click";
       label: string;
     }
@@ -48,6 +54,7 @@ export type FeishuLiveScenario =
   | "new-session"
   | "conversation-switch"
   | "run-basic"
+  | "bridge-assets"
   | "ops-ui";
 
 export function buildFeishuLiveJourney(input: {
@@ -103,6 +110,7 @@ function allScenariosForSurface(surface: string): FeishuLiveScenario[] {
     "new-session",
     "conversation-switch",
     "run-basic",
+    "bridge-assets",
     "ops-ui",
   ];
 }
@@ -408,8 +416,60 @@ function buildThreadReadyScenarioSteps(scenario: FeishuLiveScenario): FeishuLive
           requireFreshText: false,
         },
       ];
+    case "bridge-assets":
+      return buildBridgeAssetsScenarioSteps();
     case "main":
     case "ops-ui":
       return [];
   }
+}
+
+function buildBridgeAssetsScenarioSteps(): FeishuLiveJourneyStep[] {
+  const inboundFileName = "live-inbound-file.md";
+  const inboundFileToken = "live-inbound-file-ok";
+  const assetBaseName = "live-outbound-assets";
+  const assetDir = "tmp/feishu-live-bridge-assets";
+
+  return [
+    {
+      name: "上传 Markdown 附件",
+      kind: "upload_file",
+      fileName: inboundFileName,
+      mimeType: "text/markdown",
+      content: [
+        "# Feishu live inbound file smoke",
+        "",
+        `stable_token: ${inboundFileToken}`,
+        "",
+      ].join("\n"),
+      expectText: ["已收到文件", inboundFileName],
+      timeoutMs: 90_000,
+    },
+    {
+      name: "要求 Codex 读取刚才附件",
+      kind: "command",
+      text: "请读取我刚才上传的 Markdown 附件，找到 stable_token 字段，并且只回复该字段值。不要解释。",
+      expectText: [inboundFileToken],
+      timeoutMs: 180_000,
+    },
+    {
+      name: "要求 Codex 返回桥接资源",
+      kind: "command",
+      text: [
+        "请执行真实飞书资源桥 smoke，完成后按指定格式回复，不要解释。",
+        `1. 在当前工作目录创建目录 ${assetDir}。`,
+        `2. 用 Base64 解码写入一个真正的 1x1 PNG 二进制文件；文件基础名为 ${assetBaseName}，扩展名为 png。Base64: iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=`,
+        `3. 写入同一目录下基础名为 ${assetBaseName}、扩展名为 md 的 Markdown 文件，内容包含 token: live-outbound-assets-md-token。`,
+        `4. 写入同一目录下基础名为 ${assetBaseName}、扩展名为 drawio 的合法 draw.io XML 文件，内容包含 token: live-outbound-assets-drawio-token。`,
+        "5. 最终回复第一行是稳定 token。这个 token 由 live、outbound、assets、ok 四段用短横线连接。",
+        "6. 第一行后紧跟 [bridge-assets] JSON 块和 [/bridge-assets] 结束标签；JSON 里 assets 包含 image、Markdown file、drawio file，path 使用上面目录、基础名和扩展名拼接，Markdown 使用 presentation=markdown_preview，drawio 使用 presentation=drawio_with_preview 且 preview format 为 png。",
+      ].join("\n"),
+      expectText: [
+        "live-outbound-assets-ok",
+        "live-outbound-assets.md",
+        "live-outbound-assets.drawio",
+      ],
+      timeoutMs: 240_000,
+    },
+  ];
 }

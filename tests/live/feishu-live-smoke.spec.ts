@@ -98,6 +98,8 @@ async function executeJourneyStep(input: {
 
   if (input.step.kind === "command") {
     await input.sendComposerText(input.step.text);
+  } else if (input.step.kind === "upload_file") {
+    await uploadJourneyFile(input.page, input.step);
   } else if (input.step.kind === "click") {
     const target = input.page.getByText(input.step.label, { exact: true }).last();
     await expect(target).toBeVisible({ timeout: 45_000 });
@@ -122,6 +124,23 @@ async function executeJourneyStep(input: {
   if (input.step.expectAbsentText) {
     await expectAbsentText(input.page, input.step.expectAbsentText);
   }
+}
+
+async function uploadJourneyFile(
+  page: Page,
+  step: Extract<FeishuLiveJourneyStep, { kind: "upload_file" }>,
+): Promise<void> {
+  const fileInputSelector = process.env.FEISHU_LIVE_FILE_INPUT_SELECTOR ?? "input[type=file]";
+  const fileNameCounts = new Map([[step.fileName, await countVisibleText(page, step.fileName)]]);
+  const fileInput = page.locator(fileInputSelector).last();
+
+  await expect(fileInput).toBeAttached({ timeout: 30_000 });
+  await fileInput.setInputFiles({
+    name: step.fileName,
+    mimeType: step.mimeType,
+    buffer: Buffer.from(step.content, "utf8"),
+  });
+  await expectFreshText(page, [step.fileName], fileNameCounts, step.timeoutMs);
 }
 
 async function ensurePlanModeToggle(page: Page, targetState: "on" | "off"): Promise<boolean> {
