@@ -1,4 +1,4 @@
-import { chromium, expect, test, type Page } from "@playwright/test";
+import { chromium, expect, test, type FileChooser, type Page } from "@playwright/test";
 
 import {
   assertFeishuLiveAuthReady,
@@ -133,14 +133,69 @@ async function uploadJourneyFile(
   const fileInputSelector = process.env.FEISHU_LIVE_FILE_INPUT_SELECTOR ?? "input[type=file]";
   const fileNameCounts = new Map([[step.fileName, await countVisibleText(page, step.fileName)]]);
   const fileInput = page.locator(fileInputSelector).last();
-
-  await expect(fileInput).toBeAttached({ timeout: 30_000 });
-  await fileInput.setInputFiles({
+  const filePayload = {
     name: step.fileName,
     mimeType: step.mimeType,
     buffer: Buffer.from(step.content, "utf8"),
-  });
+  };
+
+  if (await fileInput.count() > 0) {
+    await fileInput.setInputFiles(filePayload);
+    await expectFreshText(page, [step.fileName], fileNameCounts, step.timeoutMs);
+    return;
+  }
+
+  const fileChooser = await openFeishuFileChooser(page);
+  await fileChooser.setFiles(filePayload);
+  let confirmSend = await findLatestVisibleExactText(page, ["发送"]);
+  for (let attempt = 0; !confirmSend && attempt < 20; attempt += 1) {
+    await page.waitForTimeout(250);
+    confirmSend = await findLatestVisibleExactText(page, ["发送"]);
+  }
+  if (confirmSend) {
+    await confirmSend.locator.click();
+  }
   await expectFreshText(page, [step.fileName], fileNameCounts, step.timeoutMs);
+}
+
+async function openFeishuFileChooser(page: Page): Promise<FileChooser> {
+  const attachSelector = process.env.FEISHU_LIVE_ATTACH_BUTTON_SELECTOR;
+  const directChooser = page.waitForEvent("filechooser", { timeout: 5_000 }).catch(() => null);
+  if (attachSelector) {
+    await page.locator(attachSelector).last().click();
+  } else {
+    await clickDefaultFeishuAttachEntry(page);
+  }
+
+  const chooser = await directChooser;
+  if (chooser) {
+    return chooser;
+  }
+
+  const menuLabels = ["上传文件", "文件", "本地文件", "从本地上传"];
+  for (const label of menuLabels) {
+    const item = page.getByText(label, { exact: true }).last();
+    if (await item.isVisible().catch(() => false)) {
+      const menuChooser = page.waitForEvent("filechooser", { timeout: 10_000 });
+      await item.click();
+      return menuChooser;
+    }
+  }
+
+  throw new Error(
+    "Feishu file upload entry was not found. Set FEISHU_LIVE_ATTACH_BUTTON_SELECTOR or FEISHU_LIVE_FILE_INPUT_SELECTOR.",
+  );
+}
+
+async function clickDefaultFeishuAttachEntry(page: Page): Promise<void> {
+  const viewport = await page.evaluate(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
+  const offsetX = Number.parseInt(process.env.FEISHU_LIVE_ATTACH_BUTTON_OFFSET_X ?? "120", 10);
+  const offsetY = Number.parseInt(process.env.FEISHU_LIVE_ATTACH_BUTTON_OFFSET_Y ?? "58", 10);
+
+  await page.mouse.click(viewport.width - offsetX, viewport.height - offsetY);
 }
 
 async function ensurePlanModeToggle(page: Page, targetState: "on" | "off"): Promise<boolean> {
