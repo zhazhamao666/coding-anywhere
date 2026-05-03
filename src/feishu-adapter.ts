@@ -579,6 +579,16 @@ export class FeishuAdapter {
     reply: Extract<BridgeReply, { kind: "image" }>;
   }): Promise<void> {
     const fallbackText = formatImageFallbackText(input.reply);
+    const imageSize = readLocalFileSize(input.reply.localPath);
+    if (imageSize !== undefined && imageSize > FEISHU_FILE_UPLOAD_MAX_BYTES) {
+      await this.replyText({
+        peerId: input.peerId,
+        anchorMessageId: input.anchorMessageId,
+        text: formatOversizedImageFailureText(input.reply),
+      });
+      return;
+    }
+
     const imageAsFileReply = maybeBuildOversizedImageFileReply(input.reply);
     if (imageAsFileReply) {
       await this.replyFile({
@@ -752,16 +762,34 @@ function formatFileFallbackText(reply: Extract<BridgeReply, { kind: "file" }>): 
   return "文件结果已生成。";
 }
 
+function formatOversizedImageFailureText(
+  reply: Extract<BridgeReply, { kind: "image" }>,
+): string {
+  return `图片结果无法发送：${formatLocalPathFileNameForUser(reply.localPath)} 超过 30 MB 文件上限。`;
+}
+
+function formatLocalPathFileNameForUser(localPath: string): string {
+  const normalized = localPath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts.at(-1) ?? "图片文件";
+}
+
 const FEISHU_IMAGE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 const FEISHU_FILE_UPLOAD_MAX_BYTES = 30 * 1024 * 1024;
+
+function readLocalFileSize(localPath: string): number | undefined {
+  try {
+    return statSync(localPath).size;
+  } catch {
+    return undefined;
+  }
+}
 
 function maybeBuildOversizedImageFileReply(
   reply: Extract<BridgeReply, { kind: "image" }>,
 ): Extract<BridgeReply, { kind: "file" }> | undefined {
-  let size: number;
-  try {
-    size = statSync(reply.localPath).size;
-  } catch {
+  const size = readLocalFileSize(reply.localPath);
+  if (size === undefined) {
     return undefined;
   }
 

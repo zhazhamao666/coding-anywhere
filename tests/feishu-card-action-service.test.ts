@@ -354,6 +354,57 @@ describe("FeishuCardActionService", () => {
     });
   });
 
+  it("shows a visible failure card when inline resource delivery fails", async () => {
+    const bridgeService = {
+      handleMessage: vi.fn(async () => [
+        { kind: "assistant", text: "结果文件如下" } as BridgeReply,
+        {
+          kind: "file",
+          localPath: "D:/tmp/report.md",
+          fileName: "report.md",
+        } as BridgeReply,
+      ]),
+    };
+    const apiClient = createApiClientDouble();
+    apiClient.uploadFile.mockRejectedValueOnce(new Error("FEISHU_FILE_UPLOAD_TOO_LARGE"));
+
+    const service = new FeishuCardActionService({
+      bridgeService: bridgeService as any,
+      apiClient: apiClient as any,
+    });
+
+    const result = await service.handleAction({
+      open_message_id: "om_callback_1",
+      open_id: "ou_demo",
+      action: {
+        tag: "button",
+        value: {
+          command: "/ca project current",
+          chatId: "oc_chat_current",
+        },
+      },
+    });
+
+    expect(apiClient.uploadFile).toHaveBeenCalled();
+    expect(apiClient.replyFileMessage).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).toContain("资源投递失败");
+    expect(JSON.stringify(result)).toContain("report.md");
+    expect(JSON.stringify(result)).toContain("文件超过 30 MB");
+    expect(JSON.stringify(result)).not.toContain("D:/tmp/report.md");
+    expect(result).toMatchObject({
+      card: {
+        type: "raw",
+        data: expect.objectContaining({
+          header: expect.objectContaining({
+            title: expect.objectContaining({
+              content: "资源投递失败",
+            }),
+          }),
+        }),
+      },
+    });
+  });
+
   it("inline-returns fallback result cards when command callbacks omit chatId in action value", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => [

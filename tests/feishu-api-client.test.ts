@@ -641,6 +641,49 @@ describe("FeishuApiClient", () => {
     }
   });
 
+  it("uploads outbound mp4 and opus assets as generic files for file messages", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-file-upload-stream-"));
+    const videoPath = path.join(rootDir, "clip.mp4");
+    const audioPath = path.join(rootDir, "voice.opus");
+    writeFileSync(videoPath, "mp4");
+    writeFileSync(audioPath, "opus");
+
+    try {
+      const sdk = createSdkDouble();
+      const client = new FeishuApiClient(
+        {
+          appId: "cli_xxx",
+          appSecret: "secret",
+          apiBaseUrl: "https://open.feishu.cn/open-apis",
+        },
+        sdk as any,
+      );
+
+      await client.uploadFile({ filePath: videoPath });
+      await client.uploadFile({
+        filePath: audioPath,
+        fileType: "opus",
+      });
+
+      expect(sdk.im.v1.file.create).toHaveBeenNthCalledWith(1, {
+        data: {
+          file_type: "stream",
+          file_name: "clip.mp4",
+          file: expect.anything(),
+        },
+      });
+      expect(sdk.im.v1.file.create).toHaveBeenNthCalledWith(2, {
+        data: {
+          file_type: "stream",
+          file_name: "voice.opus",
+          file: expect.anything(),
+        },
+      });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects empty and oversized local files before upload", async () => {
     const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-file-size-"));
     const emptyPath = path.join(rootDir, "empty.md");

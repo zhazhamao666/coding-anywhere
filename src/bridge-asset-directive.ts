@@ -114,7 +114,7 @@ export function validateBridgeAssetPath(input: {
   })) {
     return {
       ok: false,
-      errorText: `[ca] asset unavailable: disallowed path ${resolvedPath}`,
+      errorText: buildAssetUnavailableErrorText("disallowed path", resolvedPath),
     };
   }
   if (input.preview && input.presentation !== "drawio_with_preview") {
@@ -131,26 +131,26 @@ export function validateBridgeAssetPath(input: {
     if (!allowedRoots.some(root => isPathAllowed(realPath, root.realPath))) {
       return {
         ok: false,
-        errorText: `[ca] asset unavailable: disallowed path ${resolvedPath}`,
+        errorText: buildAssetUnavailableErrorText("disallowed path", resolvedPath),
       };
     }
     if (!stat.isFile()) {
       return {
         ok: false,
-        errorText: `[ca] asset unavailable: not a file ${resolvedPath}`,
+        errorText: buildAssetUnavailableErrorText("not a file", resolvedPath),
       };
     }
     if (stat.size === 0) {
       return {
         ok: false,
-        errorText: `[ca] asset unavailable: empty file ${resolvedPath}`,
+        errorText: buildAssetUnavailableErrorText("empty file", resolvedPath),
       };
     }
     fileSize = stat.size;
   } catch {
     return {
       ok: false,
-      errorText: `[ca] asset unavailable: file not found ${resolvedPath}`,
+      errorText: buildAssetUnavailableErrorText("file not found", resolvedPath),
     };
   }
 
@@ -262,12 +262,17 @@ export function mapBridgeAssetToFeishuFileType(input: {
     case ".pptx":
       return "ppt";
     case ".mp4":
-      return "mp4";
     case ".opus":
-      return "opus";
+      return "stream";
     default:
       return "stream";
   }
+}
+
+export function normalizeFeishuFileTypeForBridgeFileMessage(
+  fileType: FeishuBridgeFileType,
+): FeishuBridgeFileType {
+  return fileType === "mp4" || fileType === "opus" ? "stream" : fileType;
 }
 
 function parseBridgeDirectiveText(text: string, options: {
@@ -544,6 +549,16 @@ function getAssetFileName(input: { localPath?: string; fileName?: string }): str
 
 function normalizeMimeType(value?: string | null): string {
   return value?.split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
+function buildAssetUnavailableErrorText(reason: string, candidatePath: string): string {
+  return `[ca] asset unavailable: ${reason} ${formatPathFileNameForUser(candidatePath)}`;
+}
+
+function formatPathFileNameForUser(candidatePath: string): string {
+  const normalized = candidatePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts.at(-1) ?? "requested asset";
 }
 
 function trimOptional(value?: string): string | undefined {

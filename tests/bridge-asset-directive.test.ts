@@ -230,7 +230,7 @@ describe("bridge asset directives", () => {
       managedAssetRootDir: managedRoot,
     })).toEqual({
       ok: false,
-      errorText: `[ca] asset unavailable: disallowed path ${path.join(outsideRoot, "secret.txt")}`,
+      errorText: "[ca] asset unavailable: disallowed path secret.txt",
     });
     expect(validateBridgeAssetPath({
       kind: "file",
@@ -239,7 +239,7 @@ describe("bridge asset directives", () => {
       managedAssetRootDir: managedRoot,
     })).toEqual({
       ok: false,
-      errorText: `[ca] asset unavailable: not a file ${path.join(cwd, "dir")}`,
+      errorText: "[ca] asset unavailable: not a file dir",
     });
     expect(validateBridgeAssetPath({
       kind: "file",
@@ -248,7 +248,7 @@ describe("bridge asset directives", () => {
       managedAssetRootDir: managedRoot,
     })).toEqual({
       ok: false,
-      errorText: `[ca] asset unavailable: file not found ${path.join(cwd, "missing.txt")}`,
+      errorText: "[ca] asset unavailable: file not found missing.txt",
     });
     expect(validateBridgeAssetPath({
       kind: "file",
@@ -257,7 +257,7 @@ describe("bridge asset directives", () => {
       managedAssetRootDir: managedRoot,
     })).toEqual({
       ok: false,
-      errorText: `[ca] asset unavailable: empty file ${path.join(cwd, "empty.txt")}`,
+      errorText: "[ca] asset unavailable: empty file empty.txt",
     });
   });
 
@@ -310,7 +310,7 @@ describe("bridge asset directives", () => {
         managedAssetRootDir: managedRoot,
       })).toEqual({
         ok: false,
-        errorText: `[ca] asset unavailable: disallowed path ${path.join(cwd, "outside-link", "secret.txt")}`,
+        errorText: "[ca] asset unavailable: disallowed path secret.txt",
       });
     },
   );
@@ -328,7 +328,7 @@ describe("bridge asset directives", () => {
       managedAssetRootDir: missingManagedRoot,
     })).toEqual({
       ok: false,
-      errorText: `[ca] asset unavailable: disallowed path ${candidatePath}`,
+      errorText: "[ca] asset unavailable: disallowed path ghost.txt",
     });
   });
 
@@ -366,8 +366,8 @@ describe("bridge asset directives", () => {
     expect(mapBridgeAssetToFeishuFileType({ fileName: "brief.docx" })).toBe("doc");
     expect(mapBridgeAssetToFeishuFileType({ fileName: "data.csv" })).toBe("xls");
     expect(mapBridgeAssetToFeishuFileType({ fileName: "slides.pptx" })).toBe("ppt");
-    expect(mapBridgeAssetToFeishuFileType({ fileName: "clip.mp4" })).toBe("mp4");
-    expect(mapBridgeAssetToFeishuFileType({ fileName: "audio.opus" })).toBe("opus");
+    expect(mapBridgeAssetToFeishuFileType({ fileName: "clip.mp4" })).toBe("stream");
+    expect(mapBridgeAssetToFeishuFileType({ fileName: "audio.opus" })).toBe("stream");
     expect(mapBridgeAssetToFeishuFileType({ fileName: "archive.zip" })).toBe("stream");
   });
 });

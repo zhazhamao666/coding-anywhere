@@ -3,7 +3,10 @@ import path from "node:path";
 
 import { Client } from "@larksuiteoapi/node-sdk";
 
-import { mapBridgeAssetToFeishuFileType } from "./bridge-asset-directive.js";
+import {
+  mapBridgeAssetToFeishuFileType,
+  normalizeFeishuFileTypeForBridgeFileMessage,
+} from "./bridge-asset-directive.js";
 import { buildFeishuOutboundLog } from "./feishu-message-log.js";
 import type { FeishuBridgeFileType } from "./bridge-asset-directive.js";
 import type { BridgeAssetDownloadResult } from "./types.js";
@@ -193,11 +196,12 @@ export class FeishuApiClient {
     }
 
     const fileName = sanitizeFileName(input.fileName ?? path.basename(input.filePath));
+    const mappedFileType = input.fileType ?? mapBridgeAssetToFeishuFileType({
+      localPath: input.filePath,
+      fileName,
+    });
     const data: Record<string, unknown> = {
-      file_type: input.fileType ?? mapBridgeAssetToFeishuFileType({
-        localPath: input.filePath,
-        fileName,
-      }),
+      file_type: normalizeFeishuFileTypeForBridgeFileMessage(mappedFileType),
       file_name: fileName,
       file: readFileSync(input.filePath),
     };

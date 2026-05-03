@@ -9,6 +9,12 @@ interface DesktopThreadContinuationResult {
   reply: BridgeReply;
 }
 
+interface ResourceDeliveryFailure {
+  kind: "image" | "file";
+  fileName: string;
+  reason: string;
+}
+
 interface CardActionValue {
   actionKind?:
     | "command_action"
@@ -249,7 +255,7 @@ export class FeishuCardActionService {
 
       if (reply.reply.kind === "image" || reply.reply.kind === "file") {
         const replies: BridgeReply[] = [reply.reply];
-        await this.deliverResourceReplies({
+        const resourceDeliveryFailures = await this.deliverResourceReplies({
           replies,
           peerId: event.open_id,
           existingMessageId: patchTargetMessageId,
@@ -262,6 +268,7 @@ export class FeishuCardActionService {
           openMessageId: event.open_message_id,
           patchTargetCardId,
           patchTargetMessageId,
+          resourceDeliveryFailures,
         }));
       }
 
@@ -373,7 +380,7 @@ export class FeishuCardActionService {
           surfaceRef: actionValue?.surfaceRef,
           text: command,
         });
-        await this.deliverResourceReplies({
+        const resourceDeliveryFailures = await this.deliverResourceReplies({
           replies,
           peerId: event.open_id,
           existingMessageId: patchTargetMessageId,
@@ -386,6 +393,7 @@ export class FeishuCardActionService {
           openMessageId: event.open_message_id,
           patchTargetCardId,
           patchTargetMessageId,
+          resourceDeliveryFailures,
         });
         const response = this.buildRawCardResponse(card);
         return callbackMode === "toast_with_raw_card"
@@ -523,7 +531,29 @@ export class FeishuCardActionService {
     openMessageId?: string;
     patchTargetCardId?: string;
     patchTargetMessageId?: string;
+    resourceDeliveryFailures?: ResourceDeliveryFailure[];
   }): Record<string, unknown> {
+    if (input.resourceDeliveryFailures?.length) {
+      const failureCard = this.buildInfoCard(
+        "资源投递失败",
+        input.resourceDeliveryFailures.map(formatResourceDeliveryFailureText),
+        input.actionValue,
+      );
+      this.dependencies.logger?.warn?.(
+        {
+          openId: input.openId,
+          openMessageId: input.openMessageId,
+          command: input.command,
+          failures: input.resourceDeliveryFailures,
+          patchTargetCardId: input.patchTargetCardId,
+          patchTargetMessageId: input.patchTargetMessageId,
+          cardPreview: summarizeCard(failureCard),
+        },
+        "feishu card action resource delivery produced visible failure card",
+      );
+      return failureCard;
+    }
+
     const reply = input.replies.find(item => item.kind !== "progress");
     if (!reply) {
       const emptyCard = this.buildInfoCard("命令已执行", ["没有收到可展示的结果。"], input.actionValue);
@@ -622,7 +652,7 @@ export class FeishuCardActionService {
     void (async () => {
       try {
         const replies = await input.execute();
-        await this.deliverResourceReplies({
+        const resourceDeliveryFailures = await this.deliverResourceReplies({
           replies,
           peerId: input.peerId,
           existingMessageId: input.existingMessageId,
@@ -635,16 +665,19 @@ export class FeishuCardActionService {
           openMessageId: input.existingMessageId,
           patchTargetCardId: input.actionValue?.cardId,
           patchTargetMessageId: input.existingMessageId,
+          resourceDeliveryFailures,
         });
-        const sessionCard = await this.maybeBuildSessionCardAfterCommand({
-          command: input.command,
-          replies,
-          peerId: input.peerId,
-          chatType: input.chatType,
-          chatId: input.chatId,
-          surfaceType: input.surfaceType,
-          surfaceRef: input.surfaceRef,
-        });
+        const sessionCard = resourceDeliveryFailures.length === 0
+          ? await this.maybeBuildSessionCardAfterCommand({
+              command: input.command,
+              replies,
+              peerId: input.peerId,
+              chatType: input.chatType,
+              chatId: input.chatId,
+              surfaceType: input.surfaceType,
+              surfaceRef: input.surfaceRef,
+            })
+          : undefined;
         if (sessionCard) {
           card = sessionCard;
         }
@@ -758,7 +791,8 @@ export class FeishuCardActionService {
     replies: BridgeReply[];
     peerId: string;
     existingMessageId?: string;
-  }): Promise<void> {
+  }): Promise<ResourceDeliveryFailure[]> {
+    const failures: ResourceDeliveryFailure[] = [];
     for (const reply of input.replies) {
       if (reply.kind !== "image" && reply.kind !== "file") {
         continue;
@@ -777,11 +811,14 @@ export class FeishuCardActionService {
             existingMessageId: input.existingMessageId,
             error: normalizeActionError(error),
             localPath: reply.localPath,
+            fileName: getResourceReplyFileName(reply),
           },
           "feishu card action resource delivery failed",
         );
+        failures.push(buildResourceDeliveryFailure(reply, error));
       }
     }
+    return failures;
   }
 
   private async deliverResourceReply(input: {
@@ -889,11 +926,14 @@ export class FeishuCardActionService {
       const replies = await input.execute({
         onProgress: snapshot => controller?.push(snapshot),
       });
-      await this.deliverResourceReplies({
+      const resourceDeliveryFailures = await this.deliverResourceReplies({
         replies,
         peerId: input.peerId,
         existingMessageId: input.existingMessageId,
       });
+      if (resourceDeliveryFailures.length > 0) {
+        await controller?.finalizeError(formatResourceDeliveryFailuresForUser(resourceDeliveryFailures));
+      }
     })().catch(async error => {
       await controller?.finalizeError(normalizeActionError(error));
     });
@@ -939,6 +979,65 @@ function formatFileReplyText(reply: Extract<BridgeReply, { kind: "file" }>): str
     return `文件结果已生成：${reply.fileName.trim()}`;
   }
   return "文件结果已生成。";
+}
+
+function buildResourceDeliveryFailure(
+  reply: Extract<BridgeReply, { kind: "image" | "file" }>,
+  error: unknown,
+): ResourceDeliveryFailure {
+  return {
+    kind: reply.kind,
+    fileName: getResourceReplyFileName(reply),
+    reason: formatResourceDeliveryErrorReason(error, reply.kind),
+  };
+}
+
+function formatResourceDeliveryFailureText(failure: ResourceDeliveryFailure): string {
+  const label = failure.kind === "image" ? "图片" : "文件";
+  return `${label} ${failure.fileName} 投递失败：${failure.reason}。`;
+}
+
+function formatResourceDeliveryFailuresForUser(failures: ResourceDeliveryFailure[]): string {
+  return failures.map(formatResourceDeliveryFailureText).join("\n");
+}
+
+function formatResourceDeliveryErrorReason(error: unknown, kind: "image" | "file"): string {
+  const message = error instanceof Error && error.message
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : "";
+
+  if (message.includes("FEISHU_FILE_UPLOAD_TOO_LARGE")) {
+    return "文件超过 30 MB";
+  }
+  if (message.includes("FEISHU_FILE_UPLOAD_EMPTY")) {
+    return "文件为空";
+  }
+  if (message.includes("FEISHU_FILE_UPLOAD_UNAVAILABLE")) {
+    return "文件上传能力不可用";
+  }
+  if (message.includes("FEISHU_FILE_REPLY_UNAVAILABLE")) {
+    return "文件上传或发送能力不可用";
+  }
+  if (message.includes("FEISHU_IMAGE_REPLY_UNAVAILABLE")) {
+    return "图片上传或发送能力不可用";
+  }
+
+  return kind === "image" ? "图片上传或发送失败" : "文件上传或发送失败";
+}
+
+function getResourceReplyFileName(reply: Extract<BridgeReply, { kind: "image" | "file" }>): string {
+  if (reply.kind === "file" && reply.fileName?.trim()) {
+    return formatPathFileNameForUser(reply.fileName);
+  }
+  return formatPathFileNameForUser(reply.localPath);
+}
+
+function formatPathFileNameForUser(value: string): string {
+  const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts.at(-1) ?? "资源";
 }
 
 function isDesktopThreadContinuationResult(value: unknown): value is DesktopThreadContinuationResult {

@@ -977,6 +977,58 @@ describe("FeishuAdapter", () => {
     }
   });
 
+  it("does not try native image upload when outbound images exceed the file fallback limit", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "feishu-adapter-too-large-image-"));
+    const imagePath = path.join(rootDir, "too-large-result.png");
+    writeFileSync(imagePath, "");
+    truncateSync(imagePath, 30 * 1024 * 1024 + 1);
+
+    try {
+      const bridgeService = {
+        handleMessage: vi.fn(async () => [
+          { kind: "image", localPath: imagePath, caption: "超大图结果" } satisfies BridgeReply,
+        ]),
+      };
+      const apiClient = createApiClientDouble();
+
+      const adapter = new FeishuAdapter({
+        allowlist: ["ou_demo"],
+        bridgeService,
+        apiClient,
+      });
+
+      await adapter.handleEnvelope({
+        header: {
+          event_id: "evt-too-large-image-reply-dm-1",
+        },
+        event: {
+          message: {
+            chat_type: "p2p",
+            message_type: "text",
+            content: JSON.stringify({ text: "请返回超大图" }),
+          },
+          sender: {
+            sender_id: {
+              open_id: "ou_demo",
+            },
+          },
+        },
+      });
+
+      expect(apiClient.uploadImage).not.toHaveBeenCalled();
+      expect(apiClient.uploadFile).not.toHaveBeenCalled();
+      expect(apiClient.sendImageMessage).not.toHaveBeenCalled();
+      expect(apiClient.sendFileMessage).not.toHaveBeenCalled();
+      expect(apiClient.sendTextMessage).toHaveBeenCalledWith(
+        "ou_demo",
+        expect.stringContaining("too-large-result.png 超过 30 MB"),
+      );
+      expect(JSON.stringify(apiClient.sendTextMessage.mock.calls)).not.toContain(imagePath);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("uploads outbound file replies for DM messages", async () => {
     const bridgeService = {
       handleMessage: vi.fn(async () => [

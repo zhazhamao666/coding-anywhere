@@ -1552,9 +1552,10 @@ describe("BridgeService", () => {
       },
       {
         kind: "system",
-        text: `[ca] image unavailable: disallowed path ${outsideImagePath}`,
+        text: "[ca] image unavailable: disallowed path outside.png",
       },
     ]);
+    expect(JSON.stringify(replies)).not.toContain(outsideImagePath);
   });
 
   it("degrades invalid bridge-assets file paths into readable system text", async () => {
@@ -1610,9 +1611,10 @@ describe("BridgeService", () => {
       },
       {
         kind: "system",
-        text: `[ca] asset unavailable: file not found ${missingPath}`,
+        text: "[ca] asset unavailable: file not found missing.md",
       },
     ]);
+    expect(JSON.stringify(replies)).not.toContain(missingPath);
   });
 
   it("persists bridge-managed plan interactions from runner events and exposes them on the final progress snapshot", async () => {
